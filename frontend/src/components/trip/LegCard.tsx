@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { TripLeg } from "@/types/trip";
-import apiClient from "@/api/client";
+import { useTripStore } from "@/stores/tripStore";
+import { useSearchStore } from "@/stores/searchStore";
 
 interface Props {
   leg: TripLeg;
@@ -14,14 +15,20 @@ const CABIN_OPTIONS = ["economy", "premium_economy", "business", "first"];
 export function LegCard({ leg, index, onRemove, editable = false }: Props) {
   const [cabinClass, setCabinClass] = useState(leg.cabin_class);
   const [saving, setSaving] = useState(false);
+  const patchLeg = useTripStore((s) => s.patchLeg);
+  const searchLeg = useSearchStore((s) => s.searchLeg);
 
   async function handleCabinChange(value: string) {
+    if (value === cabinClass) return;
+    const prev = cabinClass;
     setCabinClass(value);
     setSaving(true);
     try {
-      await apiClient.patch(`/trips/legs/${leg.id}`, { cabin_class: value });
+      await patchLeg(leg.id, { cabin_class: value });
+      // Re-search with updated cabin class
+      searchLeg(leg.id);
     } catch {
-      setCabinClass(leg.cabin_class); // revert on error
+      setCabinClass(prev); // revert on error
     } finally {
       setSaving(false);
     }

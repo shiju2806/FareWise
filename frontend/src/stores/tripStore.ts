@@ -13,6 +13,7 @@ interface TripState {
   fetchTrips: (status?: string) => Promise<void>;
   fetchTrip: (id: string) => Promise<void>;
   updateLegs: (tripId: string, legs: Record<string, unknown>[]) => Promise<Trip>;
+  patchLeg: (legId: string, updates: Record<string, unknown>) => Promise<void>;
   deleteTrip: (tripId: string) => Promise<void>;
   clearCurrentTrip: () => void;
   clearError: () => void;
@@ -100,6 +101,24 @@ export const useTripStore = create<TripState>((set, get) => ({
         (err as { response?: { data?: { detail?: string } } })?.response?.data
           ?.detail ?? "Failed to update legs";
       set({ error: msg, loading: false });
+      throw err;
+    }
+  },
+
+  patchLeg: async (legId: string, updates: Record<string, unknown>) => {
+    try {
+      const res = await apiClient.patch(`/trips/legs/${legId}`, updates);
+      const updated = res.data as Trip["legs"][number];
+      const trip = get().currentTrip;
+      if (trip) {
+        set({
+          currentTrip: {
+            ...trip,
+            legs: trip.legs.map((l) => (l.id === legId ? { ...l, ...updated } : l)),
+          },
+        });
+      }
+    } catch (err) {
       throw err;
     }
   },

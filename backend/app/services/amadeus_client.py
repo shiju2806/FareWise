@@ -297,8 +297,8 @@ class AmadeusClient:
         adults: int,
     ) -> list[dict]:
         """Generate realistic mock flight data for demo/development."""
-        # Deterministic seed based on route+date for consistency
-        seed_str = f"{origin}{destination}{departure_date.isoformat()}"
+        # Deterministic seed based on route+date+cabin for consistency
+        seed_str = f"{origin}{destination}{departure_date.isoformat()}{cabin_class}"
         seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)
         rng = random.Random(seed)
 
