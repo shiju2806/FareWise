@@ -482,7 +482,7 @@ class SearchOrchestrator:
 
             search_log = SearchLog(
                 trip_leg_id=leg.id,
-                api_provider="amadeus" if not amadeus_client._use_mock else "mock",
+                api_provider="amadeus",
                 search_params={
                     "origin": leg.origin_airport,
                     "destination": leg.destination_airport,

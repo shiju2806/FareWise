@@ -1,14 +1,8 @@
 """Amadeus API client — adapter for flight search with OAuth2 and rate limiting."""
 
 import asyncio
-import hashlib
-import json
 import logging
-import math
-import random
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
-from typing import Any
 
 import httpx
 
@@ -35,7 +29,10 @@ AIRLINE_NAMES = {
     "NH": "ANA", "JL": "Japan Airlines", "AS": "Alaska Airlines",
     "WN": "Southwest Airlines", "TS": "Air Transat", "PD": "Porter Airlines",
     "VS": "Virgin Atlantic", "FI": "Icelandair", "TP": "TAP Air Portugal",
-    "AY": "Finnair", "SK": "SAS", "IB": "Iberia",
+    "AY": "Finnair", "SK": "SAS", "IB": "Iberia", "TK": "Turkish Airlines",
+    "EI": "Aer Lingus", "AV": "Avianca", "S4": "AZAL Azerbaijan Airlines",
+    "LO": "LOT Polish", "SN": "Brussels Airlines", "AZ": "ITA Airways",
+    "ET": "Ethiopian Airlines", "MS": "EgyptAir", "RJ": "Royal Jordanian",
 }
 
 
@@ -47,7 +44,8 @@ class AmadeusClient:
         self._token_expires: datetime | None = None
         self._semaphore = asyncio.Semaphore(10)  # 10 req/s rate limit
         self._client: httpx.AsyncClient | None = None
-        self._use_mock = not settings.amadeus_client_id
+        if not settings.amadeus_client_id:
+            logger.warning("AMADEUS_CLIENT_ID not set — flight searches will return empty results")
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -59,9 +57,6 @@ class AmadeusClient:
 
     async def _ensure_token(self):
         """Get or refresh OAuth2 token."""
-        if self._use_mock:
-            return
-
         if self._token and self._token_expires and datetime.now(timezone.utc) < self._token_expires:
             return
 
@@ -106,10 +101,8 @@ class AmadeusClient:
         max_results: int = 50,
     ) -> list[dict]:
         """Search for flight offers on a specific date."""
-        if self._use_mock:
-            return self._generate_mock_flights(
-                origin, destination, departure_date, cabin_class, adults
-            )
+        if not settings.amadeus_client_id:
+            return []
 
         try:
             async with self._semaphore:
@@ -148,6 +141,8 @@ class AmadeusClient:
                         return [
                             self._parse_offer(offer, origin, destination)
                             for offer in data.get("data", [])
+                            # 6X is Amadeus test sandbox airline — filter it out
+                            if offer.get("validatingAirlineCodes", [""])[0] != "6X"
                         ]
                     except httpx.HTTPStatusError as e:
                         logger.error(f"Amadeus search error: {e.response.status_code}")
@@ -158,10 +153,7 @@ class AmadeusClient:
                         if attempt == 2:
                             return []
         except Exception as e:
-            logger.error(f"Amadeus API failed, falling back to mock: {e}")
-            return self._generate_mock_flights(
-                origin, destination, departure_date, cabin_class, adults
-            )
+            logger.error(f"Amadeus API error: {e}")
 
         return []
 
@@ -172,8 +164,8 @@ class AmadeusClient:
         departure_date: date,
     ) -> list[dict]:
         """Get cheapest prices by date (for calendar)."""
-        if self._use_mock:
-            return self._generate_mock_calendar(origin, destination, departure_date)
+        if not settings.amadeus_client_id:
+            return []
 
         async with self._semaphore:
             await self._ensure_token()
@@ -287,168 +279,6 @@ class AmadeusClient:
             if m_part:
                 minutes = int(m_part)
         return hours * 60 + minutes
-
-    # --- Mock data generation for demo mode ---
-
-    def _generate_mock_flights(
-        self,
-        origin: str,
-        destination: str,
-        departure_date: date,
-        cabin_class: str,
-        adults: int,
-    ) -> list[dict]:
-        """Generate realistic mock flight data for demo/development."""
-        # Deterministic seed based on route+date+cabin for consistency
-        seed_str = f"{origin}{destination}{departure_date.isoformat()}{cabin_class}"
-        seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)
-        rng = random.Random(seed)
-
-        # Base price depends on route distance (rough estimates)
-        base_prices = self._estimate_base_price(origin, destination, cabin_class)
-        num_flights = rng.randint(5, 12)
-
-        airlines = self._get_route_airlines(origin, destination)
-        flights = []
-
-        for i in range(num_flights):
-            airline = rng.choice(airlines)
-            price_factor = rng.uniform(0.8, 1.8)
-            price = round(base_prices * price_factor, 2)
-
-            # Departure between 6:00 and 21:00
-            dep_hour = rng.randint(6, 21)
-            dep_minute = rng.choice([0, 15, 30, 45])
-            dep_time = datetime(
-                departure_date.year, departure_date.month, departure_date.day,
-                dep_hour, dep_minute, tzinfo=timezone.utc
-            )
-
-            # Duration: base + random variation
-            base_duration = self._estimate_duration(origin, destination)
-            stops = rng.choices([0, 1, 2], weights=[60, 30, 10])[0]
-            duration = base_duration + stops * rng.randint(45, 90)
-
-            arr_time = dep_time + timedelta(minutes=duration)
-
-            stop_airports = None
-            if stops > 0:
-                hubs = ["YYZ", "ORD", "DFW", "ATL", "DEN", "LAX", "JFK", "EWR"]
-                possible = [h for h in hubs if h not in (origin, destination)]
-                stop_airports = ", ".join(rng.sample(possible, min(stops, len(possible))))
-
-            flight_num = f"{airline}{rng.randint(100, 9999)}"
-            seats = rng.randint(1, 9) if rng.random() < 0.3 else None
-
-            flights.append({
-                "airline_code": airline,
-                "airline_name": AIRLINE_NAMES.get(airline, airline),
-                "flight_numbers": flight_num,
-                "origin_airport": origin,
-                "destination_airport": destination,
-                "departure_time": dep_time.isoformat(),
-                "arrival_time": arr_time.isoformat(),
-                "duration_minutes": duration,
-                "stops": stops,
-                "stop_airports": stop_airports,
-                "price": price,
-                "currency": "CAD",
-                "cabin_class": cabin_class,
-                "seats_remaining": seats,
-                "raw_response": None,
-            })
-
-        return sorted(flights, key=lambda f: f["price"])
-
-    def _generate_mock_calendar(
-        self, origin: str, destination: str, departure_date: date
-    ) -> list[dict]:
-        """Generate mock calendar price data for ±7 days."""
-        base = self._estimate_base_price(origin, destination, "economy")
-        seed_str = f"{origin}{destination}{departure_date.isoformat()}cal"
-        seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)
-        rng = random.Random(seed)
-
-        results = []
-        for offset in range(-7, 8):
-            d = departure_date + timedelta(days=offset)
-            # Weekday pricing: Tue/Wed cheaper, Fri/Sun more expensive
-            day_factor = {0: 1.0, 1: 0.9, 2: 0.85, 3: 0.95, 4: 1.15, 5: 1.1, 6: 1.2}.get(
-                d.weekday(), 1.0
-            )
-            price = round(base * day_factor * rng.uniform(0.85, 1.15), 2)
-            results.append({"date": d.isoformat(), "price": price, "currency": "CAD"})
-
-        return results
-
-    @staticmethod
-    def _estimate_base_price(origin: str, destination: str, cabin_class: str) -> float:
-        """Rough base price estimate by route characteristics."""
-        # Domestic Canada/US short-haul
-        domestic_short = {"YYZ-YUL", "YUL-YYZ", "YYZ-YOW", "YOW-YYZ", "LGA-BOS", "BOS-LGA",
-                          "DCA-LGA", "LGA-DCA", "SFO-LAX", "LAX-SFO", "ORD-DTW", "DTW-ORD"}
-        # Medium-haul
-        medium = {"YYZ-JFK", "JFK-YYZ", "YYZ-ORD", "ORD-YYZ", "YYZ-MIA", "MIA-YYZ",
-                  "YYZ-DFW", "DFW-YYZ", "SFO-JFK", "JFK-SFO", "LAX-JFK", "JFK-LAX",
-                  "YYZ-YVR", "YVR-YYZ", "YYZ-YYC", "YYC-YYZ"}
-
-        route_key = f"{origin}-{destination}"
-        if route_key in domestic_short:
-            base = 180
-        elif route_key in medium:
-            base = 340
-        elif any(a in route_key for a in ["LHR", "CDG", "ORY"]):
-            base = 850  # Transatlantic
-        elif any(a in route_key for a in ["NRT", "HND"]):
-            base = 1200  # Transpacific
-        else:
-            base = 420  # Default medium
-
-        cabin_multiplier = {
-            "economy": 1.0, "premium_economy": 1.8,
-            "business": 3.5, "first": 6.0,
-        }.get(cabin_class, 1.0)
-
-        return base * cabin_multiplier
-
-    @staticmethod
-    def _estimate_duration(origin: str, destination: str) -> int:
-        """Rough flight duration in minutes."""
-        short_routes = {"YYZ-YUL", "YUL-YYZ", "YYZ-YOW", "YOW-YYZ", "LGA-BOS",
-                        "BOS-LGA", "DCA-LGA", "LGA-DCA"}
-        route_key = f"{origin}-{destination}"
-        if route_key in short_routes:
-            return 75
-        if any(a in route_key for a in ["LHR", "CDG", "ORY"]):
-            return 420  # 7h transatlantic
-        if any(a in route_key for a in ["NRT", "HND"]):
-            return 780  # 13h transpacific
-        return 180  # Default ~3h
-
-    @staticmethod
-    def _get_route_airlines(origin: str, destination: str) -> list[str]:
-        """Return plausible airlines for a route."""
-        canadian = {"YYZ", "YUL", "YVR", "YYC", "YOW", "YTZ"}
-        european = {"LHR", "LGW", "STN", "CDG", "ORY", "AMS", "FRA", "MUC", "ZRH", "FCO"}
-        middle_east = {"DXB", "DOH", "AUH"}
-        asia_pacific = {"NRT", "HND", "SIN", "HKG"}
-
-        is_canadian = origin in canadian or destination in canadian
-        is_european = origin in european or destination in european
-        is_me = origin in middle_east or destination in middle_east
-        is_ap = origin in asia_pacific or destination in asia_pacific
-
-        if is_canadian and is_european:
-            return ["AC", "BA", "LH", "AF", "KL", "LX", "VS", "AA", "DL", "UA"]
-        if is_canadian and is_me:
-            return ["AC", "EK", "QR", "BA", "LH"]
-        if is_canadian and is_ap:
-            return ["AC", "NH", "JL", "CX", "SQ", "UA"]
-        if is_canadian:
-            return ["AC", "WS", "TS", "PD", "AA", "DL", "UA"]
-        if is_european:
-            return ["BA", "LH", "AF", "KL", "LX", "AA", "DL", "UA"]
-        return ["AA", "DL", "UA", "B6", "NK", "AS", "WN"]
 
     async def close(self):
         if self._client:
