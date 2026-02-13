@@ -34,6 +34,8 @@ AIRLINE_NAMES = {
     "QR": "Qatar Airways", "SQ": "Singapore Airlines", "CX": "Cathay Pacific",
     "NH": "ANA", "JL": "Japan Airlines", "AS": "Alaska Airlines",
     "WN": "Southwest Airlines", "TS": "Air Transat", "PD": "Porter Airlines",
+    "VS": "Virgin Atlantic", "FI": "Icelandair", "TP": "TAP Air Portugal",
+    "AY": "Finnair", "SK": "SAS", "IB": "Iberia",
 }
 
 
@@ -427,10 +429,25 @@ class AmadeusClient:
     def _get_route_airlines(origin: str, destination: str) -> list[str]:
         """Return plausible airlines for a route."""
         canadian = {"YYZ", "YUL", "YVR", "YYC", "YOW", "YTZ"}
-        is_canadian = origin in canadian or destination in canadian
+        european = {"LHR", "LGW", "STN", "CDG", "ORY", "AMS", "FRA", "MUC", "ZRH", "FCO"}
+        middle_east = {"DXB", "DOH", "AUH"}
+        asia_pacific = {"NRT", "HND", "SIN", "HKG"}
 
+        is_canadian = origin in canadian or destination in canadian
+        is_european = origin in european or destination in european
+        is_me = origin in middle_east or destination in middle_east
+        is_ap = origin in asia_pacific or destination in asia_pacific
+
+        if is_canadian and is_european:
+            return ["AC", "BA", "LH", "AF", "KL", "LX", "VS", "AA", "DL", "UA"]
+        if is_canadian and is_me:
+            return ["AC", "EK", "QR", "BA", "LH"]
+        if is_canadian and is_ap:
+            return ["AC", "NH", "JL", "CX", "SQ", "UA"]
         if is_canadian:
             return ["AC", "WS", "TS", "PD", "AA", "DL", "UA"]
+        if is_european:
+            return ["BA", "LH", "AF", "KL", "LX", "AA", "DL", "UA"]
         return ["AA", "DL", "UA", "B6", "NK", "AS", "WN"]
 
     async def close(self):

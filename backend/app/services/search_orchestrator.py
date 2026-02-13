@@ -98,20 +98,35 @@ class SearchOrchestrator:
                 else:
                     all_flights.extend(result)
 
-        # 4. Score all flights
+        # 4. Deduplicate flights (same flight_number + departure_time)
+        seen = set()
+        unique_flights = []
+        for f in all_flights:
+            key = (f.get("flight_numbers", ""), f.get("departure_time", ""))
+            if key not in seen:
+                seen.add(key)
+                unique_flights.append(f)
+        all_flights = unique_flights
+
+        # 5. Score all flights
         scored_flights = score_flights(all_flights, weights)
 
-        # 5. Build price calendar
+        # 7. Build price calendar
         price_calendar = self._build_price_calendar(
             all_flights, leg.preferred_date
         )
 
-        # 6. Group alternatives
+        # 8. Group alternatives
         alternatives = self._group_alternatives(
             scored_flights, leg.origin_airport, leg.destination_airport, leg.preferred_date
         )
 
-        # 7. Pick recommendation
+        # 9. Build response data first (to know which flights to persist)
+        main_options = [
+            f for f in scored_flights
+            if not f.get("is_alternate_airport") and not f.get("is_alternate_date")
+        ][:50]
+
         recommendation = None
         if scored_flights:
             best = scored_flights[0]
@@ -120,10 +135,36 @@ class SearchOrchestrator:
                 "reason": self._generate_reason(best, scored_flights, leg),
             }
 
-        # 8. Log to database
+        # Collect all flights that appear in the response
+        response_flights: list[dict] = []
+        seen_ids = set()
+        for f in main_options:
+            key = id(f)
+            if key not in seen_ids:
+                seen_ids.add(key)
+                response_flights.append(f)
+        if recommendation:
+            key = id(recommendation)
+            if key not in seen_ids:
+                seen_ids.add(key)
+                response_flights.append(recommendation)
+        for cat in alternatives.values():
+            for f in cat:
+                key = id(f)
+                if key not in seen_ids:
+                    seen_ids.add(key)
+                    response_flights.append(f)
+
+        # 10. Save response flights to database (assigns real DB IDs)
         search_log = await self._save_search_log(
-            db, leg, scored_flights, start_time
+            db, leg, response_flights, start_time,
+            total_results_count=len(all_flights),
         )
+
+        # Ensure all flights have IDs (fallback if DB save failed)
+        for f in response_flights:
+            if not f.get("id"):
+                f["id"] = str(uuid.uuid4())
 
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
 
@@ -137,7 +178,7 @@ class SearchOrchestrator:
             "price_calendar": price_calendar,
             "recommendation": recommendation,
             "alternatives": alternatives,
-            "all_options": scored_flights[:50],  # Cap at 50 for response size
+            "all_options": main_options,
             "metadata": {
                 "total_options_found": len(all_flights),
                 "airports_searched": sorted(airports_searched),
@@ -432,6 +473,7 @@ class SearchOrchestrator:
         leg: TripLeg,
         flights: list[dict],
         start_time: float,
+        total_results_count: int | None = None,
     ) -> SearchLog | None:
         """Persist search results to database."""
         try:
@@ -448,7 +490,7 @@ class SearchOrchestrator:
                     "cabin": leg.cabin_class,
                     "flexibility": leg.flexibility_days,
                 },
-                results_count=len(flights),
+                results_count=total_results_count or len(flights),
                 cheapest_price=Decimal(str(min(prices))) if prices else None,
                 most_expensive_price=Decimal(str(max(prices))) if prices else None,
                 cached=False,
@@ -457,8 +499,8 @@ class SearchOrchestrator:
             db.add(search_log)
             await db.flush()
 
-            # Save flight options
-            for f in flights[:100]:  # Cap stored options at 100
+            # Save flight options and map DB IDs back to flight dicts
+            for f in flights:
                 dep_time = self._parse_iso(f.get("departure_time", ""))
                 arr_time = self._parse_iso(f.get("arrival_time", ""))
 
@@ -486,11 +528,14 @@ class SearchOrchestrator:
                     raw_response=f.get("raw_response"),
                 )
                 db.add(option)
+                await db.flush()
+                # Map the persisted DB ID back to the flight dict
+                f["id"] = str(option.id)
 
             await db.commit()
             return search_log
         except Exception as e:
-            logger.error(f"Failed to save search log: {e}")
+            logger.error(f"Failed to save search log: {e}", exc_info=True)
             await db.rollback()
             return None
 
