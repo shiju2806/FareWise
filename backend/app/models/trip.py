@@ -25,6 +25,10 @@ class Trip(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rejection_reason: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

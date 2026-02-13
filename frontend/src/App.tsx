@@ -9,6 +9,11 @@ import Dashboard from "@/pages/Dashboard";
 import NewTrip from "@/pages/NewTrip";
 import TripHistory from "@/pages/TripHistory";
 import TripSearch from "@/pages/TripSearch";
+import TripReview from "@/pages/TripReview";
+import TripAudit from "@/pages/TripAudit";
+import ApprovalDashboard from "@/pages/ApprovalDashboard";
+import ApprovalDetailPage from "@/pages/ApprovalDetailPage";
+import PolicyManagement from "@/pages/PolicyManagement";
 
 function AuthLoader({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
@@ -43,6 +48,11 @@ export default function App() {
             <Route path="/trips/new" element={<NewTrip />} />
             <Route path="/trips" element={<TripHistory />} />
             <Route path="/trips/:tripId/search" element={<TripSearch />} />
+            <Route path="/trips/:tripId/review" element={<TripReview />} />
+            <Route path="/trips/:tripId/audit" element={<TripAudit />} />
+            <Route path="/approvals" element={<ApprovalDashboard />} />
+            <Route path="/approvals/:approvalId" element={<ApprovalDetailPage />} />
+            <Route path="/policies" element={<PolicyManagement />} />
           </Route>
         </Routes>
       </AuthLoader>

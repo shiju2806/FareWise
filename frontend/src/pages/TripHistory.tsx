@@ -4,6 +4,15 @@ import { Button } from "@/components/ui/button";
 import { useTripStore } from "@/stores/tripStore";
 import { LegList } from "@/components/trip/LegList";
 
+const statusBadge: Record<string, string> = {
+  draft: "bg-gray-100 text-gray-700",
+  searching: "bg-blue-100 text-blue-700",
+  submitted: "bg-amber-100 text-amber-700",
+  approved: "bg-green-100 text-green-700",
+  rejected: "bg-red-100 text-red-700",
+  changes_requested: "bg-orange-100 text-orange-700",
+};
+
 export default function TripHistory() {
   const { trips, loading, fetchTrips, deleteTrip } = useTripStore();
 
@@ -48,11 +57,19 @@ export default function TripHistory() {
           >
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-semibold">
-                  {trip.title || "Untitled Trip"}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold">
+                    {trip.title || "Untitled Trip"}
+                  </h3>
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                      statusBadge[trip.status] || "bg-gray-100"
+                    }`}
+                  >
+                    {trip.status}
+                  </span>
+                </div>
                 <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
-                  <span className="capitalize">{trip.status}</span>
                   <span>
                     Created {new Date(trip.created_at).toLocaleDateString()}
                   </span>
@@ -83,11 +100,42 @@ export default function TripHistory() {
                   </>
                 )}
                 {trip.status === "searching" && (
-                  <Link to={`/trips/${trip.id}/search`}>
+                  <>
+                    <Link to={`/trips/${trip.id}/search`}>
+                      <Button size="sm" variant="outline">
+                        View Results
+                      </Button>
+                    </Link>
+                    <Link to={`/trips/${trip.id}/review`}>
+                      <Button size="sm">Review & Submit</Button>
+                    </Link>
+                  </>
+                )}
+                {trip.status === "submitted" && (
+                  <Link to={`/trips/${trip.id}/audit`}>
                     <Button size="sm" variant="outline">
-                      View Results
+                      View Status
                     </Button>
                   </Link>
+                )}
+                {(trip.status === "approved" || trip.status === "rejected") && (
+                  <Link to={`/trips/${trip.id}/audit`}>
+                    <Button size="sm" variant="outline">
+                      Audit Trail
+                    </Button>
+                  </Link>
+                )}
+                {trip.status === "changes_requested" && (
+                  <>
+                    <Link to={`/trips/${trip.id}/search`}>
+                      <Button size="sm">Revise</Button>
+                    </Link>
+                    <Link to={`/trips/${trip.id}/review`}>
+                      <Button size="sm" variant="outline">
+                        Resubmit
+                      </Button>
+                    </Link>
+                  </>
                 )}
               </div>
             </div>

@@ -256,6 +256,13 @@ export default function TripSearch() {
               >
                 {confirming ? "Saving..." : confirmed ? "Confirmed!" : "Confirm Selection"}
               </Button>
+              {confirmed && tripId && (
+                <Link to={`/trips/${tripId}/review`}>
+                  <Button variant="outline" className="ml-2">
+                    Review & Submit
+                  </Button>
+                </Link>
+              )}
             </div>
           </div>
         </div>
