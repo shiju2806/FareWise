@@ -38,7 +38,7 @@ export default function Login() {
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">FareWise</CardTitle>
-          <CardDescription>Corporate travel cost optimization</CardDescription>
+          <CardDescription>Travel cost optimization</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">

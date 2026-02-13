@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
 
+    # OpenAI
+    openai_api_key: str = ""
+
     # CORS
     cors_origins: str = "http://localhost:5173"
 
