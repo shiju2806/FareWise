@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import apiClient from "@/api/client";
 import { useTripStore } from "@/stores/tripStore";
+import { ExportButton } from "@/components/shared/ExportButton";
 
 interface EvalResult {
   savings_report: {
@@ -141,9 +142,17 @@ export default function TripReview() {
         >
           &larr; Back
         </Button>
+        <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold tracking-tight">
           Review & Submit
         </h2>
+        {tripId && (
+          <div className="flex gap-2">
+            <ExportButton tripId={tripId} type="savings" />
+            <ExportButton tripId={tripId} type="audit" />
+          </div>
+        )}
+        </div>
         <p className="text-muted-foreground mt-1">
           Review your trip details and savings before submitting for approval.
         </p>

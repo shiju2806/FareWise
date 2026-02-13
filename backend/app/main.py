@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import airports, approvals, audit, auth, bundles, events, hotels, notifications, policies, price_watches, search, trips, users
+from app.routers import airports, analytics, approvals, audit, auth, bundles, collaboration, events, hotels, notifications, policies, price_watches, reports, search, trips, users
 
 logger = logging.getLogger(__name__)
 
@@ -54,10 +54,51 @@ async def lifespan(app: FastAPI):
                     if count:
                         logger.info(f"Event cache: {count} expired entries removed")
 
+            # Phase D — analytics scheduler jobs
+            async def _run_daily_snapshot():
+                if not settings.analytics_snapshot_enabled:
+                    return
+                from app.database import async_session_factory
+                from app.services.analytics_service import analytics_service
+                async with async_session_factory() as db:
+                    await analytics_service.generate_daily_snapshot(db)
+                    logger.info("Daily analytics snapshot completed")
+
+            async def _run_traveler_scores():
+                if not settings.gamification_enabled:
+                    return
+                from app.database import async_session_factory
+                from app.services.analytics_service import analytics_service
+                async with async_session_factory() as db:
+                    await analytics_service.compute_traveler_scores(db)
+                    logger.info("Traveler scores computation completed")
+
+            async def _run_weekly_snapshot():
+                if not settings.analytics_snapshot_enabled:
+                    return
+                from app.database import async_session_factory
+                from app.services.analytics_service import analytics_service
+                async with async_session_factory() as db:
+                    await analytics_service.generate_weekly_snapshot(db)
+                    logger.info("Weekly analytics snapshot completed")
+
+            async def _run_monthly_snapshot():
+                if not settings.analytics_snapshot_enabled:
+                    return
+                from app.database import async_session_factory
+                from app.services.analytics_service import analytics_service
+                async with async_session_factory() as db:
+                    await analytics_service.generate_monthly_snapshot(db)
+                    logger.info("Monthly analytics snapshot completed")
+
             scheduler.add_job(_run_price_checks, IntervalTrigger(hours=settings.price_watch_check_interval_hours), id="price_checks")
             scheduler.add_job(_run_unbooked_hotels, CronTrigger(hour=9, minute=0), id="unbooked_hotels")
             scheduler.add_job(_run_event_alerts, CronTrigger(hour=10, minute=0), id="event_alerts")
             scheduler.add_job(_cleanup_events, CronTrigger(hour=2, minute=0), id="cleanup_events")
+            scheduler.add_job(_run_daily_snapshot, CronTrigger(hour=1, minute=0), id="daily_snapshot")
+            scheduler.add_job(_run_traveler_scores, CronTrigger(hour=2, minute=30), id="traveler_scores")
+            scheduler.add_job(_run_weekly_snapshot, CronTrigger(day_of_week="mon", hour=3, minute=0), id="weekly_snapshot")
+            scheduler.add_job(_run_monthly_snapshot, CronTrigger(day="1", hour=4, minute=0), id="monthly_snapshot")
 
             scheduler.start()
             logger.info("Background scheduler started")
@@ -102,6 +143,9 @@ app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(hotels.router, prefix="/api/search", tags=["hotels"])
 app.include_router(bundles.router, prefix="/api/search", tags=["bundles"])
 app.include_router(price_watches.router, prefix="/api", tags=["price-watches", "alerts"])
+app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
+app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
+app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 
 
 @app.get("/api/health")

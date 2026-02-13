@@ -1,18 +1,29 @@
+import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { ThemeToggle } from "@/components/shared/ThemeToggle";
+import { KeyboardShortcutsModal } from "@/components/shared/KeyboardShortcutsModal";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 
 export function AppShell() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+
+  useKeyboardShortcuts(() => setShowShortcuts((v) => !v));
 
   const navItems = [
     { label: "New Trip", path: "/trips/new", primary: true, roles: null },
     { label: "My Trips", path: "/trips", primary: false, roles: null },
     { label: "Price Watches", path: "/price-watches", primary: false, roles: null },
     { label: "Alerts", path: "/alerts", primary: false, roles: null },
+    { label: "Group Trips", path: "/group-trips", primary: false, roles: null },
+    { label: "My Stats", path: "/my-stats", primary: false, roles: null },
+    { label: "Leaderboard", path: "/leaderboard", primary: false, roles: null },
     { label: "Approvals", path: "/approvals", primary: false, roles: ["manager", "admin"] },
+    { label: "Analytics", path: "/analytics", primary: false, roles: ["manager", "admin"] },
     { label: "Dashboard", path: "/", primary: false, roles: null },
     { label: "Policies", path: "/policies", primary: false, roles: ["admin"] },
   ];
@@ -59,12 +70,15 @@ export function AppShell() {
               {user.role}
               {user.department && ` · ${user.department}`}
             </p>
-            <button
-              onClick={logout}
-              className="mt-2 text-xs text-muted-foreground hover:text-foreground"
-            >
-              Sign out
-            </button>
+            <div className="flex items-center justify-between mt-2">
+              <button
+                onClick={logout}
+                className="text-xs text-muted-foreground hover:text-foreground"
+              >
+                Sign out
+              </button>
+              <ThemeToggle />
+            </div>
           </div>
         )}
       </aside>
@@ -75,6 +89,11 @@ export function AppShell() {
           <Outlet />
         </div>
       </main>
+
+      <KeyboardShortcutsModal
+        open={showShortcuts}
+        onClose={() => setShowShortcuts(false)}
+      />
     </div>
   );
 }

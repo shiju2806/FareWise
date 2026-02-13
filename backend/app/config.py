@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     # Hotel Search
     hotel_search_cache_ttl: int = 1800
 
+    # Analytics
+    analytics_snapshot_enabled: bool = True
+    leaderboard_min_trips: int = 1
+    gamification_enabled: bool = True
+
     # Scheduler
     scheduler_enabled: bool = True
 

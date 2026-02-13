@@ -82,6 +82,45 @@ class NotificationService:
             reference_id=trip_id,
         )
 
+    async def send_overlap_detected(
+        self, db: AsyncSession, user_id: uuid.UUID,
+        overlap_city: str, other_traveler: str, trip_id: uuid.UUID
+    ) -> Notification:
+        return await self._create(
+            db,
+            user_id=user_id,
+            type="overlap_detected",
+            title="Trip Overlap Detected",
+            body=f"{other_traveler} is also traveling to {overlap_city} around the same dates. Consider coordinating!",
+            reference_type="trip",
+            reference_id=trip_id,
+        )
+
+    async def send_group_trip_invite(
+        self, db: AsyncSession, user_id: uuid.UUID,
+        group_name: str, organizer_name: str, group_trip_id: uuid.UUID
+    ) -> Notification:
+        return await self._create(
+            db,
+            user_id=user_id,
+            type="group_trip_invite",
+            title="Group Trip Invitation",
+            body=f"{organizer_name} invited you to join '{group_name}'.",
+            reference_type="group_trip",
+            reference_id=group_trip_id,
+        )
+
+    async def send_badge_earned(
+        self, db: AsyncSession, user_id: uuid.UUID, badge_name: str
+    ) -> Notification:
+        return await self._create(
+            db,
+            user_id=user_id,
+            type="badge_earned",
+            title="Badge Earned!",
+            body=f"Congratulations! You earned the '{badge_name}' badge.",
+        )
+
     async def _create(
         self, db: AsyncSession, user_id: uuid.UUID, type: str,
         title: str, body: str, reference_type: str | None = None,

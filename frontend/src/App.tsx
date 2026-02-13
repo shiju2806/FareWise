@@ -1,21 +1,39 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
+import { ToastContainer } from "@/components/shared/ToastContainer";
+import { OnboardingTour } from "@/components/onboarding/OnboardingTour";
 import { useAuthStore } from "@/stores/authStore";
 import apiClient from "@/api/client";
-import Login from "@/pages/Login";
-import Dashboard from "@/pages/Dashboard";
-import NewTrip from "@/pages/NewTrip";
-import TripHistory from "@/pages/TripHistory";
-import TripSearch from "@/pages/TripSearch";
-import TripReview from "@/pages/TripReview";
-import TripAudit from "@/pages/TripAudit";
-import ApprovalDashboard from "@/pages/ApprovalDashboard";
-import ApprovalDetailPage from "@/pages/ApprovalDetailPage";
-import PolicyManagement from "@/pages/PolicyManagement";
-import PriceWatches from "@/pages/PriceWatches";
-import AlertFeed from "@/pages/AlertFeed";
+
+// Lazy-loaded pages for code splitting
+const Login = lazy(() => import("@/pages/Login"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const NewTrip = lazy(() => import("@/pages/NewTrip"));
+const TripHistory = lazy(() => import("@/pages/TripHistory"));
+const TripSearch = lazy(() => import("@/pages/TripSearch"));
+const TripReview = lazy(() => import("@/pages/TripReview"));
+const TripAudit = lazy(() => import("@/pages/TripAudit"));
+const ApprovalDashboard = lazy(() => import("@/pages/ApprovalDashboard"));
+const ApprovalDetailPage = lazy(() => import("@/pages/ApprovalDetailPage"));
+const PolicyManagement = lazy(() => import("@/pages/PolicyManagement"));
+const PriceWatches = lazy(() => import("@/pages/PriceWatches"));
+const AlertFeed = lazy(() => import("@/pages/AlertFeed"));
+const AnalyticsDashboard = lazy(() => import("@/pages/AnalyticsDashboard"));
+const MyStats = lazy(() => import("@/pages/MyStats"));
+const LeaderboardPage = lazy(() => import("@/pages/LeaderboardPage"));
+const GroupTrips = lazy(() => import("@/pages/GroupTrips"));
+const GroupTripDetailPage = lazy(() => import("@/pages/GroupTripDetailPage"));
+
+function PageLoader() {
+  return (
+    <div className="flex items-center justify-center min-h-[50vh]">
+      <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+    </div>
+  );
+}
 
 function AuthLoader({ children }: { children: React.ReactNode }) {
   const token = useAuthStore((s) => s.token);
@@ -35,8 +53,10 @@ function AuthLoader({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <AuthLoader>
+        <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
@@ -56,10 +76,19 @@ export default function App() {
             <Route path="/alerts" element={<AlertFeed />} />
             <Route path="/approvals" element={<ApprovalDashboard />} />
             <Route path="/approvals/:approvalId" element={<ApprovalDetailPage />} />
+            <Route path="/analytics" element={<AnalyticsDashboard />} />
+            <Route path="/my-stats" element={<MyStats />} />
+            <Route path="/leaderboard" element={<LeaderboardPage />} />
+            <Route path="/group-trips" element={<GroupTrips />} />
+            <Route path="/group-trips/:groupId" element={<GroupTripDetailPage />} />
             <Route path="/policies" element={<PolicyManagement />} />
           </Route>
         </Routes>
+        </Suspense>
       </AuthLoader>
+      <ToastContainer />
+      <OnboardingTour />
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
