@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +54,13 @@ class TripLeg(Base):
     flexibility_days: Mapped[int] = mapped_column(Integer, default=3)
     cabin_class: Mapped[str] = mapped_column(String(20), default="economy")
     passengers: Mapped[int] = mapped_column(Integer, default=1)
+    # Phase C — hotel fields
+    needs_hotel: Mapped[bool] = mapped_column(Boolean, default=False)
+    hotel_check_in: Mapped[date | None] = mapped_column(Date)
+    hotel_check_out: Mapped[date | None] = mapped_column(Date)
+    hotel_guests: Mapped[int] = mapped_column(Integer, default=1)
+    hotel_max_stars: Mapped[Decimal | None] = mapped_column(Numeric(2, 1))
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

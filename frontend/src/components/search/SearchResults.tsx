@@ -1,10 +1,14 @@
 import { useState } from "react";
 import type { SearchResult } from "@/types/search";
 import type { FlightOption } from "@/types/flight";
+import type { DateEvent, EventData } from "@/types/event";
 import { PriceCalendar } from "./PriceCalendar";
 import { FlightOptionCard } from "./FlightOptionCard";
 import { WhatIfSlider } from "./WhatIfSlider";
 import { RouteComparator } from "./RouteComparator";
+import { WhyThisPrice } from "@/components/events/WhyThisPrice";
+import { EventPanel } from "@/components/events/EventPanel";
+import { PriceWatchSetup } from "@/components/pricewatch/PriceWatchSetup";
 
 interface Props {
   result: SearchResult;
@@ -13,6 +17,10 @@ interface Props {
   onSliderChange: (value: number) => void;
   onDateSelect: (date: string) => void;
   onFlightSelect?: (flight: FlightOption) => void;
+  dateEvents?: Record<string, DateEvent[]>;
+  allEvents?: EventData[];
+  eventSummary?: { recommendation: string | null } | null;
+  destination?: string;
 }
 
 export function SearchResults({
@@ -22,9 +30,16 @@ export function SearchResults({
   onSliderChange,
   onDateSelect,
   onFlightSelect,
+  dateEvents = {},
+  allEvents = [],
+  eventSummary,
+  destination,
 }: Props) {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [whyPriceDate, setWhyPriceDate] = useState<string | null>(null);
+  const [showEventPanel, setShowEventPanel] = useState(false);
+  const [showWatchForm, setShowWatchForm] = useState(false);
 
   function handleDateSelect(date: string) {
     setSelectedDate(date);
@@ -57,16 +72,75 @@ export function SearchResults({
           {result.metadata.airports_searched.length} airports and{" "}
           {result.metadata.dates_searched.length} dates
         </span>
-        <span>Search time: {result.metadata.search_time_ms}ms</span>
+        <div className="flex items-center gap-3">
+          <span>Search time: {result.metadata.search_time_ms}ms</span>
+          <button
+            type="button"
+            onClick={() => setShowWatchForm(!showWatchForm)}
+            className="text-primary hover:underline font-medium"
+          >
+            {showWatchForm ? "Cancel" : "Watch Price"}
+          </button>
+        </div>
       </div>
 
-      {/* Price Calendar */}
+      {showWatchForm && (
+        <PriceWatchSetup
+          defaultOrigin={result.leg.origin}
+          defaultDestination={result.leg.destination}
+          defaultDate={result.leg.preferred_date}
+          defaultPrice={result.recommendation?.price}
+          onCreated={() => setShowWatchForm(false)}
+        />
+      )}
+
+      {/* Event recommendation banner */}
+      {eventSummary?.recommendation && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 flex items-start gap-2">
+          <span className="text-base mt-0.5">{"\u26A0\uFE0F"}</span>
+          <div className="flex-1">
+            <p>{eventSummary.recommendation}</p>
+            <button
+              type="button"
+              onClick={() => setShowEventPanel(true)}
+              className="text-xs text-amber-700 hover:underline mt-1"
+            >
+              View all events
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Price Calendar with event overlay */}
       <PriceCalendar
         calendar={result.price_calendar}
         preferredDate={result.leg.preferred_date}
         selectedDate={selectedDate}
+        dateEvents={dateEvents}
         onDateSelect={handleDateSelect}
+        onWhyThisPrice={(date) => setWhyPriceDate(date)}
       />
+
+      {/* Why This Price? panel */}
+      {whyPriceDate && (
+        <WhyThisPrice
+          date={whyPriceDate}
+          events={dateEvents[whyPriceDate] || []}
+          price={
+            result.price_calendar.dates[whyPriceDate]?.min_price ?? 0
+          }
+          onClose={() => setWhyPriceDate(null)}
+        />
+      )}
+
+      {/* Event panel */}
+      {showEventPanel && (
+        <EventPanel
+          events={allEvents}
+          destination={destination || result.leg.destination}
+          onClose={() => setShowEventPanel(false)}
+        />
+      )}
 
       {/* What If Slider */}
       <WhatIfSlider

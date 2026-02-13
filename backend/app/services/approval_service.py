@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.events import HotelSelection, HotelOption
 from app.models.policy import (
     Approval,
     ApprovalHistory,
@@ -105,6 +106,38 @@ class ApprovalService:
         savings_vs_expensive = most_expensive_total - selected_total
         premium_vs_cheapest = selected_total - cheapest_total
 
+        # Collect hotel costs
+        hotel_selected_total = Decimal("0")
+        hotel_cheapest_total = Decimal("0")
+        has_hotel = False
+        for leg in legs:
+            hotel_sel_result = await db.execute(
+                select(HotelSelection).where(HotelSelection.trip_leg_id == leg.id)
+            )
+            hotel_sel = hotel_sel_result.scalar_one_or_none()
+            if hotel_sel:
+                has_hotel = True
+                opt_result = await db.execute(
+                    select(HotelOption).where(HotelOption.id == hotel_sel.hotel_option_id)
+                )
+                hotel_opt = opt_result.scalar_one_or_none()
+                if hotel_opt:
+                    hotel_selected_total += hotel_opt.total_rate
+
+        # Collect event context
+        events_context: list[str] = []
+        for leg in legs:
+            search_result = await db.execute(
+                select(SearchLog).where(SearchLog.trip_leg_id == leg.id).order_by(SearchLog.searched_at.desc())
+            )
+            search = search_result.scalar_one_or_none()
+            if search and search.events_during_travel:
+                for ev in search.events_during_travel[:2]:
+                    if isinstance(ev, dict) and ev.get("title"):
+                        events_context.append(
+                            f"{ev['title']} in {leg.destination_city} ({ev.get('impact_level', 'unknown')} impact)"
+                        )
+
         # Generate narrative
         traveler_name = f"{user.first_name} {user.last_name}"
         narrative = await narrative_generator.generate(
@@ -115,6 +148,8 @@ class ApprovalService:
             most_expensive_total=most_expensive_total,
             policy_status=evaluation.overall_status,
             per_leg_details=per_leg_details,
+            hotel_total=hotel_selected_total if has_hotel else None,
+            events_context=events_context or None,
         )
 
         # Build slider positions map
@@ -145,6 +180,9 @@ class ApprovalService:
             ],
             "per_leg_summary": per_leg_details,
             "slider_positions": slider_positions,
+            "hotel_selected_total": float(hotel_selected_total) if has_hotel else None,
+            "hotel_cheapest_total": float(hotel_cheapest_total) if has_hotel else None,
+            "events_context": events_context or None,
         }
 
         return {

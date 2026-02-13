@@ -1,4 +1,8 @@
+import { useState, useRef } from "react";
 import type { PriceCalendarDate } from "@/types/search";
+import type { DateEvent } from "@/types/event";
+import { EventBadge } from "@/components/events/EventBadge";
+import { EventTooltip } from "@/components/events/EventTooltip";
 
 interface Props {
   date: string;
@@ -7,6 +11,7 @@ interface Props {
   isCheapest: boolean;
   isSelected: boolean;
   allMinPrices: number[];
+  events?: DateEvent[];
   onClick: (date: string) => void;
 }
 
@@ -17,8 +22,12 @@ export function CalendarCell({
   isCheapest,
   isSelected,
   allMinPrices,
+  events = [],
   onClick,
 }: Props) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+
   const dayName = new Date(date + "T12:00:00").toLocaleDateString("en-US", {
     weekday: "short",
   });
@@ -42,31 +51,62 @@ export function CalendarCell({
     colorClass = "bg-amber-50 text-amber-700 border-amber-200";
   }
 
+  const hasEvents = events.length > 0;
+
+  function handleMouseEnter() {
+    if (hasEvents) {
+      timeoutRef.current = setTimeout(() => setShowTooltip(true), 300);
+    }
+  }
+
+  function handleMouseLeave() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setShowTooltip(false);
+  }
+
   return (
-    <button
-      type="button"
-      onClick={() => onClick(date)}
-      className={`
-        flex flex-col items-center justify-center p-2 rounded-lg border text-center
-        transition-all hover:shadow-md cursor-pointer min-w-[72px]
-        ${colorClass}
-        ${isPreferred ? "ring-2 ring-blue-500 ring-offset-1" : ""}
-        ${isSelected ? "ring-2 ring-primary ring-offset-1" : ""}
-        ${isCheapest ? "border-2 border-emerald-500" : ""}
-      `}
+    <div
+      className="relative"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
     >
-      <span className="text-[10px] font-medium opacity-70">
-        {dayName}
-      </span>
-      <span className="text-xs opacity-70">
-        {monthShort} {dayNum}
-      </span>
-      <span className="text-sm font-bold mt-0.5">
-        ${Math.round(data.min_price)}
-      </span>
-      <span className="text-[10px] opacity-60">
-        {data.option_count} opts
-      </span>
-    </button>
+      <button
+        type="button"
+        onClick={() => onClick(date)}
+        className={`
+          flex flex-col items-center justify-center p-2 rounded-lg border text-center
+          transition-all hover:shadow-md cursor-pointer min-w-[72px]
+          ${colorClass}
+          ${isPreferred ? "ring-2 ring-blue-500 ring-offset-1" : ""}
+          ${isSelected ? "ring-2 ring-primary ring-offset-1" : ""}
+          ${isCheapest ? "border-2 border-emerald-500" : ""}
+        `}
+      >
+        <span className="text-[10px] font-medium opacity-70">
+          {dayName}
+        </span>
+        <span className="text-xs opacity-70">
+          {monthShort} {dayNum}
+        </span>
+        <span className="text-sm font-bold mt-0.5">
+          ${Math.round(data.min_price)}
+        </span>
+        <span className="text-[10px] opacity-60">
+          {data.option_count} opts
+        </span>
+        {hasEvents && (
+          <div className="mt-0.5">
+            <EventBadge events={events} compact />
+          </div>
+        )}
+      </button>
+
+      {/* Tooltip */}
+      {showTooltip && hasEvents && (
+        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50">
+          <EventTooltip events={events} date={date} />
+        </div>
+      )}
+    </div>
   );
 }

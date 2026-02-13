@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.events import HotelSelection, HotelOption
 from app.models.policy import Approval, ApprovalHistory, PolicyViolation, Selection
 from app.models.search_log import SearchLog
 from app.models.trip import Trip
@@ -100,6 +101,30 @@ async def get_trip_audit(
                 "details": {
                     "leg": f"{leg.origin_airport} → {leg.destination_airport}" if leg else "Unknown",
                     "slider_position": float(sel.slider_position) if sel.slider_position else None,
+                },
+            })
+
+    # 3b. Hotel selections
+    for leg in trip.legs:
+        hotel_sel_result = await db.execute(
+            select(HotelSelection).where(HotelSelection.trip_leg_id == leg.id)
+        )
+        hotel_sel = hotel_sel_result.scalar_one_or_none()
+        if hotel_sel:
+            opt_result = await db.execute(
+                select(HotelOption).where(HotelOption.id == hotel_sel.hotel_option_id)
+            )
+            hotel_opt = opt_result.scalar_one_or_none()
+            timeline.append({
+                "timestamp": hotel_sel.selected_at.isoformat() if hotel_sel.selected_at else trip.created_at.isoformat(),
+                "event": "hotel_selected",
+                "actor": traveler_name,
+                "details": {
+                    "leg": f"{leg.origin_airport} -> {leg.destination_airport}",
+                    "hotel": hotel_opt.hotel_name if hotel_opt else "Unknown",
+                    "total_rate": float(hotel_opt.total_rate) if hotel_opt else None,
+                    "check_in": hotel_sel.check_in.isoformat(),
+                    "check_out": hotel_sel.check_out.isoformat(),
                 },
             })
 

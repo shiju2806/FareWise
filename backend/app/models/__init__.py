@@ -11,15 +11,29 @@ from app.models.policy import (
     SavingsReport,
     Selection,
 )
+from app.models.events import (
+    EventCache,
+    HotelOption,
+    HotelSearch,
+    HotelSelection,
+    PriceWatch,
+    PriceWatchHistory,
+)
 
 __all__ = [
     "Approval",
     "ApprovalHistory",
+    "EventCache",
     "FlightOption",
+    "HotelOption",
+    "HotelSearch",
+    "HotelSelection",
     "NearbyAirport",
     "Notification",
     "Policy",
     "PolicyViolation",
+    "PriceWatch",
+    "PriceWatchHistory",
     "SavingsReport",
     "SearchLog",
     "Selection",

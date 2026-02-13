@@ -1,21 +1,28 @@
 import type { PriceCalendar as PriceCalendarType } from "@/types/search";
+import type { DateEvent } from "@/types/event";
 import { CalendarCell } from "./CalendarCell";
 
 interface Props {
   calendar: PriceCalendarType;
   preferredDate: string;
   selectedDate: string | null;
+  dateEvents?: Record<string, DateEvent[]>;
   onDateSelect: (date: string) => void;
+  onWhyThisPrice?: (date: string) => void;
 }
 
 export function PriceCalendar({
   calendar,
   preferredDate,
   selectedDate,
+  dateEvents = {},
   onDateSelect,
+  onWhyThisPrice,
 }: Props) {
   const sortedDates = Object.keys(calendar.dates).sort();
   const allMinPrices = sortedDates.map((d) => calendar.dates[d].min_price);
+
+  const hasAnyEvents = Object.values(dateEvents).some((evts) => evts.length > 0);
 
   return (
     <div className="space-y-3">
@@ -38,12 +45,13 @@ export function PriceCalendar({
             isCheapest={date === calendar.cheapest_date}
             isSelected={date === selectedDate}
             allMinPrices={allMinPrices}
+            events={dateEvents[date]}
             onClick={onDateSelect}
           />
         ))}
       </div>
 
-      <div className="flex gap-4 text-[10px] text-muted-foreground">
+      <div className="flex gap-4 text-[10px] text-muted-foreground flex-wrap">
         <span className="flex items-center gap-1">
           <span className="w-3 h-3 rounded bg-emerald-100 border border-emerald-300" />
           Cheapest
@@ -60,7 +68,26 @@ export function PriceCalendar({
           <span className="w-3 h-3 rounded border-2 border-blue-500" />
           Preferred
         </span>
+        {hasAnyEvents && (
+          <span className="flex items-center gap-1">
+            <span className="w-3 h-3 rounded bg-orange-100 border border-orange-300 text-center text-[7px] leading-3">
+              !
+            </span>
+            Event
+          </span>
+        )}
       </div>
+
+      {/* "Why This Price?" link */}
+      {selectedDate && onWhyThisPrice && (
+        <button
+          type="button"
+          onClick={() => onWhyThisPrice(selectedDate)}
+          className="text-xs text-primary hover:underline"
+        >
+          Why this price?
+        </button>
+      )}
     </div>
   );
 }

@@ -3,7 +3,10 @@ import { useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useTripStore } from "@/stores/tripStore";
 import { useSearchStore } from "@/stores/searchStore";
+import { useEventStore } from "@/stores/eventStore";
 import { SearchResults } from "@/components/search/SearchResults";
+import { HotelSearch } from "@/components/hotel/HotelSearch";
+import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
 import { LegCard } from "@/components/trip/LegCard";
 import type { FlightOption } from "@/types/flight";
 import apiClient from "@/api/client";
@@ -20,6 +23,7 @@ export default function TripSearch() {
     searchLeg,
     rescoreWithSlider,
   } = useSearchStore();
+  const { legEvents, fetchLegEvents } = useEventStore();
 
   const [activeLegIndex, setActiveLegIndex] = useState(0);
   const [selectedFlight, setSelectedFlight] = useState<FlightOption | null>(
@@ -36,6 +40,14 @@ export default function TripSearch() {
 
   const activeLeg = currentTrip?.legs[activeLegIndex];
   const searchResult = activeLeg ? results[activeLeg.id] : null;
+  const legEventData = activeLeg ? legEvents[activeLeg.id] : null;
+
+  // Fetch events when search results appear
+  useEffect(() => {
+    if (searchResult && activeLeg) {
+      fetchLegEvents(activeLeg.id);
+    }
+  }, [searchResult, activeLeg, fetchLegEvents]);
 
   function handleSearch() {
     if (activeLeg) {
@@ -53,7 +65,6 @@ export default function TripSearch() {
   );
 
   function handleDateSelect(date: string) {
-    // Could trigger a filtered view — for now just log
     console.log("Date selected:", date);
   }
 
@@ -205,6 +216,27 @@ export default function TripSearch() {
           onSliderChange={handleSliderChange}
           onDateSelect={handleDateSelect}
           onFlightSelect={handleFlightSelect}
+          dateEvents={legEventData?.date_events}
+          allEvents={legEventData?.events}
+          eventSummary={legEventData?.summary}
+          destination={legEventData?.destination}
+        />
+      )}
+
+      {/* Hotel search — shown after flight search */}
+      {searchResult && !searchLoading && activeLeg && (
+        <HotelSearch
+          legId={activeLeg.id}
+          destinationCity={activeLeg.destination_city}
+          preferredDate={activeLeg.preferred_date}
+        />
+      )}
+
+      {/* Bundle optimizer — shown after flight search */}
+      {searchResult && !searchLoading && activeLeg && (
+        <BundleOptimizer
+          legId={activeLeg.id}
+          destination={activeLeg.destination_city}
         />
       )}
 

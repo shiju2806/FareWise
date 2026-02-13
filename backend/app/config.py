@@ -24,6 +24,22 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = ""
 
+    # PredictHQ — Event Intelligence
+    predicthq_access_token: str = ""
+    predicthq_base_url: str = "https://api.predicthq.com/v1"
+    event_cache_ttl_hours: int = 24
+    event_min_rank: int = 40
+    event_search_radius_km: int = 30
+
+    # Price Watches
+    price_watch_check_interval_hours: int = 6
+
+    # Hotel Search
+    hotel_search_cache_ttl: int = 1800
+
+    # Scheduler
+    scheduler_enabled: bool = True
+
     # CORS
     cors_origins: str = "http://localhost:5173"
 

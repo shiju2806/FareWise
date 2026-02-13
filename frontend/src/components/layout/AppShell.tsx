@@ -10,6 +10,8 @@ export function AppShell() {
   const navItems = [
     { label: "New Trip", path: "/trips/new", primary: true, roles: null },
     { label: "My Trips", path: "/trips", primary: false, roles: null },
+    { label: "Price Watches", path: "/price-watches", primary: false, roles: null },
+    { label: "Alerts", path: "/alerts", primary: false, roles: null },
     { label: "Approvals", path: "/approvals", primary: false, roles: ["manager", "admin"] },
     { label: "Dashboard", path: "/", primary: false, roles: null },
     { label: "Policies", path: "/policies", primary: false, roles: ["admin"] },

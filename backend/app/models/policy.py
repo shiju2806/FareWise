@@ -96,6 +96,11 @@ class SavingsReport(Base):
     policy_status: Mapped[str] = mapped_column(String(20), nullable=False)
     policy_checks: Mapped[dict] = mapped_column(JSONB, nullable=False)
     slider_positions: Mapped[dict | None] = mapped_column(JSONB)
+    # Phase C additions
+    hotel_selected_total: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    hotel_cheapest_total: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    bundle_savings: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    events_impacting_price: Mapped[dict | None] = mapped_column(JSONB, default=list)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

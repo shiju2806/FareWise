@@ -11,12 +11,13 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a corporate travel savings analyst. Generate a concise, professional
-but human-readable narrative (max 4 sentences) summarizing a traveler's flight selections.
+but human-readable narrative (max 5 sentences) summarizing a traveler's travel selections.
 
 Include:
-- Total cost and comparison to cheapest/most expensive options
+- Total cost (flights + hotel if applicable) and comparison to cheapest/most expensive options
 - Specific dollar savings achieved
-- Key tradeoffs the traveler made (e.g., chose Tuesday departure to save money)
+- Key tradeoffs the traveler made (e.g., chose Tuesday departure to save money, picked a value hotel)
+- Any event-driven pricing context (e.g., conference or sports event inflating hotel rates)
 - Policy compliance status
 
 Tone: professional but friendly, like a finance team member writing to a manager.
@@ -40,10 +41,14 @@ class NarrativeGenerator:
         most_expensive_total: Decimal,
         policy_status: str,
         per_leg_details: list[dict],
+        hotel_total: Decimal | None = None,
+        hotel_cheapest: Decimal | None = None,
+        events_context: list[str] | None = None,
     ) -> str:
         prompt = self._build_prompt(
             traveler_name, trip_title, selected_total,
             cheapest_total, most_expensive_total, policy_status, per_leg_details,
+            hotel_total, hotel_cheapest, events_context,
         )
 
         try:
@@ -65,6 +70,7 @@ class NarrativeGenerator:
     def _build_prompt(
         self, traveler_name, trip_title, selected_total,
         cheapest_total, most_expensive_total, policy_status, per_leg_details,
+        hotel_total=None, hotel_cheapest=None, events_context=None,
     ) -> str:
         savings = most_expensive_total - selected_total
         premium = selected_total - cheapest_total
@@ -79,14 +85,24 @@ class NarrativeGenerator:
             if leg.get("savings_note"):
                 legs_text += f" — {leg['savings_note']}"
 
+        hotel_text = ""
+        if hotel_total is not None:
+            hotel_text = f"\nHotel total: ${hotel_total:.2f} CAD"
+            if hotel_cheapest is not None:
+                hotel_text += f" (cheapest available: ${hotel_cheapest:.2f} CAD)"
+
+        events_text = ""
+        if events_context:
+            events_text = "\nRelevant events: " + "; ".join(events_context)
+
         return f"""Traveler: {traveler_name}
 Trip: {trip_title}
-Total selected: ${selected_total:.2f} CAD
+Flight total selected: ${selected_total:.2f} CAD
 Cheapest available: ${cheapest_total:.2f} CAD
 Most expensive: ${most_expensive_total:.2f} CAD
 Savings vs expensive: ${savings:.2f}
 Premium over cheapest: ${premium:.2f}
-Policy status: {policy_status}
+Policy status: {policy_status}{hotel_text}{events_text}
 
 Per-leg breakdown:{legs_text}"""
 

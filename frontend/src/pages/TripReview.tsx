@@ -25,6 +25,9 @@ interface EvalResult {
       selected_price: number;
       cheapest_price: number;
     }>;
+    hotel_selected_total: number | null;
+    hotel_cheapest_total: number | null;
+    events_context: string[] | null;
   } | null;
   warnings: Array<{
     policy_name: string;
@@ -257,6 +260,37 @@ export default function TripReview() {
                 </p>
               </div>
             </div>
+
+            {/* Hotel Costs */}
+            {sr.hotel_selected_total != null && (
+              <div className="p-3 bg-indigo-50 rounded-lg">
+                <h4 className="text-sm font-semibold mb-1">Hotel</h4>
+                <div className="flex items-baseline gap-3">
+                  <span className="text-lg font-bold text-indigo-700">
+                    ${sr.hotel_selected_total.toFixed(0)} CAD
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Combined total: $
+                    {(sr.selected_total + sr.hotel_selected_total).toFixed(0)}{" "}
+                    CAD
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Event Context */}
+            {sr.events_context && sr.events_context.length > 0 && (
+              <div className="p-3 bg-orange-50 rounded-lg">
+                <h4 className="text-sm font-semibold mb-1">
+                  Events Affecting Price
+                </h4>
+                <ul className="text-xs text-muted-foreground space-y-0.5">
+                  {sr.events_context.map((ctx, i) => (
+                    <li key={i}>{ctx}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* Policy Checks */}
             <div>
