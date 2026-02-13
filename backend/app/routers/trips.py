@@ -13,7 +13,9 @@ from app.models.user import User
 from app.schemas.trip import (
     CreateTripNL,
     CreateTripStructured,
+    PatchLegRequest,
     TripLegBase,
+    TripLegResponse,
     TripResponse,
     UpdateLegsRequest,
 )
@@ -257,6 +259,46 @@ async def update_legs(
     await db.refresh(trip, ["legs"])
 
     return TripResponse.model_validate(trip)
+
+
+@router.patch("/legs/{leg_id}", response_model=TripLegResponse)
+async def patch_leg(
+    leg_id: uuid.UUID,
+    req: PatchLegRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Update individual fields on a trip leg (cabin class, passengers, etc.)."""
+    result = await db.execute(
+        select(TripLeg)
+        .join(Trip, TripLeg.trip_id == Trip.id)
+        .where(TripLeg.id == leg_id, Trip.traveler_id == user.id)
+    )
+    leg = result.scalar_one_or_none()
+
+    if not leg:
+        raise HTTPException(status_code=404, detail="Leg not found")
+
+    if req.cabin_class is not None:
+        valid = {"economy", "premium_economy", "business", "first"}
+        if req.cabin_class not in valid:
+            raise HTTPException(status_code=400, detail=f"Invalid cabin class. Must be one of: {', '.join(sorted(valid))}")
+        leg.cabin_class = req.cabin_class
+
+    if req.passengers is not None:
+        if req.passengers < 1:
+            raise HTTPException(status_code=400, detail="Passengers must be at least 1")
+        leg.passengers = req.passengers
+
+    if req.flexibility_days is not None:
+        if req.flexibility_days < 0:
+            raise HTTPException(status_code=400, detail="Flexibility days must be non-negative")
+        leg.flexibility_days = req.flexibility_days
+
+    await db.commit()
+    await db.refresh(leg)
+
+    return TripLegResponse.model_validate(leg)
 
 
 @router.delete("/{trip_id}", status_code=204)

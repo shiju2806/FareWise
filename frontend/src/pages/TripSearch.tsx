@@ -42,6 +42,13 @@ export default function TripSearch() {
   const searchResult = activeLeg ? results[activeLeg.id] : null;
   const legEventData = activeLeg ? legEvents[activeLeg.id] : null;
 
+  // Auto-search when leg becomes active and hasn't been searched yet
+  useEffect(() => {
+    if (activeLeg && !results[activeLeg.id] && !searchLoading) {
+      searchLeg(activeLeg.id);
+    }
+  }, [activeLeg, results, searchLoading, searchLeg]);
+
   // Fetch events when search results appear
   useEffect(() => {
     if (searchResult && activeLeg) {

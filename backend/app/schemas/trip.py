@@ -53,3 +53,9 @@ class TripResponse(BaseModel):
 
 class UpdateLegsRequest(BaseModel):
     legs: list[dict]
+
+
+class PatchLegRequest(BaseModel):
+    cabin_class: str | None = None
+    passengers: int | None = None
+    flexibility_days: int | None = None

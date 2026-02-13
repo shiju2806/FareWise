@@ -36,16 +36,24 @@ export function NaturalLanguageInput({ onSubmit, loading }: Props) {
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (text.trim() && !loading) {
+                  onSubmit(text.trim());
+                }
+              }
+            }}
             placeholder="e.g. Round trip from Toronto to New York next Friday, returning Sunday evening, economy class"
             className="w-full min-h-[100px] rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] outline-none resize-y"
             rows={4}
           />
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={loading || !text.trim()}>
-              {loading ? "Parsing..." : "Parse Trip"}
+              {loading ? "Searching..." : "Search"}
             </Button>
             <span className="text-xs text-muted-foreground">
-              Powered by Claude AI
+              Press Enter to search
             </span>
           </div>
           <div className="space-y-1">
