@@ -725,6 +725,58 @@ Phase B is complete when:
 
 ---
 
+---
+
+## Price Intelligence Advisor (Post-Phase B)
+
+An LLM-powered price intelligence system that synthesizes multiple pricing signals into actionable book/wait/watch recommendations for corporate travelers.
+
+### Architecture
+
+**Three-layer signal pipeline:**
+
+1. **Amadeus Analytics Service** (`amadeus_analytics_service.py`)
+   - Fetches route seasonality from Amadeus air-traffic busiest-period API
+   - Computes peak/shoulder/off-peak months with traveler score percentiles
+   - Fetches route popularity via most-booked destinations API
+   - 24-hour Redis cache for analytics data
+
+2. **Parametric Price Forecast** (`price_forecast_service.py`)
+   - Days-to-departure (DTD) curve: U-shaped pricing (sweet spot = 15-42 days out)
+   - Day-of-week multiplier: Tuesday cheapest, Friday most expensive
+   - Seasonality multiplier from Amadeus analytics
+   - Event impact from PredictHQ
+   - Seats remaining scarcity signal
+   - Historical price trend from search_logs
+   - Outputs: predicted price, confidence band, booking window position, urgency score
+
+3. **LLM Price Advisor** (`price_advisor_service.py`)
+   - Orchestrates all signals into a structured prompt for Claude Sonnet
+   - Claude synthesizes signals into natural-language recommendation
+   - Returns: recommendation (book/wait/watch), confidence score, headline, analysis, factors list, timing advice, savings potential
+   - Rule-based fallback if Claude API fails
+   - 30-minute Redis cache per search_id
+
+### API Endpoints
+- `GET /api/search/{leg_id}/advisor` — LLM price advice
+- `GET /api/search/{leg_id}/price-trend` — Historical prices from search_logs
+- `GET /api/search/{leg_id}/calendar?year=YYYY&month=M` — Month calendar prices
+
+### Frontend
+- `PriceAdvisorPanel.tsx` — Displays recommendation badge, confidence bar, headline, analysis, factors with impact indicators, timing advice
+- Integrated below the month calendar in search results
+
+### Future Improvements
+
+- **v2: Route-Specific Calibration** — After 30+ days of price tracking data per route, calibrate the DTD curve and seasonality multipliers to match observed patterns for specific city pairs
+- **v3: ML Model Training** — Train Prophet/XGBoost model on accumulated search_logs across all routes. Features: DTD, day-of-week, month, route pair, cabin class, seats remaining. Replaces parametric model for routes with sufficient history
+- **v4: Fare Bucket Detection** — Detect airline fare bucket transitions from seats_remaining patterns (e.g., seats dropping from 9 to 4 signals a fare class change and imminent price increase)
+- **Amadeus Production Tier** — Move from test API to production for broader route coverage and more accurate analytics data
+- **Historical Price Comparison** — Once 12+ months of data exists, compare current price to "same week last year" for the route
+- **Cross-Route Intelligence** — Identify patterns across similar routes (e.g., all transatlantic routes have similar DTD curves) to bootstrap new routes with limited data
+
+---
+
 ## Phase Overview
 
 | Phase | Scope | Estimated Effort |

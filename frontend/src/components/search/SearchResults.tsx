@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { SearchResult } from "@/types/search";
 import type { FlightOption } from "@/types/flight";
 import type { DateEvent, EventData } from "@/types/event";
-import { PriceCalendar } from "./PriceCalendar";
+import { MonthCalendar } from "./MonthCalendar";
+import { PriceAdvisorPanel } from "./PriceAdvisorPanel";
 import { FlightOptionCard } from "./FlightOptionCard";
 import { WhatIfSlider } from "./WhatIfSlider";
 import { RouteComparator } from "./RouteComparator";
@@ -12,6 +13,7 @@ import { PriceWatchSetup } from "@/components/pricewatch/PriceWatchSetup";
 
 interface Props {
   result: SearchResult;
+  legId: string;
   sliderValue: number;
   sliderLoading: boolean;
   onSliderChange: (value: number) => void;
@@ -25,6 +27,7 @@ interface Props {
 
 export function SearchResults({
   result,
+  legId,
   sliderValue,
   sliderLoading,
   onSliderChange,
@@ -111,15 +114,17 @@ export function SearchResults({
         </div>
       )}
 
-      {/* Price Calendar with event overlay */}
-      <PriceCalendar
-        calendar={result.price_calendar}
+      {/* Month Price Calendar */}
+      <MonthCalendar
+        legId={legId}
         preferredDate={result.leg.preferred_date}
+        initialCalendar={result.price_calendar}
         selectedDate={selectedDate}
-        dateEvents={dateEvents}
         onDateSelect={handleDateSelect}
-        onWhyThisPrice={(date) => setWhyPriceDate(date)}
       />
+
+      {/* Price Intelligence Advisor */}
+      <PriceAdvisorPanel legId={legId} />
 
       {/* Why This Price? panel */}
       {whyPriceDate && (

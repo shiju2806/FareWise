@@ -629,6 +629,31 @@ Phase A is complete when:
 
 ---
 
+---
+
+## Price Calendar Enhancement (Post-Phase A)
+
+The original Phase A price calendar was a horizontal 7-day strip showing prices for the preferred date ±flexibility_days. This has been upgraded to a full **month-view calendar** with the following improvements:
+
+### Month Calendar Grid
+- Full month view (Mon-Sun columns, 5-6 rows) replacing the horizontal date strip
+- Previous/next month navigation arrows for browsing across months
+- Color-coded cells using price quartiles (green = cheap, amber = average, red = expensive)
+- Direct vs connecting flight indicators per day: `●` = direct flights available, `✕` = connecting only
+- Visual markers: blue ring for preferred date, green ring for cheapest date
+- Past dates greyed out
+- Click any date to view flight options for that day
+- Lazy-loading: initial search fetches ±flexibility days, remaining month dates fetched on demand
+- Each date fetched with max_results=5 (cheapest only) to minimize API calls
+
+### Technical Details
+- Backend: `SearchOrchestrator.fetch_month_prices()` — parallel batched Amadeus calls (10/batch)
+- Endpoint: `GET /api/search/{leg_id}/calendar?year=YYYY&month=M`
+- Caching: 1-hour Redis TTL per month-calendar, reuses per-date flight cache
+- Frontend: `MonthCalendar.tsx` with `MonthCalendarCell.tsx`, Zustand store in `priceIntelStore.ts`
+
+---
+
 ## Phase Overview
 
 | Phase | Scope | Estimated Effort |

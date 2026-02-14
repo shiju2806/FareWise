@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     leaderboard_min_trips: int = 1
     gamification_enabled: bool = True
 
+    # Price Intelligence
+    price_intelligence_enabled: bool = True
+
     # Scheduler
     scheduler_enabled: bool = True
 

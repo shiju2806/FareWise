@@ -215,9 +215,10 @@ export default function TripSearch() {
       )}
 
       {/* Search results */}
-      {searchResult && !searchLoading && (
+      {searchResult && !searchLoading && activeLeg && (
         <SearchResults
           result={searchResult}
+          legId={activeLeg.id}
           sliderValue={sliderValue}
           sliderLoading={sliderLoading}
           onSliderChange={handleSliderChange}

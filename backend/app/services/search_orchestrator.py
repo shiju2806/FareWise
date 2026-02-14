@@ -357,7 +357,7 @@ class SearchOrchestrator:
     @staticmethod
     def _build_price_calendar(flights: list[dict], preferred_date: date) -> dict:
         """Build price calendar from all search results."""
-        by_date: dict[str, list[float]] = defaultdict(list)
+        by_date: dict[str, list[dict]] = defaultdict(list)
 
         for f in flights:
             dep_time = f.get("departure_time", "")
@@ -365,7 +365,7 @@ class SearchOrchestrator:
                 continue
             try:
                 d = dep_time.split("T")[0] if "T" in dep_time else dep_time
-                by_date[d].append(f["price"])
+                by_date[d].append(f)
             except (ValueError, KeyError):
                 continue
 
@@ -373,12 +373,15 @@ class SearchOrchestrator:
         cheapest_date = None
         cheapest_price = float("inf")
 
-        for d, prices in sorted(by_date.items()):
+        for d, day_flights in sorted(by_date.items()):
+            prices = [f["price"] for f in day_flights]
             min_p = min(prices)
+            has_direct = any(f.get("stops", 1) == 0 for f in day_flights)
             dates_data[d] = {
                 "min_price": round(min_p, 2),
                 "max_price": round(max(prices), 2),
                 "option_count": len(prices),
+                "has_direct": has_direct,
             }
             if min_p < cheapest_price:
                 cheapest_price = min_p
@@ -403,6 +406,124 @@ class SearchOrchestrator:
             "preferred_date_rank": rank,
             "savings_if_flexible": savings,
         }
+
+    async def fetch_month_prices(
+        self,
+        origin: str,
+        destination: str,
+        year: int,
+        month: int,
+        cabin_class: str,
+        existing_dates: dict | None = None,
+    ) -> dict:
+        """Fetch cheapest prices for every day in a month.
+
+        Uses max_results=5 per date (only need cheapest, not full list).
+        Skips dates already in existing_dates or in Redis cache.
+        Returns {dates: {YYYY-MM-DD: {min_price, has_direct, option_count}}, month_stats}.
+        """
+        import calendar
+
+        # Check month calendar cache
+        cached = await cache_service.get_month_calendar(origin, destination, year, month, cabin_class)
+        if cached:
+            return cached
+
+        # Build list of dates for this month
+        _, days_in_month = calendar.monthrange(year, month)
+        today = date.today()
+        all_dates = []
+        for day in range(1, days_in_month + 1):
+            d = date(year, month, day)
+            if d < today:
+                continue  # Skip past dates
+            date_str = d.isoformat()
+            # Skip dates we already have from the initial search
+            if existing_dates and date_str in existing_dates:
+                continue
+            all_dates.append(d)
+
+        # Fetch in parallel batches of 10
+        dates_data = {}
+        if existing_dates:
+            dates_data.update(existing_dates)
+
+        batch_size = 10
+        for i in range(0, len(all_dates), batch_size):
+            batch = all_dates[i:i + batch_size]
+            coros = [
+                self._fetch_date_cheapest(origin, destination, d, cabin_class)
+                for d in batch
+            ]
+            results = await asyncio.gather(*coros, return_exceptions=True)
+            for idx, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.warning(f"Month fetch failed for {batch[idx]}: {result}")
+                elif result:
+                    dates_data[batch[idx].isoformat()] = result
+
+        # Compute month stats
+        all_prices = [v["min_price"] for v in dates_data.values() if v.get("min_price", 0) > 0]
+        month_stats = {
+            "cheapest_price": min(all_prices) if all_prices else 0,
+            "cheapest_date": min(dates_data, key=lambda d: dates_data[d].get("min_price", float("inf"))) if dates_data else None,
+            "avg_price": round(sum(all_prices) / len(all_prices), 2) if all_prices else 0,
+            "dates_with_flights": len([p for p in all_prices if p > 0]),
+            "dates_with_direct": len([d for d, v in dates_data.items() if v.get("has_direct")]),
+        }
+
+        result = {"dates": dates_data, "month_stats": month_stats}
+
+        # Cache the month calendar
+        await cache_service.set_month_calendar(origin, destination, year, month, cabin_class, result)
+
+        return result
+
+    async def _fetch_date_cheapest(
+        self,
+        origin: str,
+        destination: str,
+        departure_date: date,
+        cabin_class: str,
+    ) -> dict | None:
+        """Fetch cheapest price for a single date (max 5 results)."""
+        date_str = departure_date.isoformat()
+
+        # Check per-date flight cache first
+        cached = await cache_service.get_flights(origin, destination, date_str, cabin_class)
+        if cached is not None:
+            prices = [f["price"] for f in cached if f.get("price", 0) > 0]
+            has_direct = any(f.get("stops", 1) == 0 for f in cached)
+            if prices:
+                return {
+                    "min_price": round(min(prices), 2),
+                    "has_direct": has_direct,
+                    "option_count": len(prices),
+                }
+            return None
+
+        # Fetch from Amadeus with reduced results
+        flights = await amadeus_client.search_flight_offers(
+            origin, destination, departure_date, cabin_class,
+            adults=1, max_results=5,
+        )
+
+        if not flights:
+            return None
+
+        # Cache the results
+        await cache_service.set_flights(origin, destination, date_str, cabin_class, flights)
+
+        prices = [f["price"] for f in flights if f.get("price", 0) > 0]
+        has_direct = any(f.get("stops", 1) == 0 for f in flights)
+
+        if prices:
+            return {
+                "min_price": round(min(prices), 2),
+                "has_direct": has_direct,
+                "option_count": len(prices),
+            }
+        return None
 
     @staticmethod
     def _group_alternatives(

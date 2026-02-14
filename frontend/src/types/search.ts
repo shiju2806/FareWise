@@ -4,6 +4,7 @@ export interface PriceCalendarDate {
   min_price: number;
   max_price: number;
   option_count: number;
+  has_direct?: boolean;
 }
 
 export interface PriceCalendar {
@@ -35,4 +36,58 @@ export interface SearchResult {
     cached: boolean;
     search_time_ms: number;
   };
+}
+
+// Month Calendar types
+
+export interface MonthCalendarDate {
+  min_price: number;
+  has_direct: boolean;
+  option_count: number;
+}
+
+export interface MonthCalendarData {
+  dates: Record<string, MonthCalendarDate>;
+  month_stats: {
+    cheapest_price: number;
+    cheapest_date: string | null;
+    avg_price: number;
+    dates_with_flights: number;
+    dates_with_direct: number;
+  };
+}
+
+// Price Advisor types
+
+export interface PriceAdvisorFactor {
+  name: string;
+  impact: "positive" | "negative" | "neutral";
+  detail: string;
+}
+
+export interface PriceAdvice {
+  recommendation: "book" | "wait" | "watch";
+  confidence: number;
+  headline: string;
+  analysis: string;
+  factors: PriceAdvisorFactor[];
+  timing_advice?: string;
+  savings_potential?: string;
+  source: "llm" | "fallback" | "disabled";
+}
+
+// Price Trend types
+
+export interface PriceTrendPoint {
+  date: string;
+  price: number;
+  most_expensive?: number | null;
+  results_count?: number;
+}
+
+export interface PriceTrend {
+  leg_trend: PriceTrendPoint[];
+  route_history: PriceTrendPoint[];
+  route: string;
+  data_points: number;
 }

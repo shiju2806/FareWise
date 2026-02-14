@@ -11,9 +11,12 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # TTLs in seconds
-TTL_FLIGHT_PRICES = 15 * 60    # 15 minutes
-TTL_AIRPORT_DATA = 24 * 60 * 60  # 24 hours
-TTL_CALENDAR = 30 * 60          # 30 minutes
+TTL_FLIGHT_PRICES = 15 * 60       # 15 minutes
+TTL_AIRPORT_DATA = 24 * 60 * 60   # 24 hours
+TTL_CALENDAR = 30 * 60            # 30 minutes
+TTL_ANALYTICS = 24 * 60 * 60      # 24 hours — seasonality data
+TTL_ADVISOR = 30 * 60             # 30 minutes — LLM advisor results
+TTL_MONTH_CALENDAR = 60 * 60      # 1 hour — month calendar prices
 
 
 class CacheService:
@@ -100,6 +103,38 @@ class CacheService:
 
     async def set_airport_data(self, city: str, data: list[dict]):
         await self.set(self.airport_key(city), data, TTL_AIRPORT_DATA)
+
+    # Analytics + Advisor helpers
+
+    def analytics_key(self, city_code: str, direction: str = "ARRIVING") -> str:
+        return f"analytics:busiest:{city_code}:{direction}"
+
+    def most_booked_key(self, origin: str, period: str) -> str:
+        return f"analytics:booked:{origin}:{period}"
+
+    def advisor_key(self, search_id: str) -> str:
+        return f"advisor:{search_id}"
+
+    def month_calendar_key(self, origin: str, dest: str, year: int, month: int, cabin: str) -> str:
+        return f"monthcal:{origin}:{dest}:{year}:{month:02d}:{cabin}"
+
+    async def get_analytics(self, city_code: str, direction: str = "ARRIVING") -> dict | None:
+        return await self.get(self.analytics_key(city_code, direction))
+
+    async def set_analytics(self, city_code: str, data: dict, direction: str = "ARRIVING"):
+        await self.set(self.analytics_key(city_code, direction), data, TTL_ANALYTICS)
+
+    async def get_advisor(self, search_id: str) -> dict | None:
+        return await self.get(self.advisor_key(search_id))
+
+    async def set_advisor(self, search_id: str, data: dict):
+        await self.set(self.advisor_key(search_id), data, TTL_ADVISOR)
+
+    async def get_month_calendar(self, origin: str, dest: str, year: int, month: int, cabin: str) -> dict | None:
+        return await self.get(self.month_calendar_key(origin, dest, year, month, cabin))
+
+    async def set_month_calendar(self, origin: str, dest: str, year: int, month: int, cabin: str, data: dict):
+        await self.set(self.month_calendar_key(origin, dest, year, month, cabin), data, TTL_MONTH_CALENDAR)
 
     async def close(self):
         if self._redis:

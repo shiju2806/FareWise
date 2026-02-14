@@ -280,6 +280,98 @@ class AmadeusClient:
                 minutes = int(m_part)
         return hours * 60 + minutes
 
+    async def get_busiest_period(
+        self,
+        city_code: str,
+        period: str = "2024",
+        direction: str = "ARRIVING",
+    ) -> list[dict]:
+        """Get busiest travel months for a city from Amadeus analytics.
+
+        Args:
+            city_code: IATA city code (e.g., "LON", "NYC")
+            period: Year to query (test tier has limited data, 2017-2024)
+            direction: "ARRIVING" or "DEPARTING"
+
+        Returns list of {month, travelers_count, period} dicts.
+        """
+        if not settings.amadeus_client_id:
+            return []
+
+        try:
+            async with self._semaphore:
+                await self._ensure_token()
+                client = await self._get_client()
+                resp = await client.get(
+                    "/v1/travel/analytics/air-traffic/busiest-period",
+                    params={
+                        "cityCode": city_code,
+                        "period": period,
+                        "direction": direction,
+                    },
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+                if resp.status_code == 429:
+                    await asyncio.sleep(1)
+                    return []
+                resp.raise_for_status()
+                data = resp.json()
+                return [
+                    {
+                        "month": int(item["period"][-2:]) if len(item.get("period", "")) >= 6 else 0,
+                        "period": item.get("period", ""),
+                        "travelers_score": float(item.get("analytics", {}).get("travelers", {}).get("score", 0)),
+                    }
+                    for item in data.get("data", [])
+                ]
+        except Exception as e:
+            logger.warning(f"Amadeus busiest-period error for {city_code}: {e}")
+            return []
+
+    async def get_most_booked(
+        self,
+        origin_code: str,
+        period: str = "2024-01",
+    ) -> list[dict]:
+        """Get most booked destinations from an origin city.
+
+        Args:
+            origin_code: IATA city code (e.g., "YYZ", "LON")
+            period: Month to query (YYYY-MM format)
+
+        Returns list of {destination, travelers_score} dicts.
+        """
+        if not settings.amadeus_client_id:
+            return []
+
+        try:
+            async with self._semaphore:
+                await self._ensure_token()
+                client = await self._get_client()
+                resp = await client.get(
+                    "/v1/travel/analytics/air-traffic/booked",
+                    params={
+                        "originCityCode": origin_code,
+                        "period": period,
+                    },
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+                if resp.status_code == 429:
+                    await asyncio.sleep(1)
+                    return []
+                resp.raise_for_status()
+                data = resp.json()
+                return [
+                    {
+                        "destination": item.get("destination", ""),
+                        "travelers_score": float(item.get("analytics", {}).get("travelers", {}).get("score", 0)),
+                    }
+                    for item in data.get("data", [])
+                ]
+        except Exception as e:
+            logger.warning(f"Amadeus most-booked error for {origin_code}: {e}")
+            return []
+
     async def close(self):
         if self._client:
             await self._client.aclose()
