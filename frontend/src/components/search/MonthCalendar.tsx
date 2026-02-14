@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import type { PriceCalendar } from "@/types/search";
 import { usePriceIntelStore } from "@/stores/priceIntelStore";
 import { MonthCalendarCell } from "./MonthCalendarCell";
@@ -7,6 +7,10 @@ const DAY_NAMES = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
+];
+const MONTH_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
 const PERCENTILE_STYLES: Record<string, string> = {
@@ -24,6 +28,15 @@ interface Props {
   onDateSelect: (date: string) => void;
 }
 
+/** Get year/month for the Nth month offset from a base. */
+function offsetMonth(year: number, month: number, delta: number) {
+  let m = month + delta;
+  let y = year;
+  while (m > 12) { m -= 12; y++; }
+  while (m < 1) { m += 12; y--; }
+  return { year: y, month: m };
+}
+
 export function MonthCalendar({
   legId,
   preferredDate,
@@ -35,23 +48,19 @@ export function MonthCalendar({
   const [viewYear, setViewYear] = useState(prefDate.getFullYear());
   const [viewMonth, setViewMonth] = useState(prefDate.getMonth() + 1);
 
+  // Second month
+  const second = offsetMonth(viewYear, viewMonth, 1);
+
   const {
     monthData, monthLoading, fetchMonthCalendar,
     priceContext, priceContextLoading, fetchPriceContext,
   } = usePriceIntelStore();
 
-  const monthKey = `${legId}:${viewYear}-${String(viewMonth).padStart(2, "0")}`;
-  const storeMonthData = monthData[monthKey];
-  const isMonthLoading = monthLoading[monthKey] ?? false;
-
-  const prefMonth = prefDate.getMonth() + 1;
-  const prefYear = prefDate.getFullYear();
-  const isInitialMonth = viewYear === prefYear && viewMonth === prefMonth;
-
-  // Always fetch calendar data (fills gaps with Google Flights sample dates)
+  // Fetch both months
   useEffect(() => {
     fetchMonthCalendar(legId, viewYear, viewMonth);
-  }, [legId, viewYear, viewMonth, fetchMonthCalendar]);
+    fetchMonthCalendar(legId, second.year, second.month);
+  }, [legId, viewYear, viewMonth, second.year, second.month, fetchMonthCalendar]);
 
   // Fetch price context when a date is selected
   useEffect(() => {
@@ -64,26 +73,17 @@ export function MonthCalendar({
   const context = contextKey ? priceContext[contextKey] : undefined;
   const contextLoading = contextKey ? priceContextLoading[contextKey] : false;
 
-  // Merge initial calendar data with lazy-loaded month data
-  const mergedDates = useMemo(() => {
-    const dates: Record<string, { min_price: number; has_direct: boolean; option_count: number }> = {};
-    const mp = `${viewYear}-${String(viewMonth).padStart(2, "0")}`;
+  /** Merge initial search data + store data for a given year/month. */
+  const getMergedDates = useCallback(
+    (y: number, m: number) => {
+      const dates: Record<string, { min_price: number; has_direct: boolean; option_count: number }> = {};
+      const mp = `${y}-${String(m).padStart(2, "0")}`;
+      const key = `${legId}:${mp}`;
+      const stored = monthData[key];
 
-    // Initial search data first (has accurate stop info)
-    for (const [dateStr, data] of Object.entries(initialCalendar.dates)) {
-      if (dateStr.startsWith(mp)) {
-        dates[dateStr] = {
-          min_price: data.min_price,
-          has_direct: data.has_direct ?? false,
-          option_count: data.option_count,
-        };
-      }
-    }
-
-    // Merge lazy-loaded data (don't overwrite real search data)
-    if (storeMonthData?.dates) {
-      for (const [dateStr, data] of Object.entries(storeMonthData.dates)) {
-        if (!(dateStr in dates)) {
+      // Initial search data first
+      for (const [dateStr, data] of Object.entries(initialCalendar.dates)) {
+        if (dateStr.startsWith(mp)) {
           dates[dateStr] = {
             min_price: data.min_price,
             has_direct: data.has_direct ?? false,
@@ -91,13 +91,33 @@ export function MonthCalendar({
           };
         }
       }
-    }
 
-    return dates;
-  }, [initialCalendar.dates, storeMonthData, viewYear, viewMonth]);
+      // Merge lazy-loaded data
+      if (stored?.dates) {
+        for (const [dateStr, data] of Object.entries(stored.dates)) {
+          if (!(dateStr in dates)) {
+            dates[dateStr] = {
+              min_price: data.min_price,
+              has_direct: data.has_direct ?? false,
+              option_count: data.option_count,
+            };
+          }
+        }
+      }
+
+      return dates;
+    },
+    [initialCalendar.dates, monthData, legId]
+  );
+
+  const mergedLeft = useMemo(() => getMergedDates(viewYear, viewMonth), [getMergedDates, viewYear, viewMonth]);
+  const mergedRight = useMemo(() => getMergedDates(second.year, second.month), [getMergedDates, second.year, second.month]);
+
+  // Compute quartiles across BOTH months for consistent coloring
+  const allMerged = useMemo(() => ({ ...mergedLeft, ...mergedRight }), [mergedLeft, mergedRight]);
 
   const priceQuartiles = useMemo(() => {
-    const prices = Object.values(mergedDates)
+    const prices = Object.values(allMerged)
       .map((d) => d.min_price)
       .filter((p) => p > 0)
       .sort((a, b) => a - b);
@@ -106,7 +126,7 @@ export function MonthCalendar({
     const q1 = prices[Math.floor(prices.length * 0.25)];
     const q3 = prices[Math.floor(prices.length * 0.75)];
     return { q1, q3 };
-  }, [mergedDates]);
+  }, [allMerged]);
 
   function getQuartile(price: number | null): "cheap" | "mid" | "expensive" | "none" {
     if (price === null || price === 0) return "none";
@@ -115,54 +135,33 @@ export function MonthCalendar({
     return "mid";
   }
 
-  // Build calendar grid
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const firstDay = new Date(viewYear, viewMonth - 1, 1);
-  const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
-  let startDow = firstDay.getDay() - 1;
-  if (startDow < 0) startDow = 6;
-
-  const cells: { day: number; dateStr: string }[] = [];
-  for (let i = 0; i < startDow; i++) {
-    cells.push({ day: 0, dateStr: "" });
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${viewYear}-${String(viewMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-    cells.push({ day: d, dateStr });
-  }
-  while (cells.length % 7 !== 0) {
-    cells.push({ day: 0, dateStr: "" });
+  function navigateMonth(delta: number) {
+    const next = offsetMonth(viewYear, viewMonth, delta);
+    setViewYear(next.year);
+    setViewMonth(next.month);
   }
 
-  // Find cheapest
+  // Stats across both months
+  const allPrices = Object.values(allMerged).map((d) => d.min_price).filter((p) => p > 0);
   let cheapestDate: string | null = null;
   let cheapestPrice = Infinity;
-  for (const [dateStr, data] of Object.entries(mergedDates)) {
+  for (const [dateStr, data] of Object.entries(allMerged)) {
     if (data.min_price > 0 && data.min_price < cheapestPrice) {
       cheapestPrice = data.min_price;
       cheapestDate = dateStr;
     }
   }
-
-  const allPrices = Object.values(mergedDates)
-    .map((d) => d.min_price)
-    .filter((p) => p > 0);
   const avgPrice = allPrices.length > 0
     ? Math.round(allPrices.reduce((a, b) => a + b, 0) / allPrices.length)
     : 0;
-  const directCount = Object.values(mergedDates).filter((d) => d.has_direct).length;
-  const hasData = Object.keys(mergedDates).length > 0;
+  const directCount = Object.values(allMerged).filter((d) => d.has_direct).length;
+  const hasData = allPrices.length > 0;
 
-  function navigateMonth(delta: number) {
-    let newMonth = viewMonth + delta;
-    let newYear = viewYear;
-    if (newMonth > 12) { newMonth = 1; newYear++; }
-    else if (newMonth < 1) { newMonth = 12; newYear--; }
-    setViewYear(newYear);
-    setViewMonth(newMonth);
-  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const leftLoading = monthLoading[`${legId}:${viewYear}-${String(viewMonth).padStart(2, "0")}`] ?? false;
+  const rightLoading = monthLoading[`${legId}:${second.year}-${String(second.month).padStart(2, "0")}`] ?? false;
 
   return (
     <div className="space-y-2">
@@ -176,79 +175,67 @@ export function MonthCalendar({
         )}
       </div>
 
-      {/* Month navigation */}
+      {/* Navigation — step 2 months */}
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={() => navigateMonth(-1)}
+          onClick={() => navigateMonth(-2)}
           className="px-2 py-1 rounded hover:bg-muted text-sm"
         >
           &larr;
         </button>
         <span className="text-sm font-medium">
-          {MONTH_NAMES[viewMonth - 1]} {viewYear}
+          {MONTH_SHORT[viewMonth - 1]} &ndash; {MONTH_SHORT[second.month - 1]} {second.year !== viewYear ? `${viewYear}/${second.year}` : viewYear}
         </span>
         <button
           type="button"
-          onClick={() => navigateMonth(1)}
+          onClick={() => navigateMonth(2)}
           className="px-2 py-1 rounded hover:bg-muted text-sm"
         >
           &rarr;
         </button>
       </div>
 
-      {/* Day-of-week headers + cells */}
-      <div className="grid grid-cols-7 gap-1">
-        {DAY_NAMES.map((d) => (
-          <div key={d} className="text-center text-[9px] font-medium text-muted-foreground py-0.5">
-            {d}
-          </div>
-        ))}
-
-        {cells.map((cell, i) => {
-          const data = cell.dateStr ? mergedDates[cell.dateStr] : null;
-          const cellDate = cell.dateStr ? new Date(cell.dateStr + "T00:00:00") : null;
-          const isPast = cellDate ? cellDate < today : false;
-          const cellIsLoading = cell.day > 0 && !isPast && !data && isMonthLoading;
-
-          return (
-            <MonthCalendarCell
-              key={i}
-              day={cell.day}
-              dateStr={cell.dateStr}
-              price={data?.min_price ?? null}
-              hasDirect={data?.has_direct ?? false}
-              isPreferred={cell.dateStr === preferredDate}
-              isCheapest={cell.dateStr === cheapestDate}
-              isSelected={cell.dateStr === selectedDate}
-              isPast={isPast}
-              isLoading={cellIsLoading}
-              quartile={getQuartile(data?.min_price ?? null)}
-              onClick={onDateSelect}
-            />
-          );
-        })}
+      {/* Two-month grid */}
+      <div className="grid grid-cols-2 gap-4">
+        <SingleMonthGrid
+          year={viewYear}
+          month={viewMonth}
+          mergedDates={mergedLeft}
+          isLoading={leftLoading}
+          today={today}
+          preferredDate={preferredDate}
+          cheapestDate={cheapestDate}
+          selectedDate={selectedDate}
+          getQuartile={getQuartile}
+          onDateSelect={onDateSelect}
+        />
+        <SingleMonthGrid
+          year={second.year}
+          month={second.month}
+          mergedDates={mergedRight}
+          isLoading={rightLoading}
+          today={today}
+          preferredDate={preferredDate}
+          cheapestDate={cheapestDate}
+          selectedDate={selectedDate}
+          getQuartile={getQuartile}
+          onDateSelect={onDateSelect}
+        />
       </div>
 
-      {/* Loading indicator for lazy-loaded months */}
-      {isMonthLoading && !hasData && (
-        <div className="text-center py-3 text-xs text-muted-foreground animate-pulse">
-          Loading prices for {MONTH_NAMES[viewMonth - 1]}...
+      {/* Loading */}
+      {(leftLoading || rightLoading) && !hasData && (
+        <div className="text-center py-2 text-xs text-muted-foreground animate-pulse">
+          Loading prices...
         </div>
       )}
 
-      {/* No data message (only after loading completes) */}
-      {!isMonthLoading && !hasData && !isInitialMonth && storeMonthData !== undefined && (
-        <div className="text-center py-3 text-xs text-muted-foreground">
-          No price data for {MONTH_NAMES[viewMonth - 1]}.
-        </div>
-      )}
-
-      {/* Price Context indicator — shown when a date is selected */}
+      {/* Price Context — shown when a date is selected */}
       {selectedDate && (contextLoading || (context?.available && context.historical)) && (
         <div className="rounded-md border border-border bg-muted/30 px-3 py-2 space-y-1">
           <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-            Historical Price Context
+            Market Price Range &middot; {selectedDate}
           </p>
           {contextLoading ? (
             <div className="h-3 w-48 bg-muted animate-pulse rounded" />
@@ -274,7 +261,7 @@ export function MonthCalendar({
                   </span>
                   {" "}
                   <span className="text-muted-foreground">
-                    ({context.percentile}th percentile historically
+                    ({context.percentile}th percentile
                     {context.current_price ? ` at $${Math.round(context.current_price)}` : ""})
                   </span>
                 </p>
@@ -318,6 +305,92 @@ export function MonthCalendar({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Single-month grid (used twice for the 2-month layout)              */
+/* ------------------------------------------------------------------ */
+
+interface GridProps {
+  year: number;
+  month: number;
+  mergedDates: Record<string, { min_price: number; has_direct: boolean; option_count: number }>;
+  isLoading: boolean;
+  today: Date;
+  preferredDate: string;
+  cheapestDate: string | null;
+  selectedDate: string | null;
+  getQuartile: (price: number | null) => "cheap" | "mid" | "expensive" | "none";
+  onDateSelect: (date: string) => void;
+}
+
+function SingleMonthGrid({
+  year,
+  month,
+  mergedDates,
+  isLoading,
+  today,
+  preferredDate,
+  cheapestDate,
+  selectedDate,
+  getQuartile,
+  onDateSelect,
+}: GridProps) {
+  const firstDay = new Date(year, month - 1, 1);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  let startDow = firstDay.getDay() - 1;
+  if (startDow < 0) startDow = 6;
+
+  const cells: { day: number; dateStr: string }[] = [];
+  for (let i = 0; i < startDow; i++) {
+    cells.push({ day: 0, dateStr: "" });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    cells.push({ day: d, dateStr });
+  }
+  while (cells.length % 7 !== 0) {
+    cells.push({ day: 0, dateStr: "" });
+  }
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-center mb-1">
+        {MONTH_NAMES[month - 1]} {year}
+      </p>
+      <div className="grid grid-cols-7 gap-0.5">
+        {DAY_NAMES.map((d) => (
+          <div key={d} className="text-center text-[8px] font-medium text-muted-foreground py-0.5">
+            {d}
+          </div>
+        ))}
+
+        {cells.map((cell, i) => {
+          const data = cell.dateStr ? mergedDates[cell.dateStr] : null;
+          const cellDate = cell.dateStr ? new Date(cell.dateStr + "T00:00:00") : null;
+          const isPast = cellDate ? cellDate < today : false;
+          const cellIsLoading = cell.day > 0 && !isPast && !data && isLoading;
+
+          return (
+            <MonthCalendarCell
+              key={i}
+              day={cell.day}
+              dateStr={cell.dateStr}
+              price={data?.min_price ?? null}
+              hasDirect={data?.has_direct ?? false}
+              isPreferred={cell.dateStr === preferredDate}
+              isCheapest={cell.dateStr === cheapestDate}
+              isSelected={cell.dateStr === selectedDate}
+              isPast={isPast}
+              isLoading={cellIsLoading}
+              quartile={getQuartile(data?.min_price ?? null)}
+              onClick={onDateSelect}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }

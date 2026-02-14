@@ -12,6 +12,15 @@ interface Props {
   onClick: (date: string) => void;
 }
 
+/** Format price compactly: $1.5k for >=1000, $843 for <1000 */
+function fmtPrice(price: number): string {
+  if (price >= 1000) {
+    const k = price / 1000;
+    return `$${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
+  }
+  return `$${Math.round(price)}`;
+}
+
 export function MonthCalendarCell({
   day,
   dateStr,
@@ -26,12 +35,12 @@ export function MonthCalendarCell({
   onClick,
 }: Props) {
   if (day === 0) {
-    return <div className="h-12" />;
+    return <div className="h-11" />;
   }
 
   if (isPast) {
     return (
-      <div className="h-12 rounded bg-muted/30 flex items-center justify-center text-muted-foreground/40 text-[10px]">
+      <div className="h-11 rounded bg-muted/30 flex items-center justify-center text-muted-foreground/40 text-[10px]">
         {day}
       </div>
     );
@@ -39,7 +48,7 @@ export function MonthCalendarCell({
 
   if (isLoading) {
     return (
-      <div className="h-12 rounded bg-muted animate-pulse flex items-center justify-center text-[10px] text-muted-foreground">
+      <div className="h-11 rounded bg-muted animate-pulse flex items-center justify-center text-[10px] text-muted-foreground">
         {day}
       </div>
     );
@@ -65,19 +74,19 @@ export function MonthCalendarCell({
       type="button"
       onClick={() => price !== null && onClick(dateStr)}
       disabled={price === null}
-      className={`h-12 rounded flex flex-col items-center justify-center transition-all cursor-pointer ${bgColor} ${borderClass} ${
+      className={`h-11 rounded flex flex-col items-center justify-center transition-all cursor-pointer ${bgColor} ${borderClass} ${
         price === null ? "opacity-40 cursor-not-allowed" : ""
       }`}
     >
-      <span className={`text-[9px] leading-none ${isPreferred ? "font-bold text-blue-700" : "text-muted-foreground"}`}>
+      <span className={`text-[8px] leading-none ${isPreferred ? "font-bold text-blue-700" : "text-muted-foreground"}`}>
         {day}
       </span>
       {price !== null ? (
         <>
-          <span className="font-semibold text-[11px] leading-tight">
-            ${Math.round(price)}
+          <span className="font-semibold text-[10px] leading-tight">
+            {fmtPrice(price)}
           </span>
-          <span className="text-[8px] text-muted-foreground leading-none">
+          <span className="text-[7px] text-muted-foreground leading-none">
             {hasDirect ? "\u25CF" : "\u2715"}
           </span>
         </>
