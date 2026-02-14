@@ -106,6 +106,151 @@ async def search_date(
         return None
 
 
+def _parse_duration_str(dur: str) -> int:
+    """Parse duration like '10 hr 10 min' or '7 hr 5 min' into minutes."""
+    if not dur:
+        return 0
+    minutes = 0
+    parts = dur.lower().replace("hours", "hr").replace("hour", "hr").replace("mins", "min")
+    if "hr" in parts:
+        h_part, rest = parts.split("hr", 1)
+        minutes += int(h_part.strip()) * 60
+        parts = rest
+    if "min" in parts:
+        m_part = parts.replace("min", "").strip()
+        if m_part:
+            minutes += int(m_part)
+    return minutes
+
+
+def _parse_departure_to_iso(dep_str: str, departure_date: date) -> str:
+    """Parse '8:45 PM on Mon, Jun 15' into ISO datetime string."""
+    if not dep_str:
+        return departure_date.isoformat() + "T00:00:00"
+    try:
+        # Extract time part (before 'on')
+        time_part = dep_str.split(" on ")[0].strip() if " on " in dep_str else dep_str.strip()
+        from datetime import datetime
+        t = datetime.strptime(time_part, "%I:%M %p")
+        return f"{departure_date.isoformat()}T{t.strftime('%H:%M:%S')}"
+    except (ValueError, IndexError):
+        return departure_date.isoformat() + "T00:00:00"
+
+
+def _parse_arrival_to_iso(arr_str: str, departure_date: date, time_ahead: str | None) -> str:
+    """Parse arrival time + day offset into ISO datetime string."""
+    if not arr_str:
+        return departure_date.isoformat() + "T23:59:00"
+    try:
+        time_part = arr_str.split(" on ")[0].strip() if " on " in arr_str else arr_str.strip()
+        from datetime import datetime, timedelta
+        t = datetime.strptime(time_part, "%I:%M %p")
+        arr_date = departure_date
+        if time_ahead and "+1" in time_ahead:
+            arr_date = departure_date + timedelta(days=1)
+        elif time_ahead and "+2" in time_ahead:
+            arr_date = departure_date + timedelta(days=2)
+        return f"{arr_date.isoformat()}T{t.strftime('%H:%M:%S')}"
+    except (ValueError, IndexError):
+        return departure_date.isoformat() + "T23:59:00"
+
+
+async def search_flights(
+    origin: str,
+    destination: str,
+    departure_date: date,
+    cabin_class: str = "economy",
+) -> list[dict]:
+    """Search Google Flights and return flights in the same dict format as Amadeus.
+
+    Each flight dict has: airline_code, airline_name, flight_numbers,
+    origin_airport, destination_airport, departure_time, arrival_time,
+    duration_minutes, stops, stop_airports, price, currency, cabin_class,
+    seats_remaining, raw_response.
+    """
+    try:
+        from fast_flights import FlightData, Passengers, get_flights
+
+        seat = CABIN_MAP.get(cabin_class, "economy")
+        date_str = departure_date.isoformat()
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: get_flights(
+                flight_data=[
+                    FlightData(
+                        date=date_str,
+                        from_airport=origin,
+                        to_airport=destination,
+                    )
+                ],
+                trip="one-way",
+                seat=seat,
+                passengers=Passengers(adults=1),
+            ),
+        )
+
+        if not result or not result.flights:
+            return []
+
+        flights = []
+        seen = set()  # Deduplicate by airline+price+departure
+
+        for f in result.flights:
+            price = _parse_price(f.price)
+            if not price or price <= 0:
+                continue
+            if not f.name and not f.departure:
+                continue
+
+            airline_name = f.name or "Unknown"
+            # Extract first airline as code (first word, uppercase, max 2 chars)
+            airline_parts = airline_name.split(",")
+            primary_airline = airline_parts[0].strip()
+            # Generate a pseudo airline code from name
+            words = primary_airline.split()
+            airline_code = "".join(w[0] for w in words[:2]).upper() if words else "XX"
+
+            dep_iso = _parse_departure_to_iso(f.departure, departure_date)
+            arr_iso = _parse_arrival_to_iso(f.arrival, departure_date, f.arrival_time_ahead)
+            duration = _parse_duration_str(f.duration)
+
+            # Deduplicate
+            dedup_key = (airline_name, price, dep_iso)
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+
+            stops = f.stops if isinstance(f.stops, int) else 0
+
+            flights.append({
+                "airline_code": airline_code,
+                "airline_name": primary_airline,
+                "flight_numbers": f"{airline_code}{len(flights)+100}",  # Placeholder
+                "origin_airport": origin,
+                "destination_airport": destination,
+                "departure_time": dep_iso,
+                "arrival_time": arr_iso,
+                "duration_minutes": duration,
+                "stops": stops,
+                "stop_airports": None,
+                "price": price,
+                "currency": "CAD",
+                "cabin_class": cabin_class,
+                "seats_remaining": None,  # Google Flights doesn't provide this
+                "source": "google_flights",
+            })
+
+        # Sort by price
+        flights.sort(key=lambda x: x["price"])
+        return flights
+
+    except Exception as e:
+        logger.warning(f"Google Flights search failed for {origin}-{destination} on {departure_date}: {e}")
+        return []
+
+
 async def search_month_sample(
     origin: str,
     destination: str,

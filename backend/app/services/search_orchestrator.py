@@ -327,22 +327,28 @@ class SearchOrchestrator:
         is_alt_airport: bool,
         is_alt_date: bool,
     ) -> list[dict]:
-        """Search with cache layer."""
+        """Search with cache layer. Google Flights primary, Amadeus fallback."""
         date_str = departure_date.isoformat()
 
         # Check cache
         cached = await cache_service.get_flights(origin, destination, date_str, cabin_class)
         if cached is not None:
-            # Tag with alt flags
             for f in cached:
                 f["is_alternate_airport"] = is_alt_airport
                 f["is_alternate_date"] = is_alt_date
             return cached
 
-        # Call Amadeus
-        flights = await amadeus_client.search_flight_offers(
-            origin, destination, departure_date, cabin_class, adults
+        # Primary: Google Flights (real market data)
+        from app.services import google_flights_client
+        flights = await google_flights_client.search_flights(
+            origin, destination, departure_date, cabin_class
         )
+
+        # Fallback: Amadeus (if Google Flights returned nothing)
+        if not flights:
+            flights = await amadeus_client.search_flight_offers(
+                origin, destination, departure_date, cabin_class, adults
+            )
 
         # Tag with flags
         for f in flights:
