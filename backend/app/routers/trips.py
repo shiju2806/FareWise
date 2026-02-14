@@ -261,6 +261,65 @@ async def update_legs(
     return TripResponse.model_validate(trip)
 
 
+@router.post("/{trip_id}/add-leg", response_model=TripResponse)
+async def add_leg(
+    trip_id: uuid.UUID,
+    req: TripLegBase,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Add a single leg to an existing trip (e.g., return flight)."""
+    result = await db.execute(
+        select(Trip)
+        .where(Trip.id == trip_id, Trip.traveler_id == user.id)
+        .options(selectinload(Trip.legs))
+    )
+    trip = result.scalar_one_or_none()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    if trip.status not in ("draft", "searching"):
+        raise HTTPException(status_code=400, detail="Can only edit draft or searching trips")
+
+    # Resolve airports
+    origin_airport = ""
+    dest_airport = ""
+    if req.origin_city:
+        primary = await airport_service.get_primary_airport(db, req.origin_city)
+        if primary:
+            origin_airport = primary["iata"]
+    if req.destination_city:
+        primary = await airport_service.get_primary_airport(db, req.destination_city)
+        if primary:
+            dest_airport = primary["iata"]
+
+    next_seq = max((l.sequence for l in trip.legs), default=0) + 1
+    new_leg = TripLeg(
+        trip_id=trip.id,
+        sequence=next_seq,
+        origin_airport=origin_airport,
+        origin_city=req.origin_city,
+        destination_airport=dest_airport,
+        destination_city=req.destination_city,
+        preferred_date=req.preferred_date,
+        flexibility_days=req.flexibility_days,
+        cabin_class=req.cabin_class,
+        passengers=req.passengers,
+    )
+    db.add(new_leg)
+
+    # Update title
+    legs_dicts = [
+        {"origin_city": l.origin_city, "destination_city": l.destination_city}
+        for l in trip.legs
+    ] + [{"origin_city": req.origin_city, "destination_city": req.destination_city}]
+    trip.title = _build_title(legs_dicts)
+
+    await db.commit()
+    await db.refresh(trip, ["legs"])
+    return TripResponse.model_validate(trip)
+
+
 @router.patch("/legs/{leg_id}", response_model=TripLegResponse)
 async def patch_leg(
     leg_id: uuid.UUID,

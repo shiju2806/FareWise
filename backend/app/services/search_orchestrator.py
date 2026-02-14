@@ -433,33 +433,53 @@ class SearchOrchestrator:
         if existing_dates:
             dates_data.update(existing_dates)
 
-        # Call Amadeus Flight Cheapest Date Search (1 API call for the month)
-        today = date.today()
-        first_of_month = date(year, month, 1)
-        anchor_date = max(first_of_month, today)
+        # Primary: Google Flights via fast-flights (works for any route)
+        from app.services import google_flights_client
 
+        google_ok = False
         try:
-            cheapest_dates = await amadeus_client.search_cheapest_dates(
+            gf_data = await google_flights_client.search_month_sample(
                 origin=origin,
                 destination=destination,
-                departure_date=anchor_date,
+                year=year,
+                month=month,
+                cabin_class=cabin_class,
             )
-
-            month_prefix = f"{year}-{month:02d}"
-            for entry in cheapest_dates:
-                d = entry.get("date", "")
-                if not d.startswith(month_prefix):
-                    continue
-                # Don't overwrite real search data (which has stop info)
+            for d, entry in gf_data.items():
                 if d not in dates_data:
-                    dates_data[d] = {
-                        "min_price": round(entry["price"], 2),
-                        "has_direct": False,  # cheapest-dates API has no stop info
-                        "option_count": 1,
-                        "source": "cheapest_dates",
-                    }
+                    dates_data[d] = entry
+            if gf_data:
+                google_ok = True
         except Exception as e:
-            logger.warning(f"Cheapest dates API failed for {origin}-{destination}: {e}")
+            logger.warning(f"Google Flights calendar failed for {origin}-{destination}: {e}")
+
+        # Fallback 1: Amadeus Flight Cheapest Date Search
+        if not google_ok and not dates_data:
+            today = date.today()
+            first_of_month = date(year, month, 1)
+            anchor_date = max(first_of_month, today)
+
+            try:
+                cheapest_dates = await amadeus_client.search_cheapest_dates(
+                    origin=origin,
+                    destination=destination,
+                    departure_date=anchor_date,
+                )
+
+                month_prefix = f"{year}-{month:02d}"
+                for entry in cheapest_dates:
+                    d = entry.get("date", "")
+                    if not d.startswith(month_prefix):
+                        continue
+                    if d not in dates_data:
+                        dates_data[d] = {
+                            "min_price": round(entry["price"], 2),
+                            "has_direct": False,
+                            "option_count": 1,
+                            "source": "cheapest_dates",
+                        }
+            except Exception as e:
+                logger.warning(f"Amadeus cheapest dates failed for {origin}-{destination}: {e}")
 
         # Compute month stats
         all_prices = [v["min_price"] for v in dates_data.values() if v.get("min_price", 0) > 0]

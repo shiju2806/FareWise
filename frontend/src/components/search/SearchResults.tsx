@@ -180,26 +180,30 @@ export function SearchResults({
         onSelect={onFlightSelect}
       />
 
+      {/* Date filter banner */}
+      {selectedDate && (
+        <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 flex items-center justify-between">
+          <span className="text-sm font-medium">
+            Showing flights for <span className="font-semibold text-primary">{selectedDate}</span>
+            {" "}({filteredOptions.length} of {result.all_options.length})
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedDate(null)}
+            className="text-xs text-primary hover:underline font-medium"
+          >
+            Show all dates
+          </button>
+        </div>
+      )}
+
       {/* All Options */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">
-            {selectedDate ? (
-              <>
-                Flights on {selectedDate} ({filteredOptions.length})
-                <button
-                  type="button"
-                  onClick={() => { setSelectedDate(null); }}
-                  className="ml-2 text-xs text-primary hover:underline font-normal"
-                >
-                  Clear filter
-                </button>
-              </>
-            ) : (
-              `All Options (${result.all_options.length})`
-            )}
-          </h3>
-        </div>
+        <h3 className="text-sm font-semibold">
+          {selectedDate
+            ? `Flights on ${selectedDate} (${filteredOptions.length})`
+            : `All Options (${result.all_options.length})`}
+        </h3>
 
         {filteredOptions.length === 0 && selectedDate && (
           <p className="text-sm text-muted-foreground py-4 text-center">

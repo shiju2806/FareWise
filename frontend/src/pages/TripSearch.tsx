@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useTripStore } from "@/stores/tripStore";
 import { useSearchStore } from "@/stores/searchStore";
 import { useEventStore } from "@/stores/eventStore";
@@ -31,6 +32,9 @@ export default function TripSearch() {
   );
   const [confirming, setConfirming] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [showReturnForm, setShowReturnForm] = useState(false);
+  const [returnDate, setReturnDate] = useState("");
+  const [addingReturn, setAddingReturn] = useState(false);
 
   useEffect(() => {
     if (tripId) {
@@ -149,6 +153,70 @@ export default function TripSearch() {
               {leg.destination_airport}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Add return flight */}
+      {currentTrip.legs.length === 1 && activeLeg && (
+        <div className="rounded-md border border-border p-3">
+          {!showReturnForm ? (
+            <button
+              type="button"
+              onClick={() => setShowReturnForm(true)}
+              className="text-sm text-primary hover:underline font-medium"
+            >
+              + Add return flight ({activeLeg.destination_city} &rarr; {activeLeg.origin_city})
+            </button>
+          ) : (
+            <div className="flex items-end gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Return: {activeLeg.destination_city} &rarr; {activeLeg.origin_city}
+                </label>
+                <Input
+                  type="date"
+                  value={returnDate}
+                  min={activeLeg.preferred_date || undefined}
+                  onChange={(e) => setReturnDate(e.target.value)}
+                />
+              </div>
+              <Button
+                size="sm"
+                disabled={!returnDate || addingReturn}
+                onClick={async () => {
+                  if (!tripId || !returnDate) return;
+                  setAddingReturn(true);
+                  try {
+                    await apiClient.post(`/trips/${tripId}/add-leg`, {
+                      origin_city: activeLeg.destination_city,
+                      destination_city: activeLeg.origin_city,
+                      preferred_date: returnDate,
+                      flexibility_days: activeLeg.flexibility_days,
+                      cabin_class: activeLeg.cabin_class,
+                      passengers: activeLeg.passengers,
+                    });
+                    // Refresh trip to pick up the new leg
+                    await fetchTrip(tripId);
+                    setShowReturnForm(false);
+                    setReturnDate("");
+                  } catch {
+                    // Silently handle
+                  } finally {
+                    setAddingReturn(false);
+                  }
+                }}
+              >
+                {addingReturn ? "Adding..." : "Add Return"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => { setShowReturnForm(false); setReturnDate(""); }}
+              >
+                Cancel
+              </Button>
+            </div>
+          )}
         </div>
       )}
 

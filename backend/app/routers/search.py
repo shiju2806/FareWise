@@ -374,18 +374,7 @@ async def get_price_context(
     if cached:
         return cached
 
-    # Fetch from Amadeus
-    metrics = await amadeus_client.get_price_metrics(
-        origin=leg.origin_airport,
-        destination=leg.destination_airport,
-        departure_date=parsed_date,
-    )
-
-    if not metrics:
-        result = {"available": False, "message": "Historical price data not available for this route"}
-        return result
-
-    # Compute where current cheapest price falls
+    # Get current cheapest price from most recent search
     current_price = None
     search_result = await db.execute(
         select(SearchLog)
@@ -397,31 +386,62 @@ async def get_price_context(
     if search_log and search_log.cheapest_price:
         current_price = float(search_log.cheapest_price)
 
-    percentile = None
-    percentile_label = None
-    if current_price and metrics.get("min") and metrics.get("max"):
-        price_range = metrics["max"] - metrics["min"]
-        if price_range > 0:
-            percentile = round(((current_price - metrics["min"]) / price_range) * 100)
-            percentile = max(0, min(100, percentile))
-            if percentile <= 25:
-                percentile_label = "excellent"
-            elif percentile <= 50:
-                percentile_label = "good"
-            elif percentile <= 75:
-                percentile_label = "average"
-            else:
-                percentile_label = "high"
+    # Primary: Google Flights — compute real quartiles from flight results
+    from app.services import google_flights_client
 
-    response = {
-        "available": True,
-        "route": f"{leg.origin_airport}-{leg.destination_airport}",
-        "date": target_date,
-        "historical": metrics,
-        "current_price": current_price,
-        "percentile": percentile,
-        "percentile_label": percentile_label,
-    }
+    response = None
+    try:
+        gf_context = await google_flights_client.get_price_context(
+            origin=leg.origin_airport,
+            destination=leg.destination_airport,
+            departure_date=parsed_date,
+            cabin_class=leg.cabin_class,
+            current_price=current_price,
+        )
+        if gf_context:
+            response = gf_context
+    except Exception as e:
+        logger.warning(f"Google Flights price context failed: {e}")
+
+    # Fallback: Amadeus price metrics
+    if not response:
+        try:
+            metrics = await amadeus_client.get_price_metrics(
+                origin=leg.origin_airport,
+                destination=leg.destination_airport,
+                departure_date=parsed_date,
+            )
+            if metrics:
+                percentile = None
+                percentile_label = None
+                if current_price and metrics.get("min") and metrics.get("max"):
+                    price_range = metrics["max"] - metrics["min"]
+                    if price_range > 0:
+                        percentile = round(((current_price - metrics["min"]) / price_range) * 100)
+                        percentile = max(0, min(100, percentile))
+                        if percentile <= 25:
+                            percentile_label = "excellent"
+                        elif percentile <= 50:
+                            percentile_label = "good"
+                        elif percentile <= 75:
+                            percentile_label = "average"
+                        else:
+                            percentile_label = "high"
+
+                response = {
+                    "available": True,
+                    "route": f"{leg.origin_airport}-{leg.destination_airport}",
+                    "date": target_date,
+                    "historical": metrics,
+                    "current_price": current_price,
+                    "percentile": percentile,
+                    "percentile_label": percentile_label,
+                }
+        except Exception as e:
+            logger.warning(f"Amadeus price metrics failed: {e}")
+
+    if not response:
+        return {"available": False, "message": "Price data not available for this route"}
 
     # Cache the result
     await cache_service.set_price_metrics(

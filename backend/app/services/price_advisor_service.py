@@ -186,14 +186,17 @@ class PriceAdvisorService:
             seats_remaining=min_seats,
         )
 
-        # Historical price quartiles from Amadeus Price Analysis
+        # Historical price context — try Google Flights first, then Amadeus
+        from app.services import google_flights_client
         from app.services.amadeus_client import amadeus_client
 
         price_metrics = None
         price_percentile = None
         price_percentile_label = None
+        google_assessment = None
 
         try:
+            # Check cache first
             cached_metrics = await cache_service.get_price_metrics(
                 origin, destination, departure_date.isoformat()
             )
@@ -201,27 +204,43 @@ class PriceAdvisorService:
                 price_metrics = cached_metrics.get("historical")
                 price_percentile = cached_metrics.get("percentile")
                 price_percentile_label = cached_metrics.get("percentile_label")
+                google_assessment = cached_metrics.get("google_assessment")
             elif cached_metrics is None:
-                raw_metrics = await amadeus_client.get_price_metrics(
+                # Primary: Google Flights
+                gf_context = await google_flights_client.get_price_context(
                     origin=origin,
                     destination=destination,
                     departure_date=departure_date,
+                    cabin_class=cabin_class,
+                    current_price=price_stats["cheapest"],
                 )
-                if raw_metrics:
-                    price_metrics = raw_metrics
-                    cheapest = price_stats["cheapest"]
-                    price_range = raw_metrics.get("max", 0) - raw_metrics.get("min", 0)
-                    if price_range > 0 and cheapest > 0:
-                        price_percentile = round(((cheapest - raw_metrics["min"]) / price_range) * 100)
-                        price_percentile = max(0, min(100, price_percentile))
-                        if price_percentile <= 25:
-                            price_percentile_label = "excellent"
-                        elif price_percentile <= 50:
-                            price_percentile_label = "good"
-                        elif price_percentile <= 75:
-                            price_percentile_label = "average"
-                        else:
-                            price_percentile_label = "high"
+                if gf_context and gf_context.get("available"):
+                    price_metrics = gf_context.get("historical")
+                    price_percentile = gf_context.get("percentile")
+                    price_percentile_label = gf_context.get("percentile_label")
+                    google_assessment = gf_context.get("google_assessment")
+                else:
+                    # Fallback: Amadeus
+                    raw_metrics = await amadeus_client.get_price_metrics(
+                        origin=origin,
+                        destination=destination,
+                        departure_date=departure_date,
+                    )
+                    if raw_metrics:
+                        price_metrics = raw_metrics
+                        cheapest = price_stats["cheapest"]
+                        price_range = raw_metrics.get("max", 0) - raw_metrics.get("min", 0)
+                        if price_range > 0 and cheapest > 0:
+                            price_percentile = round(((cheapest - raw_metrics["min"]) / price_range) * 100)
+                            price_percentile = max(0, min(100, price_percentile))
+                            if price_percentile <= 25:
+                                price_percentile_label = "excellent"
+                            elif price_percentile <= 50:
+                                price_percentile_label = "good"
+                            elif price_percentile <= 75:
+                                price_percentile_label = "average"
+                            else:
+                                price_percentile_label = "high"
         except Exception as e:
             logger.warning(f"Failed to fetch price metrics: {e}")
 
@@ -235,6 +254,7 @@ class PriceAdvisorService:
             "price_metrics": price_metrics,
             "price_percentile": price_percentile,
             "price_percentile_label": price_percentile_label,
+            "google_assessment": google_assessment,
         }
 
     async def _generate_llm_advice(
@@ -379,6 +399,10 @@ class PriceAdvisorService:
                     f"Current cheapest (${ps['cheapest']:.0f}) is at the "
                     f"{signals['price_percentile']}th percentile historically "
                     f"({signals['price_percentile_label']})"
+                )
+            if signals.get("google_assessment"):
+                sections.append(
+                    f"Google Flights rates this route/date as: {signals['google_assessment'].upper()} price"
                 )
 
         if forecast.get("factors"):
