@@ -134,9 +134,16 @@ class PriceAdvisorService:
         direct_prices = [f.get("price", 0) for f in direct_flights if f.get("price", 0) > 0]
         connecting_prices = [f.get("price", 0) for f in connecting_flights if f.get("price", 0) > 0]
 
-        # Seats remaining (minimum across all options)
-        seats = [f.get("seats_remaining") for f in flights if f.get("seats_remaining") is not None]
-        min_seats = min(seats) if seats else None
+        # Seats remaining — use the cheapest flight's seats, not global minimum
+        # Global min is misleading (e.g., 1 seat on a $10k flight is irrelevant)
+        cheapest_price = min(prices) if prices else 0
+        cheapest_flights = [f for f in flights if f.get("price", 0) == cheapest_price]
+        if cheapest_flights and cheapest_flights[0].get("seats_remaining") is not None:
+            min_seats = cheapest_flights[0]["seats_remaining"]
+        else:
+            # Fallback: median seats across all options
+            seats = sorted([f.get("seats_remaining") for f in flights if f.get("seats_remaining") is not None])
+            min_seats = seats[len(seats) // 2] if seats else None
 
         price_stats = {
             "cheapest": min(prices) if prices else 0,
@@ -345,7 +352,7 @@ class PriceAdvisorService:
         if ps.get("cheapest_connecting"):
             sections.append(f"Cheapest connecting: ${ps['cheapest_connecting']:.0f} CAD")
         if ps.get("min_seats_remaining") is not None:
-            sections.append(f"Minimum seats remaining: {ps['min_seats_remaining']}")
+            sections.append(f"Seats remaining at cheapest fare: {ps['min_seats_remaining']}")
 
         sections.extend([
             f"",

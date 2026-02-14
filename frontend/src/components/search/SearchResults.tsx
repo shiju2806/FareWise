@@ -51,8 +51,11 @@ export function SearchResults({
     onDateSelect(date);
   }
 
-  // Filter by selected date if set
-  const filteredOptions = selectedDate
+  // Filter by selected date — only if that date has actual flight results
+  const dateHasFlights = selectedDate
+    ? result.all_options.some((f) => f.departure_time.startsWith(selectedDate))
+    : false;
+  const filteredOptions = selectedDate && dateHasFlights
     ? result.all_options.filter((f) => f.departure_time.startsWith(selectedDate))
     : result.all_options;
 
@@ -184,15 +187,20 @@ export function SearchResults({
       {selectedDate && (
         <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 flex items-center justify-between">
           <span className="text-sm font-medium">
-            Showing flights for <span className="font-semibold text-primary">{selectedDate}</span>
-            {" "}({filteredOptions.length} of {result.all_options.length})
+            {dateHasFlights ? (
+              <>Showing flights for <span className="font-semibold text-primary">{selectedDate}</span>
+              {" "}({filteredOptions.length} of {result.all_options.length})</>
+            ) : (
+              <>Price context loaded for <span className="font-semibold text-primary">{selectedDate}</span>
+              {" "}<span className="text-muted-foreground">(see calendar above)</span></>
+            )}
           </span>
           <button
             type="button"
             onClick={() => setSelectedDate(null)}
             className="text-xs text-primary hover:underline font-medium"
           >
-            Show all dates
+            Clear selection
           </button>
         </div>
       )}
@@ -205,7 +213,7 @@ export function SearchResults({
             : `All Options (${result.all_options.length})`}
         </h3>
 
-        {filteredOptions.length === 0 && selectedDate && (
+        {filteredOptions.length === 0 && selectedDate && dateHasFlights && (
           <p className="text-sm text-muted-foreground py-4 text-center">
             No flights found for {selectedDate}.{" "}
             <button
