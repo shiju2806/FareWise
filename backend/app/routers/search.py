@@ -320,10 +320,26 @@ async def get_price_advice(
         for opt in options
     ]
 
-    # Get events if available
+    # Get events — from stored data or fetch on-demand
     events = None
     if search_log.events_during_travel:
         events = search_log.events_during_travel
+    else:
+        try:
+            from app.services.event_service import event_service
+            event_data = await event_service.get_events_for_leg(
+                db=db,
+                destination_city=leg.destination_city,
+                preferred_date=leg.preferred_date,
+                flexibility_days=leg.flexibility_days,
+            )
+            if event_data.get("events"):
+                events = event_data["events"]
+                # Persist for future calls
+                search_log.events_during_travel = events
+                await db.commit()
+        except Exception as e:
+            logger.warning(f"Failed to fetch events for advisor: {e}")
 
     # Get trip for city names
     trip_result = await db.execute(select(Trip).where(Trip.id == leg.trip_id))

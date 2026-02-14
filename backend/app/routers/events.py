@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from collections import defaultdict
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.search_log import FlightOption, SearchLog
 from app.models.trip import Trip, TripLeg
 from app.models.user import User
 from app.services.event_service import event_service
@@ -35,11 +37,37 @@ async def get_leg_events(
     if not leg:
         raise HTTPException(status_code=404, detail="Trip leg not found")
 
+    # Fetch actual price data from most recent search to cross-validate
+    price_calendar: dict | None = None
+    search_result = await db.execute(
+        select(SearchLog)
+        .where(SearchLog.trip_leg_id == leg.id)
+        .order_by(SearchLog.searched_at.desc())
+        .limit(1)
+    )
+    search_log = search_result.scalar_one_or_none()
+    if search_log:
+        opts_result = await db.execute(
+            select(FlightOption).where(FlightOption.search_log_id == search_log.id)
+        )
+        options = opts_result.scalars().all()
+        by_date: dict[str, list] = defaultdict(list)
+        for opt in options:
+            if opt.departure_time and opt.price:
+                d = opt.departure_time.date().isoformat()
+                by_date[d].append(opt)
+        if by_date:
+            price_calendar = {}
+            for d, opts in by_date.items():
+                prices = [float(o.price) for o in opts]
+                price_calendar[d] = {"min_price": round(min(prices), 2)}
+
     data = await event_service.get_events_for_leg(
         db=db,
         destination_city=leg.destination_city,
         preferred_date=leg.preferred_date,
         flexibility_days=leg.flexibility_days,
+        price_calendar=price_calendar,
     )
 
     return {

@@ -33,7 +33,7 @@ export default function NewTrip() {
       <div>
         <h2 className="text-2xl font-bold tracking-tight">Plan a Trip</h2>
         <p className="text-muted-foreground mt-1">
-          Describe your trip in natural language or fill in the form below.
+          Enter your travel details to find the best fares.
         </p>
       </div>
 
@@ -84,9 +84,6 @@ export default function NewTrip() {
               <h3 className="text-lg font-semibold">
                 {currentTrip.title || "Your Trip"}
               </h3>
-              <p className="text-sm text-muted-foreground">
-                Status: {currentTrip.status}
-              </p>
             </div>
             <Button
               onClick={() =>
@@ -96,12 +93,6 @@ export default function NewTrip() {
               Search Flights
             </Button>
           </div>
-
-          {currentTrip.parsed_input?.interpretation_notes && (
-            <p className="text-sm text-muted-foreground italic">
-              {String(currentTrip.parsed_input.interpretation_notes)}
-            </p>
-          )}
 
           <LegList legs={currentTrip.legs} />
         </div>

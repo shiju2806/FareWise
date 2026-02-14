@@ -452,6 +452,8 @@ class SearchOrchestrator:
                 cabin_class=cabin_class,
             )
             for d, entry in gf_data.items():
+                # Never overwrite prices from the initial flight search —
+                # those are authoritative (same flights user sees in listing)
                 if d not in dates_data:
                     dates_data[d] = entry
             if gf_data:

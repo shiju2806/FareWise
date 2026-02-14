@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { SearchResult } from "@/types/search";
 import type { FlightOption } from "@/types/flight";
 import type { DateEvent, EventData } from "@/types/event";
@@ -43,25 +43,55 @@ export function SearchResults({
   const [whyPriceDate, setWhyPriceDate] = useState<string | null>(null);
   const [showEventPanel, setShowEventPanel] = useState(false);
   const [showWatchForm, setShowWatchForm] = useState(false);
+  const [airlineFilter, setAirlineFilter] = useState<Set<string>>(new Set());
 
   function handleDateSelect(date: string) {
-    // Toggle: clicking the same date again clears the filter
     const newDate = date === selectedDate ? null : date;
     setSelectedDate(newDate);
     onDateSelect(date);
+  }
+
+  // Cheapest flight per airline
+  const cheapestByAirline = useMemo(() => {
+    const map = new Map<string, FlightOption>();
+    for (const f of result.all_options) {
+      const name = f.airline_name;
+      if (!map.has(name) || f.price < map.get(name)!.price) {
+        map.set(name, f);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => a.price - b.price);
+  }, [result.all_options]);
+
+  function toggleAirline(name: string) {
+    setAirlineFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else {
+        next.add(name);
+      }
+      return next;
+    });
   }
 
   // Filter by selected date — only if that date has actual flight results
   const dateHasFlights = selectedDate
     ? result.all_options.some((f) => f.departure_time.startsWith(selectedDate))
     : false;
-  const filteredOptions = selectedDate && dateHasFlights
+
+  let filteredOptions = selectedDate && dateHasFlights
     ? result.all_options.filter((f) => f.departure_time.startsWith(selectedDate))
     : result.all_options;
 
+  // Apply airline filter
+  if (airlineFilter.size > 0) {
+    filteredOptions = filteredOptions.filter((f) => airlineFilter.has(f.airline_name));
+  }
+
   const displayOptions = showAll
     ? filteredOptions
-    : filteredOptions.slice(0, 5);
+    : filteredOptions.slice(0, 10);
 
   // Empty state
   if (result.all_options.length === 0) {
@@ -205,12 +235,48 @@ export function SearchResults({
         </div>
       )}
 
+      {/* Cheapest by Airline */}
+      {cheapestByAirline.length > 1 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold">Cheapest by Airline</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+            {cheapestByAirline.map((f) => (
+              <button
+                key={f.airline_name}
+                type="button"
+                onClick={() => toggleAirline(f.airline_name)}
+                className={`rounded-lg border p-2 text-left transition-all hover:shadow-sm ${
+                  airlineFilter.has(f.airline_name)
+                    ? "border-primary bg-primary/5 ring-1 ring-primary/30"
+                    : "border-border bg-card hover:border-primary/30"
+                }`}
+              >
+                <div className="text-xs font-semibold truncate">{f.airline_name}</div>
+                <div className="text-sm font-bold mt-0.5">${Math.round(f.price)}</div>
+                <div className="text-[10px] text-muted-foreground">
+                  {f.stops === 0 ? "Nonstop" : `${f.stops} stop${f.stops > 1 ? "s" : ""}`}
+                </div>
+              </button>
+            ))}
+          </div>
+          {airlineFilter.size > 0 && (
+            <button
+              type="button"
+              onClick={() => setAirlineFilter(new Set())}
+              className="text-xs text-primary hover:underline"
+            >
+              Clear airline filter ({airlineFilter.size} selected)
+            </button>
+          )}
+        </div>
+      )}
+
       {/* All Options */}
       <div className="space-y-3">
         <h3 className="text-sm font-semibold">
           {selectedDate
             ? `Flights on ${selectedDate} (${filteredOptions.length})`
-            : `All Options (${result.all_options.length})`}
+            : `All Options (${filteredOptions.length})`}
         </h3>
 
         {filteredOptions.length === 0 && selectedDate && dateHasFlights && (
@@ -236,7 +302,7 @@ export function SearchResults({
           ))}
         </div>
 
-        {filteredOptions.length > 5 && (
+        {filteredOptions.length > 10 && (
           <button
             type="button"
             onClick={() => setShowAll(!showAll)}

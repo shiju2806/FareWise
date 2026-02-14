@@ -91,8 +91,14 @@ class EventService:
         destination_city: str,
         preferred_date: date,
         flexibility_days: int = 3,
+        price_calendar: dict | None = None,
     ) -> dict:
-        """Get events relevant to a trip leg with impact analysis."""
+        """Get events relevant to a trip leg with impact analysis.
+
+        Args:
+            price_calendar: Optional dict mapping date strings to
+                {min_price, ...} for cross-validating recommendations.
+        """
         date_from = preferred_date - timedelta(days=flexibility_days)
         date_to = preferred_date + timedelta(days=flexibility_days)
 
@@ -126,7 +132,9 @@ class EventService:
             "total_events": len(events),
             "highest_impact_event": highest_impact["title"] if highest_impact else None,
             "peak_impact_dates": peak_dates[:3],
-            "recommendation": self._generate_recommendation(events, preferred_date, date_events),
+            "recommendation": self._generate_recommendation(
+                events, preferred_date, date_events, price_calendar
+            ),
         }
 
         return {
@@ -140,33 +148,63 @@ class EventService:
         events: list[dict],
         preferred_date: date,
         date_events: dict[str, list[dict]],
+        price_calendar: dict | None = None,
     ) -> str | None:
-        """Generate a human-readable recommendation based on event analysis."""
+        """Generate a recommendation, cross-validated against actual prices when available."""
         if not events:
             return None
 
         pref_str = preferred_date.isoformat()
         pref_events = date_events.get(pref_str, [])
 
+        # Get actual price data if available
+        cal_dates = price_calendar or {}
+        pref_price = cal_dates.get(pref_str, {}).get("min_price")
+
         high_impact = [e for e in pref_events if e["impact_level"] in ("high", "very_high")]
         if high_impact:
             names = ", ".join(e["title"] for e in high_impact[:2])
-            max_increase = max(e["price_increase_pct"] for e in high_impact)
-            # Find a lighter date
+
+            # Find a lighter date (fewer/lower-impact events)
             lighter_dates = [
                 d for d in sorted(date_events.keys())
                 if d != pref_str and all(
                     e["impact_level"] in ("low", "medium") for e in date_events[d]
                 )
             ]
-            alt = f" Consider {lighter_dates[0]} for lower prices." if lighter_dates else ""
+
+            # Cross-validate against actual prices
+            if pref_price and lighter_dates and cal_dates:
+                alt_date = lighter_dates[0]
+                alt_price = cal_dates.get(alt_date, {}).get("min_price")
+
+                if alt_price and alt_price > 0:
+                    if pref_price <= alt_price:
+                        # Event date is actually cheaper — don't suggest alternatives
+                        return (
+                            f"Major event on {pref_str}: {names}. "
+                            f"Despite higher demand, current fares (${int(pref_price)}) "
+                            f"are competitive with nearby dates."
+                        )
+                    else:
+                        # Event date IS more expensive — use actual difference
+                        pct_diff = round((pref_price - alt_price) / alt_price * 100)
+                        return (
+                            f"Major event on {pref_str}: {names}. "
+                            f"Fares are ~{pct_diff}% higher (${int(pref_price)} vs "
+                            f"${int(alt_price)} on {alt_date})."
+                        )
+
+            # No price data — use estimate but qualify it
+            max_increase = max(e["price_increase_pct"] for e in high_impact)
+            alt = f" Consider {lighter_dates[0]} instead." if lighter_dates else ""
             return (
-                f"Prices may be ~{int(max_increase*100)}% higher on {pref_str} "
-                f"due to {names}.{alt}"
+                f"Major event on {pref_str}: {names}. "
+                f"Prices may be ~{int(max_increase*100)}% higher (estimate).{alt}"
             )
 
         if pref_events:
-            return f"{len(pref_events)} event(s) on your preferred date may slightly increase prices."
+            return f"{len(pref_events)} event(s) on your preferred date may slightly affect prices."
 
         return None
 

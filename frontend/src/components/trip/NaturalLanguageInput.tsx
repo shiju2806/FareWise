@@ -27,8 +27,7 @@ export function NaturalLanguageInput({ onSubmit, loading }: Props) {
       <CardHeader>
         <CardTitle>Describe your trip</CardTitle>
         <CardDescription>
-          Tell us where you want to go in plain English. Our AI will parse your
-          itinerary.
+          Destinations, dates, cabin class — we'll find the best options.
         </CardDescription>
       </CardHeader>
       <CardContent>
