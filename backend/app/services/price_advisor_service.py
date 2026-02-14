@@ -45,15 +45,20 @@ Guidelines:
 - "watch" = price is volatile, monitor daily
 - Be specific with dollar amounts and dates
 - Factor in corporate travel context (expense reports, approval timelines)
-- If seats are very limited (<=3), always recommend "book" regardless of price forecast
 - If departure is within 7 days, always recommend "book" (no time to wait)
 - Provide 3-6 factors, prioritized by impact
-- Keep analysis professional and data-driven, no hype
+- Keep analysis professional and data-driven — no urgency hype or alarming language
 - Use CAD currency throughout
-- If historical price context is available, use it to strengthen your recommendation
-- If current price is below Q1 (25th percentile), this is a strong buy signal — emphasize this
-- If current price is above Q3 (75th percentile), recommend waiting unless seats or timing override
-- Reference the percentile in your analysis (e.g., "This price is in the bottom 20% historically")
+
+IMPORTANT — Market range context:
+- The "MARKET PRICE RANGE" section shows the spread of prices from DIFFERENT airlines on the SAME date
+- This is NOT historical pricing over time — it's today's market snapshot across carriers
+- A price near the bottom of this range means it's competitively priced TODAY, not "historically exceptional"
+- Small differences from the range minimum (<10%) are normal fare variation, not remarkable
+- Google Flights' own assessment (LOW/TYPICAL/HIGH) is the most reliable signal — it is backed by Google's actual historical data. TRUST this assessment over computed percentiles
+- If Google says TYPICAL but our percentile says 0th, trust Google — the price is normal
+- Do NOT manufacture urgency from minor price differences between data sources
+- Seats remaining refers to the cheapest fare only; other fares may have plenty of seats
 
 Respond with ONLY the JSON, no markdown formatting, no preamble."""
 
@@ -394,22 +399,22 @@ class PriceAdvisorService:
             pm = signals["price_metrics"]
             sections.extend([
                 f"",
-                f"=== HISTORICAL PRICE CONTEXT ===",
-                f"Historical minimum: ${pm.get('min', 0):.0f} CAD",
-                f"Historical Q1 (25th percentile): ${pm.get('q1', 0):.0f} CAD",
-                f"Historical median: ${pm.get('median', 0):.0f} CAD",
-                f"Historical Q3 (75th percentile): ${pm.get('q3', 0):.0f} CAD",
-                f"Historical maximum: ${pm.get('max', 0):.0f} CAD",
+                f"=== MARKET PRICE RANGE (same-day, across airlines) ===",
+                f"Cheapest available: ${pm.get('min', 0):.0f} CAD",
+                f"25th percentile: ${pm.get('q1', 0):.0f} CAD",
+                f"Median: ${pm.get('median', 0):.0f} CAD",
+                f"75th percentile: ${pm.get('q3', 0):.0f} CAD",
+                f"Most expensive: ${pm.get('max', 0):.0f} CAD",
             ])
             if signals.get("price_percentile") is not None:
                 sections.append(
-                    f"Current cheapest (${ps['cheapest']:.0f}) is at the "
-                    f"{signals['price_percentile']}th percentile historically "
+                    f"Current cheapest (${ps['cheapest']:.0f}) falls at the "
+                    f"{signals['price_percentile']}th percentile of today's market range "
                     f"({signals['price_percentile_label']})"
                 )
             if signals.get("google_assessment"):
                 sections.append(
-                    f"Google Flights rates this route/date as: {signals['google_assessment'].upper()} price"
+                    f"Google Flights assessment (based on real historical data): {signals['google_assessment'].upper()} price"
                 )
 
         if forecast.get("factors"):
