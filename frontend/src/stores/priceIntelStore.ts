@@ -35,7 +35,10 @@ export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
 
   fetchMonthCalendar: async (legId: string, year: number, month: number) => {
     const key = `${legId}:${year}-${String(month).padStart(2, "0")}`;
-    if (get().monthData[key] || get().monthLoading[key]) return;
+    const existing = get().monthData[key];
+    // Re-fetch if cached result had no dates (stale empty response)
+    const hasData = existing && Object.keys(existing.dates || {}).length > 0;
+    if (hasData || get().monthLoading[key]) return;
 
     set((s) => ({
       monthLoading: { ...s.monthLoading, [key]: true },
@@ -92,7 +95,9 @@ export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
 
   fetchPriceContext: async (legId: string, date: string) => {
     const key = `${legId}:${date}`;
-    if (get().priceContext[key] || get().priceContextLoading[key]) return;
+    const cached = get().priceContext[key];
+    // Re-fetch if cached result was unavailable (stale failure)
+    if ((cached && cached.available) || get().priceContextLoading[key]) return;
 
     set((s) => ({
       priceContextLoading: { ...s.priceContextLoading, [key]: true },
