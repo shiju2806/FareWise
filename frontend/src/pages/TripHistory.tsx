@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useTripStore } from "@/stores/tripStore";
+import { useAuthStore } from "@/stores/authStore";
+import { useApprovalStore } from "@/stores/approvalStore";
 import { LegList } from "@/components/trip/LegList";
 
 const statusBadge: Record<string, string> = {
@@ -15,19 +17,44 @@ const statusBadge: Record<string, string> = {
 
 export default function TripHistory() {
   const { trips, loading, fetchTrips, deleteTrip } = useTripStore();
+  const user = useAuthStore((s) => s.user);
+  const { counts, fetchApprovals } = useApprovalStore();
 
   useEffect(() => {
     fetchTrips();
-  }, [fetchTrips]);
+    if (user?.role === "manager" || user?.role === "admin") {
+      fetchApprovals();
+    }
+  }, [fetchTrips, fetchApprovals, user]);
+
+  const draftCount = trips.filter((t) => t.status === "draft").length;
+  const submittedCount = trips.filter((t) => t.status === "submitted").length;
+  const approvedCount = trips.filter((t) => t.status === "approved").length;
+  const isManager = user?.role === "manager" || user?.role === "admin";
 
   return (
     <div className="space-y-6">
+      {/* Header with stats bar */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">My Trips</h2>
-          <p className="text-muted-foreground mt-1">
-            View and manage your travel itineraries.
-          </p>
+          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+            <span>{trips.length} trips</span>
+            <span className="text-border">|</span>
+            <span>{draftCount} draft</span>
+            <span className="text-border">|</span>
+            <span className="text-amber-600">{submittedCount} submitted</span>
+            <span className="text-border">|</span>
+            <span className="text-green-600">{approvedCount} approved</span>
+            {isManager && counts.pending > 0 && (
+              <>
+                <span className="text-border">|</span>
+                <Link to="/approvals" className="text-primary font-medium hover:underline">
+                  {counts.pending} pending approval{counts.pending > 1 ? "s" : ""}
+                </Link>
+              </>
+            )}
+          </div>
         </div>
         <Link to="/trips/new">
           <Button>New Trip</Button>

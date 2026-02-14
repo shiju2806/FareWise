@@ -3,7 +3,7 @@ import type { PriceCalendar } from "@/types/search";
 import { usePriceIntelStore } from "@/stores/priceIntelStore";
 import { MonthCalendarCell } from "./MonthCalendarCell";
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAY_NAMES = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
   "July", "August", "September", "October", "November", "December",
@@ -24,27 +24,25 @@ export function MonthCalendar({
   selectedDate,
   onDateSelect,
 }: Props) {
-  // Parse preferred date to get initial month
   const prefDate = new Date(preferredDate + "T00:00:00");
   const [viewYear, setViewYear] = useState(prefDate.getFullYear());
-  const [viewMonth, setViewMonth] = useState(prefDate.getMonth() + 1); // 1-based
+  const [viewMonth, setViewMonth] = useState(prefDate.getMonth() + 1);
 
-  const { monthData, monthLoading, fetchMonthCalendar } = usePriceIntelStore();
+  const { monthData, monthLoading, monthError, fetchMonthCalendar } = usePriceIntelStore();
   const monthKey = `${legId}:${viewYear}-${String(viewMonth).padStart(2, "0")}`;
 
-  // Fetch month data when view changes
   useEffect(() => {
     fetchMonthCalendar(legId, viewYear, viewMonth);
   }, [legId, viewYear, viewMonth, fetchMonthCalendar]);
 
   const isLoading = monthLoading[monthKey] ?? false;
+  const hasError = monthError[monthKey] ?? false;
   const loadedMonth = monthData[monthKey];
 
   // Merge initial calendar data with loaded month data
   const mergedDates = useMemo(() => {
     const dates: Record<string, { min_price: number; has_direct: boolean; option_count: number }> = {};
 
-    // Add initial search data
     for (const [dateStr, data] of Object.entries(initialCalendar.dates)) {
       if (dateStr.startsWith(`${viewYear}-${String(viewMonth).padStart(2, "0")}`)) {
         dates[dateStr] = {
@@ -55,7 +53,6 @@ export function MonthCalendar({
       }
     }
 
-    // Overlay month data (takes priority since it may be more complete)
     if (loadedMonth?.dates) {
       for (const [dateStr, data] of Object.entries(loadedMonth.dates)) {
         dates[dateStr] = {
@@ -69,7 +66,6 @@ export function MonthCalendar({
     return dates;
   }, [initialCalendar.dates, loadedMonth, viewYear, viewMonth]);
 
-  // Compute price quartiles for coloring
   const priceQuartiles = useMemo(() => {
     const prices = Object.values(mergedDates)
       .map((d) => d.min_price)
@@ -95,13 +91,10 @@ export function MonthCalendar({
 
   const firstDay = new Date(viewYear, viewMonth - 1, 1);
   const daysInMonth = new Date(viewYear, viewMonth, 0).getDate();
-  // Monday = 0, Sunday = 6 for our grid
   let startDow = firstDay.getDay() - 1;
   if (startDow < 0) startDow = 6;
 
-  // Build rows
   const cells: { day: number; dateStr: string }[] = [];
-  // Padding for first week
   for (let i = 0; i < startDow; i++) {
     cells.push({ day: 0, dateStr: "" });
   }
@@ -109,12 +102,11 @@ export function MonthCalendar({
     const dateStr = `${viewYear}-${String(viewMonth).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     cells.push({ day: d, dateStr });
   }
-  // Pad to complete last row
   while (cells.length % 7 !== 0) {
     cells.push({ day: 0, dateStr: "" });
   }
 
-  // Find cheapest date in current view
+  // Find cheapest
   let cheapestDate: string | null = null;
   let cheapestPrice = Infinity;
   for (const [dateStr, data] of Object.entries(mergedDates)) {
@@ -124,8 +116,6 @@ export function MonthCalendar({
     }
   }
 
-  // Month stats
-  const stats = loadedMonth?.month_stats;
   const allPrices = Object.values(mergedDates)
     .map((d) => d.min_price)
     .filter((p) => p > 0);
@@ -133,33 +123,28 @@ export function MonthCalendar({
     ? Math.round(allPrices.reduce((a, b) => a + b, 0) / allPrices.length)
     : 0;
   const directCount = Object.values(mergedDates).filter((d) => d.has_direct).length;
+  const hasData = Object.keys(mergedDates).length > 0;
+  const doneLoading = !isLoading && (loadedMonth || hasError);
 
   function navigateMonth(delta: number) {
     let newMonth = viewMonth + delta;
     let newYear = viewYear;
-    if (newMonth > 12) {
-      newMonth = 1;
-      newYear++;
-    } else if (newMonth < 1) {
-      newMonth = 12;
-      newYear--;
-    }
+    if (newMonth > 12) { newMonth = 1; newYear++; }
+    else if (newMonth < 1) { newMonth = 12; newYear--; }
     setViewYear(newYear);
     setViewMonth(newMonth);
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold">Price Calendar</h3>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          {initialCalendar.savings_if_flexible > 0 && (
-            <span className="text-emerald-600 font-medium">
-              Save ${Math.round(initialCalendar.savings_if_flexible)} with flexible dates
-            </span>
-          )}
-        </div>
+        {initialCalendar.savings_if_flexible > 0 && (
+          <span className="text-xs text-emerald-600 font-medium">
+            Save ${Math.round(initialCalendar.savings_if_flexible)} with flexible dates
+          </span>
+        )}
       </div>
 
       {/* Month navigation */}
@@ -167,7 +152,7 @@ export function MonthCalendar({
         <button
           type="button"
           onClick={() => navigateMonth(-1)}
-          className="p-1.5 rounded hover:bg-muted text-sm"
+          className="px-2 py-1 rounded hover:bg-muted text-sm"
         >
           &larr;
         </button>
@@ -177,21 +162,20 @@ export function MonthCalendar({
         <button
           type="button"
           onClick={() => navigateMonth(1)}
-          className="p-1.5 rounded hover:bg-muted text-sm"
+          className="px-2 py-1 rounded hover:bg-muted text-sm"
         >
           &rarr;
         </button>
       </div>
 
-      {/* Day-of-week headers */}
+      {/* Day-of-week headers + cells */}
       <div className="grid grid-cols-7 gap-1">
         {DAY_NAMES.map((d) => (
-          <div key={d} className="text-center text-[10px] font-medium text-muted-foreground py-1">
+          <div key={d} className="text-center text-[9px] font-medium text-muted-foreground py-0.5">
             {d}
           </div>
         ))}
 
-        {/* Calendar cells */}
         {cells.map((cell, i) => {
           const data = cell.dateStr ? mergedDates[cell.dateStr] : null;
           const cellDate = cell.dateStr ? new Date(cell.dateStr + "T00:00:00") : null;
@@ -217,47 +201,55 @@ export function MonthCalendar({
         })}
       </div>
 
-      {/* Month stats + legend */}
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
-        <div className="flex gap-3">
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-emerald-50 border border-emerald-300" />
-            Cheap
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-amber-50 border border-amber-300" />
-            Average
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded bg-red-50 border border-red-300" />
-            Expensive
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-foreground" />
-            {" "}Direct
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="text-[9px]">{"\u2715"}</span>
-            {" "}Connecting
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-3 h-3 rounded ring-2 ring-blue-500" />
-            Preferred
-          </span>
+      {/* No data message for non-preferred months */}
+      {doneLoading && !hasData && (
+        <div className="text-center py-4 text-xs text-muted-foreground">
+          No flight data available for {MONTH_NAMES[viewMonth - 1]} {viewYear}.
+          Amadeus may not have pricing this far out.
         </div>
+      )}
 
-        <div className="flex gap-4">
-          {cheapestPrice < Infinity && (
-            <span>
-              Cheapest: <span className="font-medium text-emerald-600">${Math.round(cheapestPrice)}</span>
-            </span>
-          )}
-          {avgPrice > 0 && (
-            <span>Avg: ${avgPrice}</span>
-          )}
-          <span>{directCount} days with direct flights</span>
+      {/* Loading indicator */}
+      {isLoading && !hasData && (
+        <div className="text-center py-3 text-xs text-muted-foreground">
+          Loading prices for {MONTH_NAMES[viewMonth - 1]}...
         </div>
-      </div>
+      )}
+
+      {/* Legend + stats */}
+      {hasData && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-[9px] text-muted-foreground">
+          <div className="flex gap-2">
+            <span className="flex items-center gap-0.5">
+              <span className="w-2.5 h-2.5 rounded bg-emerald-50 border border-emerald-300" />
+              Cheap
+            </span>
+            <span className="flex items-center gap-0.5">
+              <span className="w-2.5 h-2.5 rounded bg-amber-50 border border-amber-300" />
+              Avg
+            </span>
+            <span className="flex items-center gap-0.5">
+              <span className="w-2.5 h-2.5 rounded bg-red-50 border border-red-300" />
+              Exp
+            </span>
+            <span className="flex items-center gap-0.5">
+              <span className="text-[8px]">{"\u25CF"}</span> Direct
+            </span>
+            <span className="flex items-center gap-0.5">
+              <span className="text-[8px]">{"\u2715"}</span> Connect
+            </span>
+          </div>
+          <div className="flex gap-3">
+            {cheapestPrice < Infinity && (
+              <span>
+                Low: <span className="font-medium text-emerald-600">${Math.round(cheapestPrice)}</span>
+              </span>
+            )}
+            {avgPrice > 0 && <span>Avg: ${avgPrice}</span>}
+            <span>{directCount} direct</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,15 +3,13 @@ import type { MonthCalendarData, PriceAdvice, PriceTrend } from "@/types/search"
 import apiClient from "@/api/client";
 
 interface PriceIntelState {
-  // Month calendar data, keyed by "legId:YYYY-MM"
   monthData: Record<string, MonthCalendarData>;
   monthLoading: Record<string, boolean>;
+  monthError: Record<string, boolean>;
 
-  // Advisor data, keyed by legId
   advice: Record<string, PriceAdvice>;
   adviceLoading: Record<string, boolean>;
 
-  // Price trend, keyed by legId
   trends: Record<string, PriceTrend>;
   trendLoading: Record<string, boolean>;
 
@@ -23,6 +21,7 @@ interface PriceIntelState {
 export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
   monthData: {},
   monthLoading: {},
+  monthError: {},
   advice: {},
   adviceLoading: {},
   trends: {},
@@ -30,11 +29,12 @@ export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
 
   fetchMonthCalendar: async (legId: string, year: number, month: number) => {
     const key = `${legId}:${year}-${String(month).padStart(2, "0")}`;
-
-    // Skip if already loaded or loading
     if (get().monthData[key] || get().monthLoading[key]) return;
 
-    set((s) => ({ monthLoading: { ...s.monthLoading, [key]: true } }));
+    set((s) => ({
+      monthLoading: { ...s.monthLoading, [key]: true },
+      monthError: { ...s.monthError, [key]: false },
+    }));
 
     try {
       const res = await apiClient.get(
@@ -45,7 +45,10 @@ export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
         monthLoading: { ...s.monthLoading, [key]: false },
       }));
     } catch {
-      set((s) => ({ monthLoading: { ...s.monthLoading, [key]: false } }));
+      set((s) => ({
+        monthLoading: { ...s.monthLoading, [key]: false },
+        monthError: { ...s.monthError, [key]: true },
+      }));
     }
   },
 

@@ -26,21 +26,20 @@ export function MonthCalendarCell({
   onClick,
 }: Props) {
   if (day === 0) {
-    // Empty cell for padding
-    return <div className="w-full aspect-square" />;
+    return <div className="h-12" />;
   }
 
   if (isPast) {
     return (
-      <div className="w-full aspect-square rounded-md bg-muted/30 flex flex-col items-center justify-center text-muted-foreground/40 text-xs">
-        <span>{day}</span>
+      <div className="h-12 rounded bg-muted/30 flex items-center justify-center text-muted-foreground/40 text-[10px]">
+        {day}
       </div>
     );
   }
 
   if (isLoading) {
     return (
-      <div className="w-full aspect-square rounded-md bg-muted animate-pulse flex items-center justify-center text-xs text-muted-foreground">
+      <div className="h-12 rounded bg-muted animate-pulse flex items-center justify-center text-[10px] text-muted-foreground">
         {day}
       </div>
     );
@@ -66,11 +65,11 @@ export function MonthCalendarCell({
       type="button"
       onClick={() => price !== null && onClick(dateStr)}
       disabled={price === null}
-      className={`w-full aspect-square rounded-md flex flex-col items-center justify-center gap-0.5 transition-all text-xs cursor-pointer ${bgColor} ${borderClass} ${
+      className={`h-12 rounded flex flex-col items-center justify-center transition-all cursor-pointer ${bgColor} ${borderClass} ${
         price === null ? "opacity-40 cursor-not-allowed" : ""
       }`}
     >
-      <span className={`text-[10px] ${isPreferred ? "font-bold text-blue-700" : "text-muted-foreground"}`}>
+      <span className={`text-[9px] leading-none ${isPreferred ? "font-bold text-blue-700" : "text-muted-foreground"}`}>
         {day}
       </span>
       {price !== null ? (
@@ -78,8 +77,8 @@ export function MonthCalendarCell({
           <span className="font-semibold text-[11px] leading-tight">
             ${Math.round(price)}
           </span>
-          <span className="text-[9px] text-muted-foreground leading-tight">
-            {hasDirect ? "\u25CF direct" : "\u2715 connect"}
+          <span className="text-[8px] text-muted-foreground leading-none">
+            {hasDirect ? "\u25CF" : "\u2715"}
           </span>
         </>
       ) : (

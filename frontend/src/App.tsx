@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AppShell } from "@/components/layout/AppShell";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import { ErrorBoundary } from "@/components/shared/ErrorBoundary";
@@ -10,7 +10,6 @@ import apiClient from "@/api/client";
 
 // Lazy-loaded pages for code splitting
 const Login = lazy(() => import("@/pages/Login"));
-const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const NewTrip = lazy(() => import("@/pages/NewTrip"));
 const TripHistory = lazy(() => import("@/pages/TripHistory"));
 const TripSearch = lazy(() => import("@/pages/TripSearch"));
@@ -20,12 +19,9 @@ const ApprovalDashboard = lazy(() => import("@/pages/ApprovalDashboard"));
 const ApprovalDetailPage = lazy(() => import("@/pages/ApprovalDetailPage"));
 const PolicyManagement = lazy(() => import("@/pages/PolicyManagement"));
 const PriceWatches = lazy(() => import("@/pages/PriceWatches"));
-const AlertFeed = lazy(() => import("@/pages/AlertFeed"));
 const AnalyticsDashboard = lazy(() => import("@/pages/AnalyticsDashboard"));
 const MyStats = lazy(() => import("@/pages/MyStats"));
 const LeaderboardPage = lazy(() => import("@/pages/LeaderboardPage"));
-const GroupTrips = lazy(() => import("@/pages/GroupTrips"));
-const GroupTripDetailPage = lazy(() => import("@/pages/GroupTripDetailPage"));
 
 function PageLoader() {
   return (
@@ -66,21 +62,18 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Navigate to="/trips" replace />} />
             <Route path="/trips/new" element={<NewTrip />} />
             <Route path="/trips" element={<TripHistory />} />
             <Route path="/trips/:tripId/search" element={<TripSearch />} />
             <Route path="/trips/:tripId/review" element={<TripReview />} />
             <Route path="/trips/:tripId/audit" element={<TripAudit />} />
             <Route path="/price-watches" element={<PriceWatches />} />
-            <Route path="/alerts" element={<AlertFeed />} />
             <Route path="/approvals" element={<ApprovalDashboard />} />
             <Route path="/approvals/:approvalId" element={<ApprovalDetailPage />} />
             <Route path="/analytics" element={<AnalyticsDashboard />} />
             <Route path="/my-stats" element={<MyStats />} />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
-            <Route path="/group-trips" element={<GroupTrips />} />
-            <Route path="/group-trips/:groupId" element={<GroupTripDetailPage />} />
             <Route path="/policies" element={<PolicyManagement />} />
           </Route>
         </Routes>

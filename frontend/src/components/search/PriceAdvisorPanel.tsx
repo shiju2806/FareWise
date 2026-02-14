@@ -30,33 +30,18 @@ const IMPACT_ICONS: Record<string, { icon: string; color: string }> = {
   neutral: { icon: "\u2014", color: "text-muted-foreground" },
 };
 
-function ConfidenceBar({ value }: { value: number }) {
-  const pct = Math.round(value * 100);
-  const color =
-    pct >= 70 ? "bg-emerald-500" : pct >= 40 ? "bg-amber-500" : "bg-red-400";
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
-        <div className={`h-full ${color} rounded-full`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className="text-muted-foreground">{pct}%</span>
-    </div>
-  );
-}
-
 function AdvisorSkeleton() {
   return (
-    <div className="rounded-lg border border-border p-4 space-y-4 animate-pulse">
+    <div className="rounded-lg border border-border p-4 space-y-3 animate-pulse">
       <div className="flex items-center gap-3">
-        <div className="h-7 w-24 bg-muted rounded-full" />
+        <div className="h-6 w-20 bg-muted rounded-full" />
         <div className="flex-1 h-4 bg-muted rounded" />
       </div>
       <div className="h-3 w-full bg-muted rounded" />
       <div className="h-3 w-3/4 bg-muted rounded" />
-      <div className="space-y-2 pt-2">
-        <div className="h-3 w-56 bg-muted rounded" />
+      <div className="space-y-1.5 pt-1">
         <div className="h-3 w-48 bg-muted rounded" />
-        <div className="h-3 w-52 bg-muted rounded" />
+        <div className="h-3 w-44 bg-muted rounded" />
       </div>
     </div>
   );
@@ -79,23 +64,15 @@ export function PriceAdvisorPanel({ legId }: Props) {
   const recStyle = RECOMMENDATION_STYLES[data.recommendation] || RECOMMENDATION_STYLES.watch;
 
   return (
-    <div className="rounded-lg border border-border p-4 space-y-4">
+    <div className="rounded-lg border border-border p-4 space-y-3">
       {/* Header: badge + headline */}
       <div className="flex items-start gap-3">
         <span
-          className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${recStyle.bg} ${recStyle.text} shrink-0`}
+          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${recStyle.bg} ${recStyle.text} shrink-0`}
         >
           {recStyle.label}
         </span>
         <p className="text-sm font-medium leading-snug">{data.headline}</p>
-      </div>
-
-      {/* Confidence bar */}
-      <div>
-        <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-          Confidence
-        </span>
-        <ConfidenceBar value={data.confidence} />
       </div>
 
       {/* Analysis */}
@@ -103,13 +80,10 @@ export function PriceAdvisorPanel({ legId }: Props) {
         {data.analysis}
       </p>
 
-      {/* Factors */}
+      {/* Factors — max 4 */}
       {data.factors.length > 0 && (
-        <div className="space-y-1.5">
-          <span className="text-[10px] text-muted-foreground uppercase tracking-wide">
-            Key Factors
-          </span>
-          {data.factors.map((factor, i) => {
+        <div className="space-y-1">
+          {data.factors.slice(0, 4).map((factor, i) => {
             const impactStyle = IMPACT_ICONS[factor.impact] || IMPACT_ICONS.neutral;
             return (
               <div key={i} className="flex items-start gap-2 text-xs">
@@ -128,23 +102,11 @@ export function PriceAdvisorPanel({ legId }: Props) {
 
       {/* Timing advice */}
       {data.timing_advice && (
-        <div className="rounded-md bg-muted/50 px-3 py-2 text-xs">
+        <div className="rounded bg-muted/50 px-3 py-1.5 text-xs">
           <span className="font-medium">Timing: </span>
           <span className="text-muted-foreground">{data.timing_advice}</span>
         </div>
       )}
-
-      {/* Savings potential */}
-      {data.savings_potential && (
-        <p className="text-[10px] text-muted-foreground">
-          {data.savings_potential}
-        </p>
-      )}
-
-      {/* Source indicator */}
-      <div className="text-[9px] text-muted-foreground/60 text-right">
-        {data.source === "llm" ? "AI-powered analysis" : "Rule-based analysis"}
-      </div>
     </div>
   );
 }
