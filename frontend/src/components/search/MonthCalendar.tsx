@@ -44,16 +44,14 @@ export function MonthCalendar({
   const storeMonthData = monthData[monthKey];
   const isMonthLoading = monthLoading[monthKey] ?? false;
 
-  // Only lazy-load for months that differ from the initial search month
   const prefMonth = prefDate.getMonth() + 1;
   const prefYear = prefDate.getFullYear();
   const isInitialMonth = viewYear === prefYear && viewMonth === prefMonth;
 
+  // Always fetch calendar data (fills gaps with Google Flights sample dates)
   useEffect(() => {
-    if (!isInitialMonth) {
-      fetchMonthCalendar(legId, viewYear, viewMonth);
-    }
-  }, [legId, viewYear, viewMonth, isInitialMonth, fetchMonthCalendar]);
+    fetchMonthCalendar(legId, viewYear, viewMonth);
+  }, [legId, viewYear, viewMonth, fetchMonthCalendar]);
 
   // Fetch price context when a date is selected
   useEffect(() => {
