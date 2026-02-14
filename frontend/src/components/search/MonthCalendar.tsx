@@ -9,6 +9,13 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+const PERCENTILE_STYLES: Record<string, string> = {
+  excellent: "text-emerald-600 font-semibold",
+  good: "text-emerald-600",
+  average: "text-amber-600",
+  high: "text-red-600",
+};
+
 interface Props {
   legId: string;
   preferredDate: string;
@@ -28,23 +35,45 @@ export function MonthCalendar({
   const [viewYear, setViewYear] = useState(prefDate.getFullYear());
   const [viewMonth, setViewMonth] = useState(prefDate.getMonth() + 1);
 
-  const { monthData, monthLoading, monthError, fetchMonthCalendar } = usePriceIntelStore();
+  const {
+    monthData, monthLoading, fetchMonthCalendar,
+    priceContext, priceContextLoading, fetchPriceContext,
+  } = usePriceIntelStore();
+
   const monthKey = `${legId}:${viewYear}-${String(viewMonth).padStart(2, "0")}`;
+  const storeMonthData = monthData[monthKey];
+  const isMonthLoading = monthLoading[monthKey] ?? false;
+
+  // Only lazy-load for months that differ from the initial search month
+  const prefMonth = prefDate.getMonth() + 1;
+  const prefYear = prefDate.getFullYear();
+  const isInitialMonth = viewYear === prefYear && viewMonth === prefMonth;
 
   useEffect(() => {
-    fetchMonthCalendar(legId, viewYear, viewMonth);
-  }, [legId, viewYear, viewMonth, fetchMonthCalendar]);
+    if (!isInitialMonth) {
+      fetchMonthCalendar(legId, viewYear, viewMonth);
+    }
+  }, [legId, viewYear, viewMonth, isInitialMonth, fetchMonthCalendar]);
 
-  const isLoading = monthLoading[monthKey] ?? false;
-  const hasError = monthError[monthKey] ?? false;
-  const loadedMonth = monthData[monthKey];
+  // Fetch price context when a date is selected
+  useEffect(() => {
+    if (selectedDate) {
+      fetchPriceContext(legId, selectedDate);
+    }
+  }, [selectedDate, legId, fetchPriceContext]);
 
-  // Merge initial calendar data with loaded month data
+  const contextKey = selectedDate ? `${legId}:${selectedDate}` : "";
+  const context = contextKey ? priceContext[contextKey] : undefined;
+  const contextLoading = contextKey ? priceContextLoading[contextKey] : false;
+
+  // Merge initial calendar data with lazy-loaded month data
   const mergedDates = useMemo(() => {
     const dates: Record<string, { min_price: number; has_direct: boolean; option_count: number }> = {};
+    const mp = `${viewYear}-${String(viewMonth).padStart(2, "0")}`;
 
+    // Initial search data first (has accurate stop info)
     for (const [dateStr, data] of Object.entries(initialCalendar.dates)) {
-      if (dateStr.startsWith(`${viewYear}-${String(viewMonth).padStart(2, "0")}`)) {
+      if (dateStr.startsWith(mp)) {
         dates[dateStr] = {
           min_price: data.min_price,
           has_direct: data.has_direct ?? false,
@@ -53,18 +82,21 @@ export function MonthCalendar({
       }
     }
 
-    if (loadedMonth?.dates) {
-      for (const [dateStr, data] of Object.entries(loadedMonth.dates)) {
-        dates[dateStr] = {
-          min_price: data.min_price,
-          has_direct: data.has_direct,
-          option_count: data.option_count,
-        };
+    // Merge lazy-loaded data (don't overwrite real search data)
+    if (storeMonthData?.dates) {
+      for (const [dateStr, data] of Object.entries(storeMonthData.dates)) {
+        if (!(dateStr in dates)) {
+          dates[dateStr] = {
+            min_price: data.min_price,
+            has_direct: data.has_direct ?? false,
+            option_count: data.option_count,
+          };
+        }
       }
     }
 
     return dates;
-  }, [initialCalendar.dates, loadedMonth, viewYear, viewMonth]);
+  }, [initialCalendar.dates, storeMonthData, viewYear, viewMonth]);
 
   const priceQuartiles = useMemo(() => {
     const prices = Object.values(mergedDates)
@@ -124,7 +156,6 @@ export function MonthCalendar({
     : 0;
   const directCount = Object.values(mergedDates).filter((d) => d.has_direct).length;
   const hasData = Object.keys(mergedDates).length > 0;
-  const doneLoading = !isLoading && (loadedMonth || hasError);
 
   function navigateMonth(delta: number) {
     let newMonth = viewMonth + delta;
@@ -180,7 +211,7 @@ export function MonthCalendar({
           const data = cell.dateStr ? mergedDates[cell.dateStr] : null;
           const cellDate = cell.dateStr ? new Date(cell.dateStr + "T00:00:00") : null;
           const isPast = cellDate ? cellDate < today : false;
-          const cellIsLoading = cell.day > 0 && !isPast && !data && isLoading;
+          const cellIsLoading = cell.day > 0 && !isPast && !data && isMonthLoading;
 
           return (
             <MonthCalendarCell
@@ -201,18 +232,57 @@ export function MonthCalendar({
         })}
       </div>
 
-      {/* No data message for non-preferred months */}
-      {doneLoading && !hasData && (
-        <div className="text-center py-4 text-xs text-muted-foreground">
-          No flight data available for {MONTH_NAMES[viewMonth - 1]} {viewYear}.
-          Amadeus may not have pricing this far out.
+      {/* Loading indicator for lazy-loaded months */}
+      {isMonthLoading && !hasData && (
+        <div className="text-center py-3 text-xs text-muted-foreground animate-pulse">
+          Loading prices for {MONTH_NAMES[viewMonth - 1]}...
         </div>
       )}
 
-      {/* Loading indicator */}
-      {isLoading && !hasData && (
+      {/* No data message (only after loading completes) */}
+      {!isMonthLoading && !hasData && !isInitialMonth && storeMonthData !== undefined && (
         <div className="text-center py-3 text-xs text-muted-foreground">
-          Loading prices for {MONTH_NAMES[viewMonth - 1]}...
+          No price data for {MONTH_NAMES[viewMonth - 1]}.
+        </div>
+      )}
+
+      {/* Price Context indicator — shown when a date is selected */}
+      {selectedDate && (contextLoading || (context?.available && context.historical)) && (
+        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 space-y-1">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+            Historical Price Context
+          </p>
+          {contextLoading ? (
+            <div className="h-3 w-48 bg-muted animate-pulse rounded" />
+          ) : context?.available && context.historical ? (
+            <>
+              <div className="flex items-center gap-1.5 text-[9px]">
+                <span className="shrink-0 w-8 text-right">${Math.round(context.historical.min)}</span>
+                <div className="flex-1 h-2.5 bg-gradient-to-r from-emerald-200 via-amber-200 to-red-200 rounded-full relative">
+                  {context.percentile != null && (
+                    <div
+                      className="absolute top-[-1px] w-1.5 h-3.5 bg-primary rounded-sm"
+                      style={{ left: `${Math.max(2, Math.min(98, context.percentile))}%` }}
+                      title={context.current_price ? `Your price: $${Math.round(context.current_price)}` : undefined}
+                    />
+                  )}
+                </div>
+                <span className="shrink-0 w-8">${Math.round(context.historical.max)}</span>
+              </div>
+              {context.percentile_label && (
+                <p className="text-[10px]">
+                  <span className={PERCENTILE_STYLES[context.percentile_label] || ""}>
+                    {context.percentile_label.charAt(0).toUpperCase() + context.percentile_label.slice(1)} price
+                  </span>
+                  {" "}
+                  <span className="text-muted-foreground">
+                    ({context.percentile}th percentile historically
+                    {context.current_price ? ` at $${Math.round(context.current_price)}` : ""})
+                  </span>
+                </p>
+              )}
+            </>
+          ) : null}
         </div>
       )}
 

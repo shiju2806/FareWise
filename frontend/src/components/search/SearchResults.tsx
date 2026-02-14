@@ -45,13 +45,20 @@ export function SearchResults({
   const [showWatchForm, setShowWatchForm] = useState(false);
 
   function handleDateSelect(date: string) {
-    setSelectedDate(date);
+    // Toggle: clicking the same date again clears the filter
+    const newDate = date === selectedDate ? null : date;
+    setSelectedDate(newDate);
     onDateSelect(date);
   }
 
+  // Filter by selected date if set
+  const filteredOptions = selectedDate
+    ? result.all_options.filter((f) => f.departure_time.startsWith(selectedDate))
+    : result.all_options;
+
   const displayOptions = showAll
-    ? result.all_options
-    : result.all_options.slice(0, 5);
+    ? filteredOptions
+    : filteredOptions.slice(0, 5);
 
   // Empty state
   if (result.all_options.length === 0) {
@@ -177,9 +184,35 @@ export function SearchResults({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold">
-            All Options ({result.all_options.length})
+            {selectedDate ? (
+              <>
+                Flights on {selectedDate} ({filteredOptions.length})
+                <button
+                  type="button"
+                  onClick={() => { setSelectedDate(null); }}
+                  className="ml-2 text-xs text-primary hover:underline font-normal"
+                >
+                  Clear filter
+                </button>
+              </>
+            ) : (
+              `All Options (${result.all_options.length})`
+            )}
           </h3>
         </div>
+
+        {filteredOptions.length === 0 && selectedDate && (
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            No flights found for {selectedDate}.{" "}
+            <button
+              type="button"
+              onClick={() => setSelectedDate(null)}
+              className="text-primary hover:underline"
+            >
+              Show all dates
+            </button>
+          </p>
+        )}
 
         <div className="space-y-2">
           {displayOptions.map((flight, i) => (
@@ -191,7 +224,7 @@ export function SearchResults({
           ))}
         </div>
 
-        {result.all_options.length > 5 && (
+        {filteredOptions.length > 5 && (
           <button
             type="button"
             onClick={() => setShowAll(!showAll)}
@@ -199,7 +232,7 @@ export function SearchResults({
           >
             {showAll
               ? "Show less"
-              : `Show all ${result.all_options.length} options`}
+              : `Show all ${filteredOptions.length} options`}
           </button>
         )}
       </div>

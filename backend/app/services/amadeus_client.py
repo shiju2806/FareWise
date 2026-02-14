@@ -178,6 +178,8 @@ class AmadeusClient:
                         "origin": origin,
                         "destination": destination,
                         "departureDate": departure_date.isoformat(),
+                        "oneWay": "true",
+                        "viewBy": "DATE",
                     },
                     headers={"Authorization": f"Bearer {self._token}"},
                 )
@@ -279,6 +281,67 @@ class AmadeusClient:
             if m_part:
                 minutes = int(m_part)
         return hours * 60 + minutes
+
+    async def get_price_metrics(
+        self,
+        origin: str,
+        destination: str,
+        departure_date: date,
+        currency: str = "CAD",
+    ) -> dict | None:
+        """Get historical price quartiles for a route+date.
+
+        Uses GET /v1/analytics/itinerary-price-metrics.
+        Returns {min, q1, median, q3, max} or None on failure.
+        """
+        if not settings.amadeus_client_id:
+            return None
+
+        try:
+            async with self._semaphore:
+                await self._ensure_token()
+                client = await self._get_client()
+
+                resp = await client.get(
+                    "/v1/analytics/itinerary-price-metrics",
+                    params={
+                        "originIataCode": origin,
+                        "destinationIataCode": destination,
+                        "departureDate": departure_date.isoformat(),
+                        "currencyCode": currency,
+                        "oneWay": "true",
+                    },
+                    headers={"Authorization": f"Bearer {self._token}"},
+                )
+                if resp.status_code == 429:
+                    await asyncio.sleep(1)
+                    return None
+                resp.raise_for_status()
+                data = resp.json()
+
+                items = data.get("data", [])
+                if not items:
+                    return None
+
+                metrics = items[0].get("priceMetrics", [])
+                result = {}
+                ranking_map = {
+                    "MINIMUM": "min",
+                    "FIRST": "q1",
+                    "MEDIUM": "median",
+                    "THIRD": "q3",
+                    "MAXIMUM": "max",
+                }
+                for m in metrics:
+                    key = ranking_map.get(m.get("quartileRanking", ""), "")
+                    if key:
+                        result[key] = float(m["amount"])
+
+                return result if result else None
+
+        except Exception as e:
+            logger.warning(f"Amadeus price-metrics error for {origin}-{destination}: {e}")
+            return None
 
     async def get_busiest_period(
         self,

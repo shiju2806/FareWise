@@ -42,7 +42,22 @@ export default function TripSearch() {
   const searchResult = activeLeg ? results[activeLeg.id] : null;
   const legEventData = activeLeg ? legEvents[activeLeg.id] : null;
 
-  // Auto-search when leg becomes active and hasn't been searched yet
+  // Auto-search all legs on initial load
+  const [autoSearched, setAutoSearched] = useState(false);
+  useEffect(() => {
+    if (currentTrip && !autoSearched && !searchLoading) {
+      setAutoSearched(true);
+      // Search the active leg first, then queue the rest
+      for (const leg of currentTrip.legs) {
+        if (!results[leg.id]) {
+          searchLeg(leg.id);
+          break; // searchLeg sets loading=true, so we search one at a time
+        }
+      }
+    }
+  }, [currentTrip, autoSearched, searchLoading, results, searchLeg]);
+
+  // Auto-search when switching to a leg that hasn't been searched
   useEffect(() => {
     if (activeLeg && !results[activeLeg.id] && !searchLoading) {
       searchLeg(activeLeg.id);
@@ -71,8 +86,8 @@ export default function TripSearch() {
     [activeLeg, rescoreWithSlider]
   );
 
-  function handleDateSelect(date: string) {
-    console.log("Date selected:", date);
+  function handleDateSelect(_date: string) {
+    // Date filtering is handled inside SearchResults component
   }
 
   function handleFlightSelect(flight: FlightOption) {

@@ -17,6 +17,7 @@ TTL_CALENDAR = 30 * 60            # 30 minutes
 TTL_ANALYTICS = 24 * 60 * 60      # 24 hours — seasonality data
 TTL_ADVISOR = 30 * 60             # 30 minutes — LLM advisor results
 TTL_MONTH_CALENDAR = 60 * 60      # 1 hour — month calendar prices
+TTL_PRICE_METRICS = 24 * 60 * 60  # 24 hours — historical quartile data
 
 
 class CacheService:
@@ -135,6 +136,17 @@ class CacheService:
 
     async def set_month_calendar(self, origin: str, dest: str, year: int, month: int, cabin: str, data: dict):
         await self.set(self.month_calendar_key(origin, dest, year, month, cabin), data, TTL_MONTH_CALENDAR)
+
+    # Price metrics (historical quartiles)
+
+    def price_metrics_key(self, origin: str, dest: str, date_str: str) -> str:
+        return f"pricemetrics:{origin}:{dest}:{date_str}"
+
+    async def get_price_metrics(self, origin: str, dest: str, date_str: str) -> dict | None:
+        return await self.get(self.price_metrics_key(origin, dest, date_str))
+
+    async def set_price_metrics(self, origin: str, dest: str, date_str: str, data: dict):
+        await self.set(self.price_metrics_key(origin, dest, date_str), data, TTL_PRICE_METRICS)
 
     async def close(self):
         if self._redis:

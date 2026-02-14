@@ -91,3 +91,24 @@ export interface PriceTrend {
   route: string;
   data_points: number;
 }
+
+// Price Context types (historical quartiles)
+
+export interface PriceMetrics {
+  min: number;
+  q1: number;
+  median: number;
+  q3: number;
+  max: number;
+}
+
+export interface PriceContext {
+  available: boolean;
+  route?: string;
+  date?: string;
+  historical?: PriceMetrics;
+  current_price?: number | null;
+  percentile?: number | null;
+  percentile_label?: "excellent" | "good" | "average" | "high" | null;
+  message?: string;
+}

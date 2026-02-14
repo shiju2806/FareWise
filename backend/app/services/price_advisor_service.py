@@ -50,6 +50,10 @@ Guidelines:
 - Provide 3-6 factors, prioritized by impact
 - Keep analysis professional and data-driven, no hype
 - Use CAD currency throughout
+- If historical price context is available, use it to strengthen your recommendation
+- If current price is below Q1 (25th percentile), this is a strong buy signal — emphasize this
+- If current price is above Q3 (75th percentile), recommend waiting unless seats or timing override
+- Reference the percentile in your analysis (e.g., "This price is in the bottom 20% historically")
 
 Respond with ONLY the JSON, no markdown formatting, no preamble."""
 
@@ -182,6 +186,45 @@ class PriceAdvisorService:
             seats_remaining=min_seats,
         )
 
+        # Historical price quartiles from Amadeus Price Analysis
+        from app.services.amadeus_client import amadeus_client
+
+        price_metrics = None
+        price_percentile = None
+        price_percentile_label = None
+
+        try:
+            cached_metrics = await cache_service.get_price_metrics(
+                origin, destination, departure_date.isoformat()
+            )
+            if cached_metrics and cached_metrics.get("available"):
+                price_metrics = cached_metrics.get("historical")
+                price_percentile = cached_metrics.get("percentile")
+                price_percentile_label = cached_metrics.get("percentile_label")
+            elif cached_metrics is None:
+                raw_metrics = await amadeus_client.get_price_metrics(
+                    origin=origin,
+                    destination=destination,
+                    departure_date=departure_date,
+                )
+                if raw_metrics:
+                    price_metrics = raw_metrics
+                    cheapest = price_stats["cheapest"]
+                    price_range = raw_metrics.get("max", 0) - raw_metrics.get("min", 0)
+                    if price_range > 0 and cheapest > 0:
+                        price_percentile = round(((cheapest - raw_metrics["min"]) / price_range) * 100)
+                        price_percentile = max(0, min(100, price_percentile))
+                        if price_percentile <= 25:
+                            price_percentile_label = "excellent"
+                        elif price_percentile <= 50:
+                            price_percentile_label = "good"
+                        elif price_percentile <= 75:
+                            price_percentile_label = "average"
+                        else:
+                            price_percentile_label = "high"
+        except Exception as e:
+            logger.warning(f"Failed to fetch price metrics: {e}")
+
         return {
             "price_stats": price_stats,
             "seasonality": seasonality,
@@ -189,6 +232,9 @@ class PriceAdvisorService:
             "event_details": event_details,
             "forecast": forecast,
             "cabin_class": cabin_class,
+            "price_metrics": price_metrics,
+            "price_percentile": price_percentile,
+            "price_percentile_label": price_percentile_label,
         }
 
     async def _generate_llm_advice(
@@ -317,6 +363,24 @@ class PriceAdvisorService:
             for evt in signals["event_details"]:
                 sections.append(f"- {evt['name']} (impact: {evt['impact']}, category: {evt.get('category', 'N/A')})")
 
+        if signals.get("price_metrics"):
+            pm = signals["price_metrics"]
+            sections.extend([
+                f"",
+                f"=== HISTORICAL PRICE CONTEXT ===",
+                f"Historical minimum: ${pm.get('min', 0):.0f} CAD",
+                f"Historical Q1 (25th percentile): ${pm.get('q1', 0):.0f} CAD",
+                f"Historical median: ${pm.get('median', 0):.0f} CAD",
+                f"Historical Q3 (75th percentile): ${pm.get('q3', 0):.0f} CAD",
+                f"Historical maximum: ${pm.get('max', 0):.0f} CAD",
+            ])
+            if signals.get("price_percentile") is not None:
+                sections.append(
+                    f"Current cheapest (${ps['cheapest']:.0f}) is at the "
+                    f"{signals['price_percentile']}th percentile historically "
+                    f"({signals['price_percentile_label']})"
+                )
+
         if forecast.get("factors"):
             sections.extend([
                 f"",
@@ -357,6 +421,18 @@ class PriceAdvisorService:
             recommendation = "watch"
             headline = f"Price is near average at ${ps['cheapest']:.0f} CAD — monitor for dips"
 
+        # Historical price context can override recommendation
+        if signals.get("price_metrics") and signals.get("price_percentile") is not None:
+            pct = signals["price_percentile"]
+            pct_label = signals["price_percentile_label"]
+            if pct <= 25 and recommendation != "book":
+                recommendation = "book"
+                headline = f"Price at ${ps['cheapest']:.0f} CAD is historically low ({pct}th percentile) — strong buy signal"
+            elif pct >= 75 and recommendation not in ("book",):
+                # Don't override "book" from seats/timing rules
+                recommendation = "wait"
+                headline = f"Price at ${ps['cheapest']:.0f} CAD is above average ({pct}th percentile) — consider waiting"
+
         # Build factors from forecast
         factors = forecast.get("factors", [])
         if not factors:
@@ -364,6 +440,17 @@ class PriceAdvisorService:
                 {"name": "Current Price", "impact": "neutral", "detail": f"${ps['cheapest']:.0f} CAD cheapest option"},
                 {"name": "Booking Window", "impact": "neutral", "detail": f"{bw['days_to_departure']} days to departure"},
             ]
+
+        # Add historical price factor
+        if signals.get("price_metrics") and signals.get("price_percentile") is not None:
+            pct = signals["price_percentile"]
+            pct_label = signals["price_percentile_label"]
+            impact = "positive" if pct <= 25 else "negative" if pct >= 75 else "neutral"
+            factors.append({
+                "name": "Historical Price",
+                "impact": impact,
+                "detail": f"Current price is {pct_label} ({pct}th percentile historically)",
+            })
 
         return {
             "recommendation": recommendation,

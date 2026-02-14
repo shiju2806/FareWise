@@ -344,6 +344,93 @@ async def get_price_advice(
     return advice
 
 
+@router.get("/{trip_leg_id}/price-context")
+async def get_price_context(
+    trip_leg_id: uuid.UUID,
+    target_date: str = Query(..., description="Date to check (YYYY-MM-DD)"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Get historical price quartiles for a specific date on this route.
+
+    Returns where the current price falls relative to historical data:
+    min, Q1, median, Q3, max, and a percentile ranking.
+    """
+    from app.services.amadeus_client import amadeus_client
+    from app.services.cache_service import cache_service
+
+    leg = await _get_user_leg(trip_leg_id, db, user)
+
+    try:
+        parts = target_date.split("-")
+        parsed_date = date(int(parts[0]), int(parts[1]), int(parts[2]))
+    except (ValueError, IndexError):
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    # Check cache first (route-based, not search-based)
+    cached = await cache_service.get_price_metrics(
+        leg.origin_airport, leg.destination_airport, target_date
+    )
+    if cached:
+        return cached
+
+    # Fetch from Amadeus
+    metrics = await amadeus_client.get_price_metrics(
+        origin=leg.origin_airport,
+        destination=leg.destination_airport,
+        departure_date=parsed_date,
+    )
+
+    if not metrics:
+        result = {"available": False, "message": "Historical price data not available for this route"}
+        return result
+
+    # Compute where current cheapest price falls
+    current_price = None
+    search_result = await db.execute(
+        select(SearchLog)
+        .where(SearchLog.trip_leg_id == leg.id)
+        .order_by(SearchLog.searched_at.desc())
+        .limit(1)
+    )
+    search_log = search_result.scalar_one_or_none()
+    if search_log and search_log.cheapest_price:
+        current_price = float(search_log.cheapest_price)
+
+    percentile = None
+    percentile_label = None
+    if current_price and metrics.get("min") and metrics.get("max"):
+        price_range = metrics["max"] - metrics["min"]
+        if price_range > 0:
+            percentile = round(((current_price - metrics["min"]) / price_range) * 100)
+            percentile = max(0, min(100, percentile))
+            if percentile <= 25:
+                percentile_label = "excellent"
+            elif percentile <= 50:
+                percentile_label = "good"
+            elif percentile <= 75:
+                percentile_label = "average"
+            else:
+                percentile_label = "high"
+
+    response = {
+        "available": True,
+        "route": f"{leg.origin_airport}-{leg.destination_airport}",
+        "date": target_date,
+        "historical": metrics,
+        "current_price": current_price,
+        "percentile": percentile,
+        "percentile_label": percentile_label,
+    }
+
+    # Cache the result
+    await cache_service.set_price_metrics(
+        leg.origin_airport, leg.destination_airport, target_date, response
+    )
+
+    return response
+
+
 @router.get("/{trip_leg_id}/price-trend")
 async def get_price_trend(
     trip_leg_id: uuid.UUID,

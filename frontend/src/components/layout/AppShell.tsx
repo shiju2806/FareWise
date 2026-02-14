@@ -40,8 +40,8 @@ export function AppShell() {
         <nav className="flex-1 px-3 space-y-1">
           {visibleItems.map((item) => {
             const isActive =
-              item.path === "/"
-                ? location.pathname === "/"
+              item.path === "/" || item.path === "/trips"
+                ? location.pathname === item.path
                 : location.pathname.startsWith(item.path);
             return (
               <Link

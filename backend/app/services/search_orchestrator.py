@@ -418,49 +418,48 @@ class SearchOrchestrator:
     ) -> dict:
         """Fetch cheapest prices for every day in a month.
 
-        Uses max_results=5 per date (only need cheapest, not full list).
-        Skips dates already in existing_dates or in Redis cache.
-        Returns {dates: {YYYY-MM-DD: {min_price, has_direct, option_count}}, month_stats}.
+        Uses Amadeus Flight Cheapest Date Search — single API call for the
+        entire month instead of 30 individual flight-offers calls.
+        Merges with existing_dates from the initial search (which have
+        accurate stop info and live prices).
         """
-        import calendar
-
         # Check month calendar cache
         cached = await cache_service.get_month_calendar(origin, destination, year, month, cabin_class)
         if cached:
             return cached
 
-        # Build list of dates for this month
-        _, days_in_month = calendar.monthrange(year, month)
-        today = date.today()
-        all_dates = []
-        for day in range(1, days_in_month + 1):
-            d = date(year, month, day)
-            if d < today:
-                continue  # Skip past dates
-            date_str = d.isoformat()
-            # Skip dates we already have from the initial search
-            if existing_dates and date_str in existing_dates:
-                continue
-            all_dates.append(d)
-
-        # Fetch in parallel batches of 10
-        dates_data = {}
+        # Start with existing search data (real data with stop info)
+        dates_data: dict[str, dict] = {}
         if existing_dates:
             dates_data.update(existing_dates)
 
-        batch_size = 10
-        for i in range(0, len(all_dates), batch_size):
-            batch = all_dates[i:i + batch_size]
-            coros = [
-                self._fetch_date_cheapest(origin, destination, d, cabin_class)
-                for d in batch
-            ]
-            results = await asyncio.gather(*coros, return_exceptions=True)
-            for idx, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logger.warning(f"Month fetch failed for {batch[idx]}: {result}")
-                elif result:
-                    dates_data[batch[idx].isoformat()] = result
+        # Call Amadeus Flight Cheapest Date Search (1 API call for the month)
+        today = date.today()
+        first_of_month = date(year, month, 1)
+        anchor_date = max(first_of_month, today)
+
+        try:
+            cheapest_dates = await amadeus_client.search_cheapest_dates(
+                origin=origin,
+                destination=destination,
+                departure_date=anchor_date,
+            )
+
+            month_prefix = f"{year}-{month:02d}"
+            for entry in cheapest_dates:
+                d = entry.get("date", "")
+                if not d.startswith(month_prefix):
+                    continue
+                # Don't overwrite real search data (which has stop info)
+                if d not in dates_data:
+                    dates_data[d] = {
+                        "min_price": round(entry["price"], 2),
+                        "has_direct": False,  # cheapest-dates API has no stop info
+                        "option_count": 1,
+                        "source": "cheapest_dates",
+                    }
+        except Exception as e:
+            logger.warning(f"Cheapest dates API failed for {origin}-{destination}: {e}")
 
         # Compute month stats
         all_prices = [v["min_price"] for v in dates_data.values() if v.get("min_price", 0) > 0]
@@ -478,52 +477,6 @@ class SearchOrchestrator:
         await cache_service.set_month_calendar(origin, destination, year, month, cabin_class, result)
 
         return result
-
-    async def _fetch_date_cheapest(
-        self,
-        origin: str,
-        destination: str,
-        departure_date: date,
-        cabin_class: str,
-    ) -> dict | None:
-        """Fetch cheapest price for a single date (max 5 results)."""
-        date_str = departure_date.isoformat()
-
-        # Check per-date flight cache first
-        cached = await cache_service.get_flights(origin, destination, date_str, cabin_class)
-        if cached is not None:
-            prices = [f["price"] for f in cached if f.get("price", 0) > 0]
-            has_direct = any(f.get("stops", 1) == 0 for f in cached)
-            if prices:
-                return {
-                    "min_price": round(min(prices), 2),
-                    "has_direct": has_direct,
-                    "option_count": len(prices),
-                }
-            return None
-
-        # Fetch from Amadeus with reduced results
-        flights = await amadeus_client.search_flight_offers(
-            origin, destination, departure_date, cabin_class,
-            adults=1, max_results=5,
-        )
-
-        if not flights:
-            return None
-
-        # Cache the results
-        await cache_service.set_flights(origin, destination, date_str, cabin_class, flights)
-
-        prices = [f["price"] for f in flights if f.get("price", 0) > 0]
-        has_direct = any(f.get("stops", 1) == 0 for f in flights)
-
-        if prices:
-            return {
-                "min_price": round(min(prices), 2),
-                "has_direct": has_direct,
-                "option_count": len(prices),
-            }
-        return None
 
     @staticmethod
     def _group_alternatives(

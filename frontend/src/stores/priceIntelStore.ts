@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { MonthCalendarData, PriceAdvice, PriceTrend } from "@/types/search";
+import type { MonthCalendarData, PriceAdvice, PriceTrend, PriceContext } from "@/types/search";
 import apiClient from "@/api/client";
 
 interface PriceIntelState {
@@ -13,9 +13,13 @@ interface PriceIntelState {
   trends: Record<string, PriceTrend>;
   trendLoading: Record<string, boolean>;
 
+  priceContext: Record<string, PriceContext>;
+  priceContextLoading: Record<string, boolean>;
+
   fetchMonthCalendar: (legId: string, year: number, month: number) => Promise<void>;
   fetchAdvice: (legId: string) => Promise<void>;
   fetchTrend: (legId: string) => Promise<void>;
+  fetchPriceContext: (legId: string, date: string) => Promise<void>;
 }
 
 export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
@@ -26,6 +30,8 @@ export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
   adviceLoading: {},
   trends: {},
   trendLoading: {},
+  priceContext: {},
+  priceContextLoading: {},
 
   fetchMonthCalendar: async (legId: string, year: number, month: number) => {
     const key = `${legId}:${year}-${String(month).padStart(2, "0")}`;
@@ -81,6 +87,33 @@ export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
       }));
     } catch {
       set((s) => ({ trendLoading: { ...s.trendLoading, [legId]: false } }));
+    }
+  },
+
+  fetchPriceContext: async (legId: string, date: string) => {
+    const key = `${legId}:${date}`;
+    if (get().priceContext[key] || get().priceContextLoading[key]) return;
+
+    set((s) => ({
+      priceContextLoading: { ...s.priceContextLoading, [key]: true },
+    }));
+
+    try {
+      const res = await apiClient.get(
+        `/search/${legId}/price-context?target_date=${date}`
+      );
+      set((s) => ({
+        priceContext: { ...s.priceContext, [key]: res.data as PriceContext },
+        priceContextLoading: { ...s.priceContextLoading, [key]: false },
+      }));
+    } catch {
+      set((s) => ({
+        priceContext: {
+          ...s.priceContext,
+          [key]: { available: false, message: "Failed to load" },
+        },
+        priceContextLoading: { ...s.priceContextLoading, [key]: false },
+      }));
     }
   },
 }));

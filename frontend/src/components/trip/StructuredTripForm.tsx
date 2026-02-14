@@ -29,6 +29,7 @@ export function StructuredTripForm({ onSubmit, loading, initialLegs }: Props) {
   const [legs, setLegs] = useState<LegInput[]>(
     initialLegs && initialLegs.length > 0 ? initialLegs : [{ ...EMPTY_LEG }]
   );
+  const [roundTrip, setRoundTrip] = useState(false);
 
   function updateLeg(index: number, field: keyof LegInput, value: string | number) {
     setLegs((prev) =>
@@ -52,18 +53,34 @@ export function StructuredTripForm({ onSubmit, loading, initialLegs }: Props) {
     setLegs((prev) => prev.filter((_, i) => i !== index));
   }
 
+  const [returnDate, setReturnDate] = useState("");
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const valid = legs.every(
       (l) => l.origin_city.trim() && l.destination_city.trim() && l.preferred_date
     );
     if (!valid) return;
-    await onSubmit(legs);
+    if (roundTrip && !returnDate) return;
+
+    const allLegs = [...legs];
+    if (roundTrip && legs.length === 1) {
+      allLegs.push({
+        ...EMPTY_LEG,
+        origin_city: legs[0].destination_city,
+        destination_city: legs[0].origin_city,
+        preferred_date: returnDate,
+        flexibility_days: legs[0].flexibility_days,
+        cabin_class: legs[0].cabin_class,
+        passengers: legs[0].passengers,
+      });
+    }
+    await onSubmit(allLegs);
   }
 
   const allValid = legs.every(
     (l) => l.origin_city.trim() && l.destination_city.trim() && l.preferred_date
-  );
+  ) && (!roundTrip || returnDate);
 
   return (
     <Card>
@@ -185,15 +202,57 @@ export function StructuredTripForm({ onSubmit, loading, initialLegs }: Props) {
             </div>
           ))}
 
+          {/* Round trip toggle — only for single-leg trips */}
+          {legs.length === 1 && (
+            <div className="space-y-3 rounded-lg border border-border p-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={roundTrip}
+                  onChange={(e) => {
+                    setRoundTrip(e.target.checked);
+                    if (!e.target.checked) setReturnDate("");
+                  }}
+                  className="h-4 w-4 rounded border-input"
+                />
+                <span className="text-sm font-medium">Round trip</span>
+              </label>
+              {roundTrip && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Return date
+                    </label>
+                    <Input
+                      type="date"
+                      value={returnDate}
+                      min={legs[0].preferred_date || undefined}
+                      onChange={(e) => setReturnDate(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <p className="text-xs text-muted-foreground pb-2">
+                      {legs[0].destination_city || "Destination"} &rarr;{" "}
+                      {legs[0].origin_city || "Origin"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={addLeg}
-            >
-              + Add leg
-            </Button>
+            {!roundTrip && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={addLeg}
+              >
+                + Add leg
+              </Button>
+            )}
             <div className="flex-1" />
             <Button type="submit" disabled={loading || !allValid}>
               {loading ? "Creating..." : "Create Trip"}
