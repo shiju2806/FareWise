@@ -1,5 +1,6 @@
 """Search router — flight search, date options, re-scoring, and price intelligence."""
 
+import asyncio
 import logging
 import uuid
 from datetime import date
@@ -69,13 +70,28 @@ async def search_flights(
     include_nearby = req.include_nearby_airports if req else True
 
     try:
-        result = await search_orchestrator.search_leg(
-            db=db,
-            leg=leg,
-            include_nearby=include_nearby,
+        result = await asyncio.wait_for(
+            search_orchestrator.search_leg(
+                db=db,
+                leg=leg,
+                include_nearby=include_nearby,
+            ),
+            timeout=90.0,
         )
+    except asyncio.TimeoutError:
+        logger.error(f"Search timed out for leg {trip_leg_id}")
+        raise HTTPException(status_code=504, detail="Search timed out. Please try again.")
     except Exception as e:
         logger.error(f"Search orchestrator failed for leg {trip_leg_id}: {e}")
+        # Reset trip status on failure
+        try:
+            trip_result = await db.execute(select(Trip).where(Trip.id == leg.trip_id))
+            trip = trip_result.scalar_one_or_none()
+            if trip and trip.status == "searching":
+                trip.status = "draft"
+                await db.commit()
+        except Exception:
+            pass
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
     # Update trip status to searching

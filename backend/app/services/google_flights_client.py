@@ -62,21 +62,28 @@ async def search_date(
         date_str = departure_date.isoformat()
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: get_flights(
-                flight_data=[
-                    FlightData(
-                        date=date_str,
-                        from_airport=origin,
-                        to_airport=destination,
-                    )
-                ],
-                trip="one-way",
-                seat=seat,
-                passengers=Passengers(adults=1),
-            ),
-        )
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: get_flights(
+                        flight_data=[
+                            FlightData(
+                                date=date_str,
+                                from_airport=origin,
+                                to_airport=destination,
+                            )
+                        ],
+                        trip="one-way",
+                        seat=seat,
+                        passengers=Passengers(adults=1),
+                    ),
+                ),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Google Flights search_date timeout: {origin}-{destination} on {date_str}")
+            return None
 
         if not result or not result.flights:
             return None
@@ -175,21 +182,28 @@ async def search_flights(
         date_str = departure_date.isoformat()
 
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: get_flights(
-                flight_data=[
-                    FlightData(
-                        date=date_str,
-                        from_airport=origin,
-                        to_airport=destination,
-                    )
-                ],
-                trip="one-way",
-                seat=seat,
-                passengers=Passengers(adults=1),
-            ),
-        )
+        try:
+            result = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: get_flights(
+                        flight_data=[
+                            FlightData(
+                                date=date_str,
+                                from_airport=origin,
+                                to_airport=destination,
+                            )
+                        ],
+                        trip="one-way",
+                        seat=seat,
+                        passengers=Passengers(adults=1),
+                    ),
+                ),
+                timeout=15.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Google Flights search_flights timeout: {origin}-{destination} on {date_str}")
+            return []
 
         if not result or not result.flights:
             return []
@@ -281,7 +295,14 @@ async def search_month_sample(
     results: dict[str, dict] = {}
 
     for sd in sample_dates:
-        data = await search_date(origin, destination, sd, cabin_class)
+        try:
+            data = await asyncio.wait_for(
+                search_date(origin, destination, sd, cabin_class),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Google Flights month sample timeout: {origin}-{destination} on {sd}")
+            data = None
         if data:
             results[sd.isoformat()] = {
                 "min_price": round(data["cheapest_price"], 2),

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import axios from "axios";
 import type { SearchResult } from "@/types/search";
 import apiClient from "@/api/client";
 
@@ -8,8 +9,11 @@ interface SearchState {
   sliderLoading: boolean;
   sliderValue: number;
   error: string | null;
+  searchStartedAt: number | null;
+  _abortController: AbortController | null;
 
   searchLeg: (legId: string) => Promise<void>;
+  cancelSearch: () => void;
   rescoreWithSlider: (legId: string, position: number) => Promise<void>;
   setSliderValue: (v: number) => void;
   clearResults: () => void;
@@ -22,23 +26,44 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   sliderLoading: false,
   sliderValue: 40,
   error: null,
+  searchStartedAt: null,
+  _abortController: null,
 
   searchLeg: async (legId: string) => {
-    set({ loading: true, error: null });
+    // Cancel any in-flight search
+    const prev = get()._abortController;
+    if (prev) prev.abort();
+
+    const controller = new AbortController();
+    set({ loading: true, error: null, searchStartedAt: Date.now(), _abortController: controller });
     try {
-      const res = await apiClient.post(`/search/${legId}`, {
-        include_nearby_airports: true,
-      });
+      const res = await apiClient.post(
+        `/search/${legId}`,
+        { include_nearby_airports: true },
+        { timeout: 120000, signal: controller.signal },
+      );
       set((state) => ({
         results: { ...state.results, [legId]: res.data as SearchResult },
         loading: false,
+        searchStartedAt: null,
+        _abortController: null,
       }));
     } catch (err: unknown) {
+      if (axios.isCancel(err)) {
+        set({ loading: false, error: null, searchStartedAt: null, _abortController: null });
+        return;
+      }
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data
-          ?.detail ?? "Search failed";
-      set({ error: msg, loading: false });
+          ?.detail ?? "Search failed — try again";
+      set({ error: msg, loading: false, searchStartedAt: null, _abortController: null });
     }
+  },
+
+  cancelSearch: () => {
+    const ctrl = get()._abortController;
+    if (ctrl) ctrl.abort();
+    set({ loading: false, error: null, searchStartedAt: null, _abortController: null });
   },
 
   rescoreWithSlider: async (legId: string, position: number) => {

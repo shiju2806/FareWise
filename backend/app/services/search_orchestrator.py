@@ -91,7 +91,7 @@ class SearchOrchestrator:
         for i in range(0, len(search_tasks), batch_size):
             batch = search_tasks[i:i + batch_size]
             coros = [
-                self._search_with_cache(
+                self._search_with_timeout(
                     orig, dest, d, cabin, pax,
                     is_alt_airport=is_alt_ap,
                     is_alt_date=is_alt_dt,
@@ -332,6 +332,29 @@ class SearchOrchestrator:
             return datetime.fromisoformat(s)
         except (ValueError, TypeError):
             return None
+
+    async def _search_with_timeout(
+        self,
+        origin: str,
+        destination: str,
+        departure_date: date,
+        cabin_class: str,
+        adults: int,
+        is_alt_airport: bool,
+        is_alt_date: bool,
+    ) -> list[dict]:
+        """Wrapper around _search_with_cache with a 20s timeout."""
+        try:
+            return await asyncio.wait_for(
+                self._search_with_cache(
+                    origin, destination, departure_date, cabin_class, adults,
+                    is_alt_airport=is_alt_airport, is_alt_date=is_alt_date,
+                ),
+                timeout=20.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(f"Search timeout for {origin}->{destination} on {departure_date}")
+            return []
 
     async def _search_with_cache(
         self,

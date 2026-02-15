@@ -19,10 +19,25 @@ from app.schemas.trip import (
     TripResponse,
     UpdateLegsRequest,
 )
+from pydantic import BaseModel as PydanticBaseModel
 from app.services.airport_service import airport_service
-from app.services.nlp_parser import nlp_parser
+from app.services.nlp_parser import nlp_parser, nlp_chat_parser
 
 router = APIRouter()
+
+
+class ChatRequest(PydanticBaseModel):
+    message: str
+    conversation_history: list[dict] = []
+    partial_trip: dict | None = None
+
+
+class ChatResponse(PydanticBaseModel):
+    reply: str
+    conversation_history: list[dict]
+    partial_trip: dict | None
+    trip_ready: bool
+    missing_fields: list[str]
 
 
 def _build_title(legs: list[dict]) -> str:
@@ -35,6 +50,32 @@ def _build_title(legs: list[dict]) -> str:
         if dest and dest != cities[-1]:
             cities.append(dest)
     return " → ".join(cities)
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def trip_chat(
+    req: ChatRequest,
+    user: User = Depends(get_current_user),
+):
+    """Multi-turn conversational trip planning."""
+    result = await nlp_chat_parser.chat(
+        message=req.message,
+        conversation_history=req.conversation_history,
+        partial_trip=req.partial_trip,
+    )
+
+    # Build updated conversation history
+    updated_history = list(req.conversation_history)
+    updated_history.append({"role": "user", "content": req.message})
+    updated_history.append({"role": "assistant", "content": result["reply"]})
+
+    return ChatResponse(
+        reply=result["reply"],
+        conversation_history=updated_history,
+        partial_trip=result.get("partial_trip"),
+        trip_ready=result.get("trip_ready", False),
+        missing_fields=result.get("missing_fields", []),
+    )
 
 
 @router.post("", status_code=201, response_model=TripResponse)

@@ -116,4 +116,106 @@ class NLPParser:
         }
 
 
+CHAT_SYSTEM_PROMPT = """You are a friendly travel planning assistant for a corporate travel tool. Today is {today}.
+
+Help users plan trips through brief conversation. Given the conversation history and any partial trip data, do TWO things:
+1. Generate a brief, friendly reply (1-2 sentences max)
+2. Update the structured trip data with any new information
+
+Required fields before a trip is ready:
+- At least one leg with: origin_city, destination_city, preferred_date
+- If user implies round trip, add a return leg
+
+Ask about missing info naturally. Suggest reasonable defaults. Don't be verbose.
+
+Respond ONLY with valid JSON, no markdown:
+{{
+    "reply": "Your brief message to the user",
+    "partial_trip": {{
+        "confidence": 0.0-1.0,
+        "legs": [
+            {{
+                "sequence": 1,
+                "origin_city": "City Name",
+                "origin_airport": "IATA",
+                "destination_city": "City Name",
+                "destination_airport": "IATA",
+                "preferred_date": "YYYY-MM-DD",
+                "flexibility_days": 3,
+                "cabin_class": "economy",
+                "passengers": 1
+            }}
+        ],
+        "interpretation_notes": ""
+    }},
+    "trip_ready": false,
+    "missing_fields": ["return_date", "cabin_class"]
+}}"""
+
+
+class NLPChatParser:
+    """Multi-turn conversational trip planning parser."""
+
+    def __init__(self):
+        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+    async def chat(
+        self,
+        message: str,
+        conversation_history: list[dict] | None = None,
+        partial_trip: dict | None = None,
+    ) -> dict:
+        """
+        Process a chat message in the trip planning conversation.
+
+        Returns dict with: reply, partial_trip, trip_ready, missing_fields.
+        """
+        system = CHAT_SYSTEM_PROMPT.format(today=date.today().isoformat())
+
+        if partial_trip:
+            system += f"\n\nCurrent partial trip data:\n{json.dumps(partial_trip, indent=2)}"
+
+        messages = list(conversation_history or [])
+        messages.append({"role": "user", "content": message})
+
+        try:
+            response = await self.client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=1000,
+                temperature=0,
+                system=system,
+                messages=messages,
+            )
+
+            raw = response.content[0].text.strip()
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                lines = [l for l in lines if not l.strip().startswith("```")]
+                raw = "\n".join(lines).strip()
+
+            parsed = json.loads(raw)
+
+            # Validate required fields
+            if "reply" not in parsed:
+                parsed["reply"] = "I can help you plan that trip. What are the details?"
+            if "partial_trip" not in parsed:
+                parsed["partial_trip"] = partial_trip
+            if "trip_ready" not in parsed:
+                parsed["trip_ready"] = False
+            if "missing_fields" not in parsed:
+                parsed["missing_fields"] = []
+
+            return parsed
+
+        except (json.JSONDecodeError, anthropic.APIError, Exception) as e:
+            logger.error(f"Chat parse error: {e}")
+            return {
+                "reply": "I understand. Could you tell me where you'd like to travel, when, and from where?",
+                "partial_trip": partial_trip,
+                "trip_ready": False,
+                "missing_fields": ["origin", "destination", "date"],
+            }
+
+
 nlp_parser = NLPParser()
+nlp_chat_parser = NLPChatParser()

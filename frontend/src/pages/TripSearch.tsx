@@ -22,7 +22,9 @@ export default function TripSearch() {
     sliderLoading,
     sliderValue,
     error,
+    searchStartedAt,
     searchLeg,
+    cancelSearch,
     rescoreWithSlider,
   } = useSearchStore();
   const { legEvents, fetchLegEvents } = useEventStore();
@@ -40,6 +42,20 @@ export default function TripSearch() {
   const [justificationAnalysis, setJustificationAnalysis] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [excludedAirlines, setExcludedAirlines] = useState<string[]>([]);
+  const [elapsed, setElapsed] = useState(0);
+
+  // Elapsed timer for search
+  useEffect(() => {
+    if (!searchLoading || !searchStartedAt) {
+      setElapsed(0);
+      return;
+    }
+    setElapsed(Math.floor((Date.now() - searchStartedAt) / 1000));
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - searchStartedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [searchLoading, searchStartedAt]);
 
   useEffect(() => {
     if (tripId) {
@@ -243,23 +259,18 @@ export default function TripSearch() {
       )}
 
       {/* Search button */}
-      {!searchResult && (
-        <Button onClick={handleSearch} disabled={searchLoading}>
-          {searchLoading ? "Searching..." : "Search Flights"}
+      {!searchResult && !searchLoading && (
+        <Button onClick={handleSearch}>
+          Search Flights
         </Button>
       )}
 
       {/* Error */}
       {error && (
-        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
-          <Button
-            variant="outline"
-            size="sm"
-            className="ml-3"
-            onClick={handleSearch}
-          >
-            Retry
+        <div className="rounded-md border border-destructive/50 bg-destructive/10 p-4 space-y-2">
+          <p className="text-sm text-destructive font-medium">{error}</p>
+          <Button size="sm" onClick={handleSearch}>
+            Retry Search
           </Button>
         </div>
       )}
@@ -267,6 +278,20 @@ export default function TripSearch() {
       {/* Loading skeleton */}
       {searchLoading && (
         <div className="space-y-4">
+          {/* Search progress bar */}
+          <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              <span className="text-sm font-medium">
+                Searching flights...
+                {elapsed > 0 && <span className="text-muted-foreground ml-1">({elapsed}s)</span>}
+              </span>
+            </div>
+            <Button variant="ghost" size="sm" onClick={cancelSearch} className="text-xs">
+              Cancel
+            </Button>
+          </div>
+
           {/* Metadata skeleton */}
           <div className="flex items-center justify-between bg-muted/30 rounded-lg px-3 py-2">
             <div className="h-3 w-64 bg-muted animate-pulse rounded" />

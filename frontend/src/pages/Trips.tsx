@@ -1,19 +1,36 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { TripCalendar } from "@/components/trips/TripCalendar";
+import { NewTripSlideOver } from "@/components/trips/NewTripSlideOver";
 import TripHistory from "./TripHistory";
 
 type ViewMode = "calendar" | "list";
 
 export default function Trips() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState<ViewMode>(
     () => (localStorage.getItem("trips-view") as ViewMode) || "calendar"
   );
+  const [showNewTrip, setShowNewTrip] = useState(false);
+
+  // Auto-open slide-over if ?new=1 query param
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setShowNewTrip(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   function setViewMode(mode: ViewMode) {
     setView(mode);
     localStorage.setItem("trips-view", mode);
+  }
+
+  function handleTripCreated(tripId: string) {
+    setShowNewTrip(false);
+    navigate(`/trips/${tripId}/search`);
   }
 
   return (
@@ -58,14 +75,21 @@ export default function Trips() {
             </button>
           </div>
 
-          <Link to="/trips/new">
-            <Button size="sm">New Trip</Button>
-          </Link>
+          <Button size="sm" onClick={() => setShowNewTrip(true)}>
+            + New Trip
+          </Button>
         </div>
       </div>
 
       {/* View content */}
       {view === "calendar" ? <TripCalendar /> : <TripHistory />}
+
+      {/* Slide-over */}
+      <NewTripSlideOver
+        open={showNewTrip}
+        onClose={() => setShowNewTrip(false)}
+        onTripCreated={handleTripCreated}
+      />
     </div>
   );
 }
