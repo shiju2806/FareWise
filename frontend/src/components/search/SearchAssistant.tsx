@@ -22,13 +22,36 @@ const QUICK_ACTIONS = [
   { label: "Add a stopover", icon: "+" },
 ];
 
+const STORAGE_PREFIX = "farewise-assistant-";
+
+function loadChat(tripId: string): { messages: ChatMessage[]; history: { role: string; content: string }[] } {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_PREFIX + tripId);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return { messages: [], history: [] };
+}
+
+function saveChat(tripId: string, messages: ChatMessage[], history: { role: string; content: string }[]) {
+  try {
+    sessionStorage.setItem(STORAGE_PREFIX + tripId, JSON.stringify({ messages, history }));
+  } catch { /* sessionStorage full */ }
+}
+
 export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated }: Props) {
   const [open, setOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [conversationHistory, setConversationHistory] = useState<{ role: string; content: string }[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat(tripId).messages);
+  const [conversationHistory, setConversationHistory] = useState<{ role: string; content: string }[]>(() => loadChat(tripId).history);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Persist conversation to sessionStorage on change
+  useEffect(() => {
+    if (messages.length > 0) {
+      saveChat(tripId, messages, conversationHistory);
+    }
+  }, [tripId, messages, conversationHistory]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });

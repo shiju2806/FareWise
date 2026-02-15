@@ -175,34 +175,7 @@ export function SearchResults({
         />
       </div>
 
-      {/* 4. Price Intelligence Advisor (compact banner) */}
-      <PriceAdvisorPanel legId={legId} />
-
-      {/* Hidden panels (triggered by calendar/events) */}
-      {whyPriceDate && (
-        <WhyThisPrice
-          date={whyPriceDate}
-          events={dateEvents[whyPriceDate] || []}
-          price={result.price_calendar.dates[whyPriceDate]?.min_price ?? 0}
-          onClose={() => setWhyPriceDate(null)}
-        />
-      )}
-      {showEventPanel && (
-        <EventPanel
-          events={allEvents}
-          destination={destination || result.leg.destination}
-          onClose={() => setShowEventPanel(false)}
-        />
-      )}
-
-      {/* 5. What If Slider */}
-      <WhatIfSlider
-        value={sliderValue}
-        onChange={onSliderChange}
-        loading={sliderLoading}
-      />
-
-      {/* 6. Airline x Date Price Matrix */}
+      {/* 4. Airline x Date Price Matrix (grouped with calendar for exploration) */}
       <div className="rounded-lg bg-muted/15 p-3 shadow-sm">
         <AirlineDateMatrix
           allOptions={result.all_options}
@@ -216,7 +189,7 @@ export function SearchResults({
         />
       </div>
 
-      {/* 7. Airline filter chips + date filter */}
+      {/* 5. Airline filter chips + date filter */}
       <div className="flex items-center gap-2 flex-wrap">
         {cheapestByAirline.length > 1 &&
           cheapestByAirline.map((f) => (
@@ -263,6 +236,33 @@ export function SearchResults({
           </>
         )}
       </div>
+
+      {/* 6. Price Intelligence Advisor */}
+      <PriceAdvisorPanel legId={legId} />
+
+      {/* Hidden panels (triggered by calendar/events) */}
+      {whyPriceDate && (
+        <WhyThisPrice
+          date={whyPriceDate}
+          events={dateEvents[whyPriceDate] || []}
+          price={result.price_calendar.dates[whyPriceDate]?.min_price ?? 0}
+          onClose={() => setWhyPriceDate(null)}
+        />
+      )}
+      {showEventPanel && (
+        <EventPanel
+          events={allEvents}
+          destination={destination || result.leg.destination}
+          onClose={() => setShowEventPanel(false)}
+        />
+      )}
+
+      {/* 7. What If Slider */}
+      <WhatIfSlider
+        value={sliderValue}
+        onChange={onSliderChange}
+        loading={sliderLoading}
+      />
 
       {/* 8. Flight list (compact rows, recommendation integrated) */}
       <div className="space-y-1">

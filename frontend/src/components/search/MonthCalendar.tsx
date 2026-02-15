@@ -47,6 +47,7 @@ export function MonthCalendar({
   const prefDate = new Date(preferredDate + "T00:00:00");
   const [viewYear, setViewYear] = useState(prefDate.getFullYear());
   const [viewMonth, setViewMonth] = useState(prefDate.getMonth() + 1);
+  const [expanded, setExpanded] = useState(false);
 
   // Second month
   const second = offsetMonth(viewYear, viewMonth, 1);
@@ -56,11 +57,13 @@ export function MonthCalendar({
     priceContext, priceContextLoading, fetchPriceContext,
   } = usePriceIntelStore();
 
-  // Fetch both months
+  // Fetch months (second only when expanded)
   useEffect(() => {
     fetchMonthCalendar(legId, viewYear, viewMonth);
-    fetchMonthCalendar(legId, second.year, second.month);
-  }, [legId, viewYear, viewMonth, second.year, second.month, fetchMonthCalendar]);
+    if (expanded) {
+      fetchMonthCalendar(legId, second.year, second.month);
+    }
+  }, [legId, viewYear, viewMonth, second.year, second.month, expanded, fetchMonthCalendar]);
 
   // Fetch price context when a date is selected
   useEffect(() => {
@@ -113,8 +116,8 @@ export function MonthCalendar({
   const mergedLeft = useMemo(() => getMergedDates(viewYear, viewMonth), [getMergedDates, viewYear, viewMonth]);
   const mergedRight = useMemo(() => getMergedDates(second.year, second.month), [getMergedDates, second.year, second.month]);
 
-  // Compute quartiles across BOTH months for consistent coloring
-  const allMerged = useMemo(() => ({ ...mergedLeft, ...mergedRight }), [mergedLeft, mergedRight]);
+  // Compute quartiles across visible months for consistent coloring
+  const allMerged = useMemo(() => expanded ? { ...mergedLeft, ...mergedRight } : { ...mergedLeft }, [mergedLeft, mergedRight, expanded]);
 
   const priceQuartiles = useMemo(() => {
     const prices = Object.values(allMerged)
@@ -175,29 +178,32 @@ export function MonthCalendar({
         )}
       </div>
 
-      {/* Navigation — step 2 months */}
+      {/* Navigation */}
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={() => navigateMonth(-2)}
+          onClick={() => navigateMonth(expanded ? -2 : -1)}
           className="px-2 py-1 rounded hover:bg-muted text-sm"
         >
           &larr;
         </button>
         <span className="text-sm font-medium">
-          {MONTH_SHORT[viewMonth - 1]} &ndash; {MONTH_SHORT[second.month - 1]} {second.year !== viewYear ? `${viewYear}/${second.year}` : viewYear}
+          {expanded
+            ? `${MONTH_SHORT[viewMonth - 1]} \u2013 ${MONTH_SHORT[second.month - 1]} ${second.year !== viewYear ? `${viewYear}/${second.year}` : viewYear}`
+            : `${MONTH_NAMES[viewMonth - 1]} ${viewYear}`
+          }
         </span>
         <button
           type="button"
-          onClick={() => navigateMonth(2)}
+          onClick={() => navigateMonth(expanded ? 2 : 1)}
           className="px-2 py-1 rounded hover:bg-muted text-sm"
         >
           &rarr;
         </button>
       </div>
 
-      {/* Two-month grid */}
-      <div className="grid grid-cols-2 gap-4">
+      {/* Month grid(s) */}
+      <div className={expanded ? "grid grid-cols-2 gap-4" : ""}>
         <SingleMonthGrid
           year={viewYear}
           month={viewMonth}
@@ -210,19 +216,30 @@ export function MonthCalendar({
           getQuartile={getQuartile}
           onDateSelect={onDateSelect}
         />
-        <SingleMonthGrid
-          year={second.year}
-          month={second.month}
-          mergedDates={mergedRight}
-          isLoading={rightLoading}
-          today={today}
-          preferredDate={preferredDate}
-          cheapestDate={cheapestDate}
-          selectedDate={selectedDate}
-          getQuartile={getQuartile}
-          onDateSelect={onDateSelect}
-        />
+        {expanded && (
+          <SingleMonthGrid
+            year={second.year}
+            month={second.month}
+            mergedDates={mergedRight}
+            isLoading={rightLoading}
+            today={today}
+            preferredDate={preferredDate}
+            cheapestDate={cheapestDate}
+            selectedDate={selectedDate}
+            getQuartile={getQuartile}
+            onDateSelect={onDateSelect}
+          />
+        )}
       </div>
+
+      {/* Expand / collapse toggle */}
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="text-[10px] text-primary hover:underline w-full text-center"
+      >
+        {expanded ? "Show one month" : "Show next month"}
+      </button>
 
       {/* Loading */}
       {(leftLoading || rightLoading) && !hasData && (

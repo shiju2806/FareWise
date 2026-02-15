@@ -95,12 +95,14 @@ export default function TripSearch() {
     }
   }, [currentTrip, autoSearched, searchLoading, results, searchLeg]);
 
-  // Auto-search when switching to a leg that hasn't been searched
+  // Auto-search when user manually switches to a leg that hasn't been searched
+  const [userSwitchedLeg, setUserSwitchedLeg] = useState(false);
   useEffect(() => {
-    if (activeLeg && !results[activeLeg.id] && !searchLoading) {
+    if (userSwitchedLeg && activeLeg && !results[activeLeg.id] && !searchLoading) {
+      setUserSwitchedLeg(false);
       searchLeg(activeLeg.id);
     }
-  }, [activeLeg, results, searchLoading, searchLeg]);
+  }, [userSwitchedLeg, activeLeg, results, searchLoading, searchLeg]);
 
   // Fetch events when search results appear
   useEffect(() => {
@@ -180,7 +182,7 @@ export default function TripSearch() {
           {currentTrip.legs.map((leg, i) => (
             <button
               key={leg.id}
-              onClick={() => setActiveLegIndex(i)}
+              onClick={() => { setActiveLegIndex(i); setUserSwitchedLeg(true); }}
               className={`px-3 py-1.5 text-sm rounded-md transition-colors ${
                 i === activeLegIndex
                   ? "bg-primary text-primary-foreground"
