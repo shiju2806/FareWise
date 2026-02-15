@@ -10,6 +10,7 @@ import { JustificationModal } from "@/components/search/JustificationModal";
 import { HotelSearch } from "@/components/hotel/HotelSearch";
 import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
 import { LegCard } from "@/components/trip/LegCard";
+import { SearchAssistant } from "@/components/search/SearchAssistant";
 import type { FlightOption } from "@/types/flight";
 import apiClient from "@/api/client";
 
@@ -79,16 +80,16 @@ export default function TripSearch() {
   const searchResult = activeLeg ? results[activeLeg.id] : null;
   const legEventData = activeLeg ? legEvents[activeLeg.id] : null;
 
-  // Auto-search all legs on initial load
+  // Auto-search active leg on initial load (skips if results exist from cache)
   const [autoSearched, setAutoSearched] = useState(false);
   useEffect(() => {
     if (currentTrip && !autoSearched && !searchLoading) {
       setAutoSearched(true);
-      // Search the active leg first, then queue the rest
+      // Only search legs that don't have cached results
       for (const leg of currentTrip.legs) {
         if (!results[leg.id]) {
           searchLeg(leg.id);
-          break; // searchLeg sets loading=true, so we search one at a time
+          break;
         }
       }
     }
@@ -129,6 +130,10 @@ export default function TripSearch() {
 
   function handleFlightSelect(flight: FlightOption) {
     setSelectedFlight(flight);
+  }
+
+  function handleTripUpdated() {
+    if (tripId) fetchTrip(tripId);
   }
 
   if (tripLoading) {
@@ -542,6 +547,16 @@ export default function TripSearch() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Trip assistant chat bubble */}
+      {activeLeg && tripId && (
+        <SearchAssistant
+          tripId={tripId}
+          activeLeg={activeLeg}
+          legsCount={currentTrip.legs.length}
+          onTripUpdated={handleTripUpdated}
+        />
       )}
 
       {/* Full justification modal (>$500 savings) */}

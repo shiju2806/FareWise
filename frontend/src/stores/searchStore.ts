@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import axios from "axios";
 import type { SearchResult } from "@/types/search";
 import apiClient from "@/api/client";
@@ -20,7 +21,7 @@ interface SearchState {
   clearError: () => void;
 }
 
-export const useSearchStore = create<SearchState>((set, get) => ({
+export const useSearchStore = create<SearchState>()(persist((set, get) => ({
   results: {},
   loading: false,
   sliderLoading: false,
@@ -100,4 +101,24 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   setSliderValue: (v) => set({ sliderValue: v }),
   clearResults: () => set({ results: {} }),
   clearError: () => set({ error: null }),
+}), {
+  name: "farewise-search",
+  storage: {
+    getItem: (name) => {
+      const str = sessionStorage.getItem(name);
+      return str ? JSON.parse(str) : null;
+    },
+    setItem: (name, value) => {
+      try {
+        sessionStorage.setItem(name, JSON.stringify(value));
+      } catch {
+        // sessionStorage full — silently ignore
+      }
+    },
+    removeItem: (name) => sessionStorage.removeItem(name),
+  },
+  partialize: (state) => ({
+    results: state.results,
+    sliderValue: state.sliderValue,
+  }),
 }));

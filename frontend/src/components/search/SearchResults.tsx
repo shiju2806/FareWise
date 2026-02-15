@@ -209,6 +209,8 @@ export function SearchResults({
           datesSearched={result.metadata.dates_searched}
           excludedAirlines={excludedAirlines}
           onFlightSelect={onFlightSelect}
+          onAirlineToggle={toggleAirline}
+          activeAirlines={airlineFilter}
           selectedDate={selectedDate}
           preferredDate={result.leg.preferred_date}
         />

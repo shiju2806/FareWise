@@ -226,6 +226,13 @@ export function JustificationModal({
           </button>
         </div>
 
+        {selectedPresets.size > 0 && (
+          <div className="rounded-md bg-primary/5 border border-primary/20 px-2.5 py-1.5 text-[11px] text-foreground">
+            <span className="font-medium text-primary">Selected:</span>{" "}
+            {Array.from(selectedPresets).join("; ")}
+          </div>
+        )}
+
         {showCustom && (
           <input
             type="text"
@@ -238,7 +245,7 @@ export function JustificationModal({
 
         <div className="flex items-center justify-between">
           <p className="text-[10px] text-muted-foreground">
-            {canConfirm ? "Click confirm to proceed with justification" : "Select a reason to continue"}
+            {canConfirm ? "Click confirm to proceed" : "Select a reason to continue"}
           </p>
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onCancel}>
@@ -368,12 +375,18 @@ export function JustificationModal({
           </div>
         </div>
 
-        {/* Free-text elaboration */}
+        {/* Selected reasons summary + free-text */}
         <div className="px-5 pt-3 space-y-1.5">
+          {selectedPresets.size > 0 && (
+            <div className="rounded-md bg-primary/5 border border-primary/20 px-3 py-2 text-xs text-foreground">
+              <span className="font-medium text-primary">Selected:</span>{" "}
+              {Array.from(selectedPresets).join("; ")}
+            </div>
+          )}
           <textarea
             value={justification}
             onChange={(e) => setJustification(e.target.value)}
-            placeholder="Add any additional context..."
+            placeholder={selectedPresets.size > 0 ? "Add any additional context (optional)..." : "Type a custom justification..."}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm min-h-[60px] resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           <p className="text-[10px] text-muted-foreground">
@@ -381,7 +394,7 @@ export function JustificationModal({
               ? `Justification required for savings over $500 (${fullJustification.length}/10 chars)`
               : canConfirm
               ? "This note will be included with your travel request"
-              : "Select a reason or type a custom justification"}
+              : "Select a reason above or type a custom justification"}
           </p>
         </div>
 

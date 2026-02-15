@@ -6,6 +6,8 @@ interface Props {
   datesSearched: string[];
   excludedAirlines?: string[];
   onFlightSelect?: (flight: FlightOption) => void;
+  onAirlineToggle?: (airlineName: string) => void;
+  activeAirlines?: Set<string>;
   selectedDate?: string | null;
   preferredDate?: string | null;
 }
@@ -31,6 +33,8 @@ export function AirlineDateMatrix({
   datesSearched,
   excludedAirlines = [],
   onFlightSelect,
+  onAirlineToggle,
+  activeAirlines,
   selectedDate,
   preferredDate,
 }: Props) {
@@ -144,26 +148,39 @@ export function AirlineDateMatrix({
               const isColCheapest = (d: string, price: number) =>
                 cheapestByDate.get(d) === price && !airline.excluded;
 
+              const isActive = activeAirlines?.has(airline.name);
+
               return (
                 <tr
                   key={airline.name}
                   className={`border-t border-border/50 ${
                     airline.excluded ? "opacity-40" : ""
-                  }`}
+                  } ${isActive ? "bg-primary/5" : ""}`}
                 >
                   <td
                     className={`sticky left-0 z-10 px-2 py-1.5 border-r border-border ${
                       airline.excluded
                         ? "bg-muted/20 line-through"
+                        : isActive
+                        ? "bg-primary/10"
                         : "bg-card"
                     }`}
                   >
-                    <div className="font-semibold truncate max-w-[110px]">
-                      {airline.name}
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">
-                      from {fmtPrice(airline.minPrice)}
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => !airline.excluded && onAirlineToggle?.(airline.name)}
+                      disabled={airline.excluded}
+                      className={`text-left w-full ${
+                        !airline.excluded ? "cursor-pointer hover:text-primary" : "cursor-not-allowed"
+                      }`}
+                    >
+                      <div className={`font-semibold truncate max-w-[110px] ${isActive ? "text-primary" : ""}`}>
+                        {airline.name}
+                      </div>
+                      <div className="text-[9px] text-muted-foreground">
+                        from {fmtPrice(airline.minPrice)}
+                      </div>
+                    </button>
                   </td>
                   {dates.map((d) => {
                     const isColSelected = selectedDate === d;
@@ -253,6 +270,7 @@ export function AirlineDateMatrix({
           <strong>Bold</strong> = cheapest for this airline
         </span>
         <span>{"\u2605"} = cheapest airline + date</span>
+        <span>Click airline name to filter</span>
       </div>
     </div>
   );
