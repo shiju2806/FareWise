@@ -34,31 +34,23 @@ export default function TripHistory() {
 
   return (
     <div className="space-y-6">
-      {/* Header with stats bar */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">My Trips</h2>
-          <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
-            <span>{trips.length} trips</span>
+      {/* Stats bar */}
+      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <span>{trips.length} trips</span>
+        <span className="text-border">|</span>
+        <span>{draftCount} draft</span>
+        <span className="text-border">|</span>
+        <span className="text-amber-600">{submittedCount} submitted</span>
+        <span className="text-border">|</span>
+        <span className="text-green-600">{approvedCount} approved</span>
+        {isManager && counts.pending > 0 && (
+          <>
             <span className="text-border">|</span>
-            <span>{draftCount} draft</span>
-            <span className="text-border">|</span>
-            <span className="text-amber-600">{submittedCount} submitted</span>
-            <span className="text-border">|</span>
-            <span className="text-green-600">{approvedCount} approved</span>
-            {isManager && counts.pending > 0 && (
-              <>
-                <span className="text-border">|</span>
-                <Link to="/approvals" className="text-primary font-medium hover:underline">
-                  {counts.pending} pending approval{counts.pending > 1 ? "s" : ""}
-                </Link>
-              </>
-            )}
-          </div>
-        </div>
-        <Link to="/trips/new">
-          <Button>New Trip</Button>
-        </Link>
+            <Link to="/approvals" className="text-primary font-medium hover:underline">
+              {counts.pending} pending approval{counts.pending > 1 ? "s" : ""}
+            </Link>
+          </>
+        )}
       </div>
 
       {loading && trips.length === 0 && (

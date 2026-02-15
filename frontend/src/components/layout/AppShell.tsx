@@ -16,7 +16,7 @@ export function AppShell() {
 
   const navItems = [
     { label: "New Trip", path: "/trips/new", primary: true, roles: null },
-    { label: "My Trips", path: "/trips", primary: false, roles: null },
+    { label: "Trips", path: "/trips", primary: false, roles: null },
     { label: "Price Watches", path: "/price-watches", primary: false, roles: null },
     { label: "My Stats", path: "/my-stats", primary: false, roles: null },
     { label: "Leaderboard", path: "/leaderboard", primary: false, roles: null },

@@ -11,7 +11,7 @@ import apiClient from "@/api/client";
 // Lazy-loaded pages for code splitting
 const Login = lazy(() => import("@/pages/Login"));
 const NewTrip = lazy(() => import("@/pages/NewTrip"));
-const TripHistory = lazy(() => import("@/pages/TripHistory"));
+const Trips = lazy(() => import("@/pages/Trips"));
 const TripSearch = lazy(() => import("@/pages/TripSearch"));
 const TripReview = lazy(() => import("@/pages/TripReview"));
 const TripAudit = lazy(() => import("@/pages/TripAudit"));
@@ -64,7 +64,7 @@ export default function App() {
           >
             <Route path="/" element={<Navigate to="/trips" replace />} />
             <Route path="/trips/new" element={<NewTrip />} />
-            <Route path="/trips" element={<TripHistory />} />
+            <Route path="/trips" element={<Trips />} />
             <Route path="/trips/:tripId/search" element={<TripSearch />} />
             <Route path="/trips/:tripId/review" element={<TripReview />} />
             <Route path="/trips/:tripId/audit" element={<TripAudit />} />
