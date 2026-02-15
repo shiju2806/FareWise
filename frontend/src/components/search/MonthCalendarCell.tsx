@@ -35,12 +35,12 @@ export function MonthCalendarCell({
   onClick,
 }: Props) {
   if (day === 0) {
-    return <div className="h-11" />;
+    return <div className="h-8" />;
   }
 
   if (isPast) {
     return (
-      <div className="h-11 rounded bg-muted/30 flex items-center justify-center text-muted-foreground/40 text-[10px]">
+      <div className="h-8 rounded bg-muted/30 flex items-center justify-center text-muted-foreground/40 text-[9px]">
         {day}
       </div>
     );
@@ -48,7 +48,7 @@ export function MonthCalendarCell({
 
   if (isLoading) {
     return (
-      <div className="h-11 rounded bg-muted animate-pulse flex items-center justify-center text-[10px] text-muted-foreground">
+      <div className="h-8 rounded bg-muted animate-pulse flex items-center justify-center text-[9px] text-muted-foreground">
         {day}
       </div>
     );
@@ -74,24 +74,22 @@ export function MonthCalendarCell({
       type="button"
       onClick={() => price !== null && onClick(dateStr)}
       disabled={price === null}
-      className={`h-11 rounded flex flex-col items-center justify-center transition-all cursor-pointer ${bgColor} ${borderClass} ${
+      className={`h-8 rounded flex flex-col items-center justify-center transition-all cursor-pointer gap-0 ${bgColor} ${borderClass} ${
         price === null ? "opacity-40 cursor-not-allowed" : ""
       }`}
     >
-      <span className={`text-[8px] leading-none ${isPreferred ? "font-bold text-blue-700" : "text-muted-foreground"}`}>
+      <span className={`text-[7px] leading-none ${isPreferred ? "font-bold text-blue-700" : "text-muted-foreground"}`}>
         {day}
       </span>
       {price !== null ? (
-        <>
-          <span className="font-semibold text-[10px] leading-tight">
-            {fmtPrice(price)}
-          </span>
-          <span className="text-[7px] text-muted-foreground leading-none">
+        <span className="font-semibold text-[9px] leading-tight">
+          {fmtPrice(price)}{" "}
+          <span className="text-[6px] text-muted-foreground">
             {hasDirect ? "\u25CF" : "\u2715"}
           </span>
-        </>
+        </span>
       ) : (
-        <span className="text-[9px] text-muted-foreground">--</span>
+        <span className="text-[8px] text-muted-foreground">--</span>
       )}
     </button>
   );

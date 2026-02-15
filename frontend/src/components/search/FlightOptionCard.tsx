@@ -157,7 +157,7 @@ export function FlightOptionCard({
         </div>
 
         {/* ---- Duration + Stops ---- */}
-        <div className="w-[110px] shrink-0 text-center">
+        <div className="w-[120px] shrink-0 text-center">
           <div className="text-xs text-foreground leading-tight">
             {formatDuration(flight.duration_minutes)}
             <span className="mx-1 text-muted-foreground">·</span>
@@ -165,6 +165,8 @@ export function FlightOptionCard({
               className={
                 flight.stops === 0
                   ? "text-emerald-600 font-medium"
+                  : flight.duration_minutes > 720
+                  ? "text-amber-600 font-medium"
                   : "text-muted-foreground"
               }
             >
@@ -174,6 +176,11 @@ export function FlightOptionCard({
           {flight.stop_airports && (
             <div className="text-[10px] text-muted-foreground leading-tight truncate">
               via {flight.stop_airports}
+            </div>
+          )}
+          {flight.stops > 0 && flight.duration_minutes > 720 && (
+            <div className="text-[9px] text-amber-600 font-medium leading-tight">
+              Long layover
             </div>
           )}
         </div>
@@ -198,6 +205,11 @@ export function FlightOptionCard({
           {flight.is_alternate_date && (
             <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 whitespace-nowrap">
               Flex Date
+            </span>
+          )}
+          {flight.stops > 0 && flight.duration_minutes > 720 && (
+            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 whitespace-nowrap">
+              {formatDuration(flight.duration_minutes)} total
             </span>
           )}
           {flight.seats_remaining != null && flight.seats_remaining <= 5 && (

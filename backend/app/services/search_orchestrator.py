@@ -377,7 +377,7 @@ class SearchOrchestrator:
                 f["is_alternate_date"] = is_alt_date
             return cached
 
-        # Primary: Google Flights (real market data)
+        # Primary: Google Flights (real market data, all cabin classes)
         from app.services import google_flights_client
         flights = await google_flights_client.search_flights(
             origin, destination, departure_date, cabin_class

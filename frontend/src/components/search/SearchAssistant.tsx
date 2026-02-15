@@ -16,10 +16,10 @@ interface Props {
 }
 
 const QUICK_ACTIONS = [
+  { label: "Book a new trip", icon: "🔍" },
   { label: "Add return flight", icon: "↩" },
   { label: "Change to business class", icon: "✈" },
   { label: "Search ±3 days flexibility", icon: "📅" },
-  { label: "Add a stopover", icon: "+" },
 ];
 
 const STORAGE_PREFIX = "farewise-assistant-";
