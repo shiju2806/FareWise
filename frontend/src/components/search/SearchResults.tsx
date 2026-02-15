@@ -7,6 +7,7 @@ import { PriceAdvisorPanel } from "./PriceAdvisorPanel";
 import { FlightOptionCard } from "./FlightOptionCard";
 import { WhatIfSlider } from "./WhatIfSlider";
 import { RouteComparator } from "./RouteComparator";
+import { AirlineDateMatrix } from "./AirlineDateMatrix";
 import { WhyThisPrice } from "@/components/events/WhyThisPrice";
 import { EventPanel } from "@/components/events/EventPanel";
 import { PriceWatchSetup } from "@/components/pricewatch/PriceWatchSetup";
@@ -19,6 +20,7 @@ interface Props {
   onSliderChange: (value: number) => void;
   onDateSelect: (date: string) => void;
   onFlightSelect?: (flight: FlightOption) => void;
+  excludedAirlines?: string[];
   dateEvents?: Record<string, DateEvent[]>;
   allEvents?: EventData[];
   eventSummary?: { recommendation: string | null } | null;
@@ -33,6 +35,7 @@ export function SearchResults({
   onSliderChange,
   onDateSelect,
   onFlightSelect,
+  excludedAirlines = [],
   dateEvents = {},
   allEvents = [],
   eventSummary,
@@ -235,37 +238,39 @@ export function SearchResults({
         </div>
       )}
 
-      {/* Cheapest by Airline */}
+      {/* Airline × Date Price Matrix */}
+      <AirlineDateMatrix
+        allOptions={result.all_options}
+        datesSearched={result.metadata.dates_searched}
+        excludedAirlines={excludedAirlines}
+        onFlightSelect={onFlightSelect}
+      />
+
+      {/* Airline filter chips */}
       {cheapestByAirline.length > 1 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold">Cheapest by Airline</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
-            {cheapestByAirline.map((f) => (
-              <button
-                key={f.airline_name}
-                type="button"
-                onClick={() => toggleAirline(f.airline_name)}
-                className={`rounded-lg border p-2 text-left transition-all hover:shadow-sm ${
-                  airlineFilter.has(f.airline_name)
-                    ? "border-primary bg-primary/5 ring-1 ring-primary/30"
-                    : "border-border bg-card hover:border-primary/30"
-                }`}
-              >
-                <div className="text-xs font-semibold truncate">{f.airline_name}</div>
-                <div className="text-sm font-bold mt-0.5">${Math.round(f.price)}</div>
-                <div className="text-[10px] text-muted-foreground">
-                  {f.stops === 0 ? "Nonstop" : `${f.stops} stop${f.stops > 1 ? "s" : ""}`}
-                </div>
-              </button>
-            ))}
-          </div>
+        <div className="flex flex-wrap gap-1.5">
+          {cheapestByAirline.map((f) => (
+            <button
+              key={f.airline_name}
+              type="button"
+              onClick={() => toggleAirline(f.airline_name)}
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all ${
+                airlineFilter.has(f.airline_name)
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
+              }`}
+            >
+              {f.airline_name}
+              <span className="text-[10px] opacity-70">${Math.round(f.price)}</span>
+            </button>
+          ))}
           {airlineFilter.size > 0 && (
             <button
               type="button"
               onClick={() => setAirlineFilter(new Set())}
-              className="text-xs text-primary hover:underline"
+              className="text-[11px] text-primary hover:underline px-1"
             >
-              Clear airline filter ({airlineFilter.size} selected)
+              Clear
             </button>
           )}
         </div>

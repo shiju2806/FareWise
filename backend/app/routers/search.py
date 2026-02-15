@@ -24,6 +24,11 @@ from app.services.search_orchestrator import search_orchestrator
 class SelectionRequest(BaseModel):
     flight_option_id: str
     slider_position: float | None = None
+    justification_note: str | None = None
+
+
+class AnalyzeSelectionRequest(BaseModel):
+    flight_option_id: str
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +193,7 @@ async def select_flight(
         trip_leg_id=leg.id,
         flight_option_id=flight_option.id,
         slider_position=Decimal(str(round(req.slider_position / 100, 2))) if req.slider_position is not None else None,
+        justification_note=req.justification_note,
     )
     db.add(selection)
     await db.commit()
@@ -199,7 +205,209 @@ async def select_flight(
         "airline": flight_option.airline_name,
         "flight_numbers": flight_option.flight_numbers,
         "price": float(flight_option.price),
+        "justification_note": selection.justification_note,
         "selected_at": selection.selected_at.isoformat() if selection.selected_at else None,
+    }
+
+
+@router.post("/{trip_leg_id}/analyze-selection")
+async def analyze_selection(
+    trip_leg_id: uuid.UUID,
+    req: AnalyzeSelectionRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Analyze a flight selection against alternatives to determine if justification is needed.
+
+    Compares the selected flight against:
+    - Cheapest on same date (different airline)
+    - Cheapest across all dates
+    - Cheapest on different date, same airline
+    Returns savings analysis and LLM-generated justification prompt if threshold exceeded.
+    """
+    from app.services.justification_service import justification_service
+
+    leg = await _get_user_leg(trip_leg_id, db, user)
+
+    # Get the selected flight
+    result = await db.execute(
+        select(FlightOption).where(FlightOption.id == uuid.UUID(req.flight_option_id))
+    )
+    selected = result.scalar_one_or_none()
+    if not selected:
+        raise HTTPException(status_code=404, detail="Flight option not found")
+
+    # Get all options from the most recent search
+    search_result = await db.execute(
+        select(SearchLog)
+        .where(SearchLog.trip_leg_id == leg.id)
+        .order_by(SearchLog.searched_at.desc())
+        .limit(1)
+    )
+    search_log = search_result.scalar_one_or_none()
+    if not search_log:
+        return {"justification_required": False, "reason": "no_search_data"}
+
+    opts_result = await db.execute(
+        select(FlightOption).where(FlightOption.search_log_id == search_log.id)
+    )
+    all_options = opts_result.scalars().all()
+
+    # Get user's excluded airlines
+    excluded_airlines: set[str] = set()
+    if user.travel_preferences and isinstance(user.travel_preferences, dict):
+        excluded_airlines = set(user.travel_preferences.get("excluded_airlines", []))
+
+    # Filter to allowed airlines only
+    allowed_options = [
+        o for o in all_options
+        if o.airline_name not in excluded_airlines
+    ]
+
+    if not allowed_options:
+        return {"justification_required": False, "reason": "no_alternatives"}
+
+    selected_date = selected.departure_time.date().isoformat() if selected.departure_time else ""
+    selected_price = float(selected.price)
+
+    # Find cheapest overall (among allowed airlines)
+    overall_cheapest = min(allowed_options, key=lambda o: float(o.price))
+    overall_cheapest_price = float(overall_cheapest.price)
+
+    # Find cheapest on same date (different airline)
+    same_date_options = [
+        o for o in allowed_options
+        if o.departure_time and o.departure_time.date().isoformat() == selected_date
+        and o.airline_name != selected.airline_name
+    ]
+    cheapest_same_date = min(same_date_options, key=lambda o: float(o.price)) if same_date_options else None
+
+    # Find cheapest any date (already computed as overall_cheapest)
+    cheapest_any_date_info = None
+    if overall_cheapest.id != selected.id:
+        cheapest_any_date_info = {
+            "airline": overall_cheapest.airline_name,
+            "date": overall_cheapest.departure_time.date().isoformat() if overall_cheapest.departure_time else "",
+            "price": overall_cheapest_price,
+            "savings": round(selected_price - overall_cheapest_price, 2),
+            "stops": overall_cheapest.stops,
+            "duration_minutes": overall_cheapest.duration_minutes,
+            "flight_option_id": str(overall_cheapest.id),
+        }
+
+    # Find cheapest same airline, different date
+    same_airline_options = [
+        o for o in allowed_options
+        if o.airline_name == selected.airline_name
+        and o.departure_time
+        and o.departure_time.date().isoformat() != selected_date
+        and float(o.price) < selected_price
+    ]
+    cheapest_same_airline = min(same_airline_options, key=lambda o: float(o.price)) if same_airline_options else None
+
+    # Calculate max savings
+    savings_amount = round(selected_price - overall_cheapest_price, 2)
+    savings_percent = round((savings_amount / selected_price) * 100, 1) if selected_price > 0 else 0
+
+    # Threshold: justification required if savings >= $100 or >= 10%
+    justification_required = savings_amount >= 100 or savings_percent >= 10
+
+    # Build alternatives list for response
+    alternatives = []
+
+    if cheapest_same_date:
+        sd_price = float(cheapest_same_date.price)
+        alternatives.append({
+            "type": "same_date",
+            "label": "Same date, different airline",
+            "airline": cheapest_same_date.airline_name,
+            "date": selected_date,
+            "price": sd_price,
+            "savings": round(selected_price - sd_price, 2),
+            "stops": cheapest_same_date.stops,
+            "duration_minutes": cheapest_same_date.duration_minutes,
+            "flight_option_id": str(cheapest_same_date.id),
+        })
+
+    if cheapest_any_date_info and (
+        not cheapest_same_date or overall_cheapest.id != cheapest_same_date.id
+    ):
+        alternatives.append({
+            "type": "any_date",
+            "label": "Different date",
+            **cheapest_any_date_info,
+        })
+
+    if cheapest_same_airline:
+        sa_price = float(cheapest_same_airline.price)
+        alternatives.append({
+            "type": "same_airline",
+            "label": f"Same airline ({selected.airline_name}), different date",
+            "airline": selected.airline_name,
+            "date": cheapest_same_airline.departure_time.date().isoformat() if cheapest_same_airline.departure_time else "",
+            "price": sa_price,
+            "savings": round(selected_price - sa_price, 2),
+            "stops": cheapest_same_airline.stops,
+            "duration_minutes": cheapest_same_airline.duration_minutes,
+            "flight_option_id": str(cheapest_same_airline.id),
+        })
+
+    # Generate LLM justification prompt if needed
+    justification_prompt = None
+    if justification_required:
+        route = f"{leg.origin_airport} → {leg.destination_airport}"
+        selected_info = {
+            "airline": selected.airline_name,
+            "date": selected_date,
+            "price": selected_price,
+            "stops": selected.stops,
+            "duration_minutes": selected.duration_minutes,
+        }
+        same_date_info = {
+            "airline": cheapest_same_date.airline_name,
+            "price": float(cheapest_same_date.price),
+            "savings": round(selected_price - float(cheapest_same_date.price), 2),
+        } if cheapest_same_date else None
+
+        same_airline_info = {
+            "date": cheapest_same_airline.departure_time.date().isoformat() if cheapest_same_airline.departure_time else "",
+            "price": float(cheapest_same_airline.price),
+            "savings": round(selected_price - float(cheapest_same_airline.price), 2),
+        } if cheapest_same_airline else None
+
+        overall_info = {
+            "airline": overall_cheapest.airline_name,
+            "date": overall_cheapest.departure_time.date().isoformat() if overall_cheapest.departure_time else "",
+            "price": overall_cheapest_price,
+        }
+
+        justification_prompt = await justification_service.generate_prompt(
+            selected_flight=selected_info,
+            cheapest_same_date=same_date_info,
+            cheapest_any_date=cheapest_any_date_info,
+            cheapest_same_airline=same_airline_info,
+            overall_cheapest=overall_info,
+            savings_amount=savings_amount,
+            savings_percent=savings_percent,
+            route=route,
+        )
+
+    return {
+        "justification_required": justification_required,
+        "selected": {
+            "airline": selected.airline_name,
+            "date": selected_date,
+            "price": selected_price,
+            "stops": selected.stops,
+            "duration_minutes": selected.duration_minutes,
+            "flight_option_id": str(selected.id),
+        },
+        "savings": {
+            "amount": savings_amount,
+            "percent": savings_percent,
+        },
+        "alternatives": alternatives,
+        "justification_prompt": justification_prompt,
     }
 
 

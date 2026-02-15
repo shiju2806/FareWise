@@ -101,6 +101,7 @@ class ApprovalService:
                 "most_expensive_price": float(leg_expensive),
                 "savings_note": None,
                 "policy_status": "compliant",
+                "justification_note": sel.justification_note,
             })
 
         savings_vs_expensive = most_expensive_total - selected_total

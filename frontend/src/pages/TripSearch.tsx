@@ -6,6 +6,7 @@ import { useTripStore } from "@/stores/tripStore";
 import { useSearchStore } from "@/stores/searchStore";
 import { useEventStore } from "@/stores/eventStore";
 import { SearchResults } from "@/components/search/SearchResults";
+import { JustificationModal } from "@/components/search/JustificationModal";
 import { HotelSearch } from "@/components/hotel/HotelSearch";
 import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
 import { LegCard } from "@/components/trip/LegCard";
@@ -35,12 +36,28 @@ export default function TripSearch() {
   const [showReturnForm, setShowReturnForm] = useState(false);
   const [returnDate, setReturnDate] = useState("");
   const [addingReturn, setAddingReturn] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [justificationAnalysis, setJustificationAnalysis] = useState<any>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [excludedAirlines, setExcludedAirlines] = useState<string[]>([]);
 
   useEffect(() => {
     if (tripId) {
       fetchTrip(tripId);
     }
   }, [tripId, fetchTrip]);
+
+  // Fetch user travel preferences (excluded airlines)
+  useEffect(() => {
+    apiClient
+      .get("/users/me/preferences")
+      .then((res) => {
+        if (res.data?.excluded_airlines) {
+          setExcludedAirlines(res.data.excluded_airlines);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const activeLeg = currentTrip?.legs[activeLegIndex];
   const searchResult = activeLeg ? results[activeLeg.id] : null;
@@ -307,6 +324,7 @@ export default function TripSearch() {
           onSliderChange={handleSliderChange}
           onDateSelect={handleDateSelect}
           onFlightSelect={handleFlightSelect}
+          excludedAirlines={excludedAirlines}
           dateEvents={legEventData?.date_events}
           allEvents={legEventData?.events}
           eventSummary={legEventData?.summary}
@@ -333,7 +351,7 @@ export default function TripSearch() {
 
       {/* Selected flight confirmation */}
       {selectedFlight && (
-        <div className="fixed bottom-0 left-60 right-0 bg-card border-t border-border p-4 shadow-lg">
+        <div className="fixed bottom-0 left-60 right-0 bg-card border-t border-border p-4 shadow-lg z-40">
           <div className="max-w-5xl mx-auto flex items-center justify-between">
             <div>
               <span className="text-sm font-medium">
@@ -356,9 +374,28 @@ export default function TripSearch() {
               </Button>
               <Button
                 size="sm"
-                disabled={confirming}
+                disabled={confirming || analyzing}
                 onClick={async () => {
                   if (!activeLeg || !selectedFlight?.id) return;
+                  // Step 1: Analyze the selection for justification
+                  setAnalyzing(true);
+                  try {
+                    const res = await apiClient.post(
+                      `/search/${activeLeg.id}/analyze-selection`,
+                      { flight_option_id: selectedFlight.id }
+                    );
+                    if (res.data.justification_required) {
+                      // Show justification modal
+                      setJustificationAnalysis(res.data);
+                      setAnalyzing(false);
+                      return;
+                    }
+                  } catch {
+                    // If analysis fails, proceed without justification
+                  }
+                  setAnalyzing(false);
+
+                  // No justification needed — confirm directly
                   setConfirming(true);
                   try {
                     await apiClient.post(`/search/${activeLeg.id}/select`, {
@@ -371,13 +408,19 @@ export default function TripSearch() {
                       setSelectedFlight(null);
                     }, 2000);
                   } catch {
-                    // Selection failed silently — flight still shown as selected
+                    // Selection failed silently
                   } finally {
                     setConfirming(false);
                   }
                 }}
               >
-                {confirming ? "Saving..." : confirmed ? "Confirmed!" : "Confirm Selection"}
+                {analyzing
+                  ? "Analyzing..."
+                  : confirming
+                  ? "Saving..."
+                  : confirmed
+                  ? "Confirmed!"
+                  : "Confirm Selection"}
               </Button>
               {confirmed && tripId && (
                 <Link to={`/trips/${tripId}/review`}>
@@ -389,6 +432,46 @@ export default function TripSearch() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Justification modal */}
+      {justificationAnalysis && selectedFlight && (
+        <JustificationModal
+          analysis={justificationAnalysis}
+          confirming={confirming}
+          onConfirm={async (justification) => {
+            if (!activeLeg || !selectedFlight?.id) return;
+            setConfirming(true);
+            try {
+              await apiClient.post(`/search/${activeLeg.id}/select`, {
+                flight_option_id: selectedFlight.id,
+                slider_position: sliderValue,
+                justification_note: justification,
+              });
+              setJustificationAnalysis(null);
+              setConfirmed(true);
+              setTimeout(() => {
+                setConfirmed(false);
+                setSelectedFlight(null);
+              }, 2000);
+            } catch {
+              // Selection failed silently
+            } finally {
+              setConfirming(false);
+            }
+          }}
+          onSwitch={(flightOptionId) => {
+            // Find the alternative flight in search results and select it
+            const alt = searchResult?.all_options.find(
+              (f) => f.id === flightOptionId
+            );
+            if (alt) {
+              setSelectedFlight(alt);
+            }
+            setJustificationAnalysis(null);
+          }}
+          onCancel={() => setJustificationAnalysis(null)}
+        />
       )}
     </div>
   );
