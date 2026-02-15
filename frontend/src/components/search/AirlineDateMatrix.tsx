@@ -6,6 +6,8 @@ interface Props {
   datesSearched: string[];
   excludedAirlines?: string[];
   onFlightSelect?: (flight: FlightOption) => void;
+  selectedDate?: string | null;
+  preferredDate?: string | null;
 }
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -29,6 +31,8 @@ export function AirlineDateMatrix({
   datesSearched,
   excludedAirlines = [],
   onFlightSelect,
+  selectedDate,
+  preferredDate,
 }: Props) {
   const excludedSet = useMemo(() => new Set(excludedAirlines), [excludedAirlines]);
 
@@ -112,14 +116,25 @@ export function AirlineDateMatrix({
               <th className="sticky left-0 z-10 bg-muted/50 text-left px-2 py-1.5 font-semibold min-w-[120px] border-r border-border">
                 Airline
               </th>
-              {dates.map((d) => (
-                <th
-                  key={d}
-                  className="px-1.5 py-1.5 font-medium text-center whitespace-nowrap min-w-[68px]"
-                >
-                  {fmtDate(d)}
-                </th>
-              ))}
+              {dates.map((d) => {
+                const isSelected = selectedDate === d;
+                const isPreferred = preferredDate === d;
+                return (
+                  <th
+                    key={d}
+                    className={`px-1.5 py-1.5 font-medium text-center whitespace-nowrap min-w-[68px] ${
+                      isSelected
+                        ? "bg-primary/10 text-primary font-semibold"
+                        : isPreferred
+                        ? "bg-blue-50 text-blue-700"
+                        : ""
+                    }`}
+                  >
+                    {fmtDate(d)}
+                    {isPreferred && <div className="text-[8px] text-blue-500 font-normal">preferred</div>}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -151,12 +166,19 @@ export function AirlineDateMatrix({
                     </div>
                   </td>
                   {dates.map((d) => {
+                    const isColSelected = selectedDate === d;
+                    const isColPreferred = preferredDate === d;
+                    const colBg = isColSelected
+                      ? "bg-primary/5"
+                      : isColPreferred
+                      ? "bg-blue-50/50"
+                      : "";
                     const flight = airline.dateMap.get(d);
                     if (!flight) {
                       return (
                         <td
                           key={d}
-                          className="px-1.5 py-1.5 text-center text-muted-foreground/40"
+                          className={`px-1.5 py-1.5 text-center text-muted-foreground/40 ${colBg}`}
                         >
                           —
                         </td>
@@ -168,7 +190,7 @@ export function AirlineDateMatrix({
                     const colBest = isColCheapest(d, price);
 
                     return (
-                      <td key={d} className="px-0.5 py-0.5">
+                      <td key={d} className={`px-0.5 py-0.5 ${colBg}`}>
                         <button
                           type="button"
                           onClick={() =>

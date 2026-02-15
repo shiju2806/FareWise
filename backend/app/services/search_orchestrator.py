@@ -52,9 +52,15 @@ class SearchOrchestrator:
             origin_airports.extend(a["iata"] for a in nearby_origins)
             dest_airports.extend(a["iata"] for a in nearby_dests)
 
-        # 2. Build date range (±flexibility_days, capped at 7)
+        # 2. Build date ranges
+        # Primary pair always searches ±7 days (for matrix display)
+        # Nearby pairs only search ±flexibility_days (to limit query volume)
         flex = min(leg.flexibility_days, 7)
-        dates = [
+        primary_dates = [
+            leg.preferred_date + timedelta(days=d)
+            for d in range(-7, 8)
+        ]
+        flex_dates = [
             leg.preferred_date + timedelta(days=d)
             for d in range(-flex, flex + 1)
         ]
@@ -71,10 +77,12 @@ class SearchOrchestrator:
                     continue
                 airports_searched.add(orig)
                 airports_searched.add(dest)
-                for d in dates:
+                is_primary_pair = (orig == leg.origin_airport and dest == leg.destination_airport)
+                search_dates = primary_dates if is_primary_pair else flex_dates
+                for d in search_dates:
                     search_tasks.append((
                         orig, dest, d, leg.cabin_class, leg.passengers,
-                        orig != leg.origin_airport or dest != leg.destination_airport,
+                        not is_primary_pair,
                         d != leg.preferred_date,
                     ))
 
@@ -108,6 +116,18 @@ class SearchOrchestrator:
                 unique_flights.append(f)
         all_flights = unique_flights
 
+        # 4b. Tag each flight with within_flexibility
+        for f in all_flights:
+            dep_str = f.get("departure_time", "")
+            if dep_str:
+                try:
+                    dep_date = date.fromisoformat(dep_str.split("T")[0])
+                    f["within_flexibility"] = abs((dep_date - leg.preferred_date).days) <= flex
+                except (ValueError, TypeError):
+                    f["within_flexibility"] = False
+            else:
+                f["within_flexibility"] = False
+
         # 5. Score all flights
         scored_flights = score_flights(all_flights, weights)
 
@@ -121,11 +141,8 @@ class SearchOrchestrator:
             scored_flights, leg.origin_airport, leg.destination_airport, leg.preferred_date
         )
 
-        # 9. Build response data first (to know which flights to persist)
-        main_options = [
-            f for f in scored_flights
-            if not f.get("is_alternate_airport") and not f.get("is_alternate_date")
-        ][:50]
+        # 9. Include ALL flights in response (no filtering by date/airport)
+        all_options = scored_flights[:100]
 
         recommendation = None
         if scored_flights:
@@ -135,10 +152,10 @@ class SearchOrchestrator:
                 "reason": self._generate_reason(best, scored_flights, leg),
             }
 
-        # Collect all flights that appear in the response
+        # Collect all unique flights for DB persistence
         response_flights: list[dict] = []
         seen_ids = set()
-        for f in main_options:
+        for f in all_options:
             key = id(f)
             if key not in seen_ids:
                 seen_ids.add(key)
@@ -148,12 +165,6 @@ class SearchOrchestrator:
             if key not in seen_ids:
                 seen_ids.add(key)
                 response_flights.append(recommendation)
-        for cat in alternatives.values():
-            for f in cat:
-                key = id(f)
-                if key not in seen_ids:
-                    seen_ids.add(key)
-                    response_flights.append(f)
 
         # 10. Save response flights to database (assigns real DB IDs)
         search_log = await self._save_search_log(
@@ -168,6 +179,11 @@ class SearchOrchestrator:
 
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
 
+        # All dates that were actually searched
+        all_searched_dates = sorted(set(
+            d.isoformat() for _, _, d, *_ in search_tasks
+        ))
+
         return {
             "search_id": str(search_log.id) if search_log else str(uuid.uuid4()),
             "leg": {
@@ -178,11 +194,11 @@ class SearchOrchestrator:
             "price_calendar": price_calendar,
             "recommendation": recommendation,
             "alternatives": alternatives,
-            "all_options": main_options,
+            "all_options": all_options,
             "metadata": {
                 "total_options_found": len(all_flights),
                 "airports_searched": sorted(airports_searched),
-                "dates_searched": [d.isoformat() for d in dates],
+                "dates_searched": all_searched_dates,
                 "cached": False,
                 "search_time_ms": elapsed_ms,
             },
@@ -355,8 +371,9 @@ class SearchOrchestrator:
             f["is_alternate_airport"] = is_alt_airport
             f["is_alternate_date"] = is_alt_date
 
-        # Cache results
-        await cache_service.set_flights(origin, destination, date_str, cabin_class, flights)
+        # Cache results (only cache non-empty to avoid poisoning)
+        if flights:
+            await cache_service.set_flights(origin, destination, date_str, cabin_class, flights)
 
         return flights
 

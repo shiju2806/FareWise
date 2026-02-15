@@ -6,7 +6,6 @@ import { MonthCalendar } from "./MonthCalendar";
 import { PriceAdvisorPanel } from "./PriceAdvisorPanel";
 import { FlightOptionCard } from "./FlightOptionCard";
 import { WhatIfSlider } from "./WhatIfSlider";
-import { RouteComparator } from "./RouteComparator";
 import { AirlineDateMatrix } from "./AirlineDateMatrix";
 import { WhyThisPrice } from "@/components/events/WhyThisPrice";
 import { EventPanel } from "@/components/events/EventPanel";
@@ -54,7 +53,7 @@ export function SearchResults({
     onDateSelect(date);
   }
 
-  // Cheapest flight per airline
+  // Cheapest flight per airline (for filter chips)
   const cheapestByAirline = useMemo(() => {
     const map = new Map<string, FlightOption>();
     for (const f of result.all_options) {
@@ -65,6 +64,9 @@ export function SearchResults({
     }
     return Array.from(map.values()).sort((a, b) => a.price - b.price);
   }, [result.all_options]);
+
+  // Identify the recommended flight ID for highlighting in the list
+  const recommendedId = result.recommendation?.id;
 
   function toggleAirline(name: string) {
     setAirlineFilter((prev) => {
@@ -78,7 +80,7 @@ export function SearchResults({
     });
   }
 
-  // Filter by selected date — only if that date has actual flight results
+  // Filter by selected date
   const dateHasFlights = selectedDate
     ? result.all_options.some((f) => f.departure_time.startsWith(selectedDate))
     : false;
@@ -92,9 +94,7 @@ export function SearchResults({
     filteredOptions = filteredOptions.filter((f) => airlineFilter.has(f.airline_name));
   }
 
-  const displayOptions = showAll
-    ? filteredOptions
-    : filteredOptions.slice(0, 10);
+  const displayOptions = showAll ? filteredOptions : filteredOptions.slice(0, 15);
 
   // Empty state
   if (result.all_options.length === 0) {
@@ -109,25 +109,34 @@ export function SearchResults({
     );
   }
 
+  // Price quartiles for color-coding throughout
+  const priceQuartiles = useMemo(() => {
+    const prices = result.all_options.map((f) => f.price).sort((a, b) => a - b);
+    if (prices.length === 0) return { q1: 0, q3: 0 };
+    return {
+      q1: prices[Math.floor(prices.length * 0.25)],
+      q3: prices[Math.floor(prices.length * 0.75)],
+    };
+  }, [result.all_options]);
+
   return (
-    <div className="space-y-6">
-      {/* Search metadata */}
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+    <div className="space-y-4">
+      {/* 1. Search metadata bar */}
+      <div className="flex items-center justify-between text-xs text-muted-foreground bg-muted/40 rounded-lg px-3 py-2 shadow-sm">
         <span>
-          {result.metadata.total_options_found} options found across{" "}
-          {result.metadata.airports_searched.length} airports and{" "}
+          {result.metadata.total_options_found} options across{" "}
+          {result.metadata.airports_searched.length} airports,{" "}
           {result.metadata.dates_searched.length} dates
+          <span className="mx-1.5 opacity-40">|</span>
+          {result.metadata.search_time_ms}ms
         </span>
-        <div className="flex items-center gap-3">
-          <span>Search time: {result.metadata.search_time_ms}ms</span>
-          <button
-            type="button"
-            onClick={() => setShowWatchForm(!showWatchForm)}
-            className="text-primary hover:underline font-medium"
-          >
-            {showWatchForm ? "Cancel" : "Watch Price"}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowWatchForm(!showWatchForm)}
+          className="text-primary hover:underline font-medium"
+        >
+          {showWatchForm ? "Cancel" : "Watch Price"}
+        </button>
       </div>
 
       {showWatchForm && (
@@ -140,48 +149,44 @@ export function SearchResults({
         />
       )}
 
-      {/* Event recommendation banner */}
+      {/* 2. Event warning banner */}
       {eventSummary?.recommendation && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 flex items-start gap-2">
-          <span className="text-base mt-0.5">{"\u26A0\uFE0F"}</span>
-          <div className="flex-1">
-            <p>{eventSummary.recommendation}</p>
-            <button
-              type="button"
-              onClick={() => setShowEventPanel(true)}
-              className="text-xs text-amber-700 hover:underline mt-1"
-            >
-              View all events
-            </button>
-          </div>
+        <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-800 flex items-center gap-2">
+          <span className="shrink-0 w-5 h-5 rounded-full bg-amber-200 flex items-center justify-center text-[10px] font-bold">!</span>
+          <p className="flex-1 text-xs">{eventSummary.recommendation}</p>
+          <button
+            type="button"
+            onClick={() => setShowEventPanel(true)}
+            className="text-[10px] text-amber-700 hover:underline shrink-0"
+          >
+            View events
+          </button>
         </div>
       )}
 
-      {/* Month Price Calendar */}
-      <MonthCalendar
-        legId={legId}
-        preferredDate={result.leg.preferred_date}
-        initialCalendar={result.price_calendar}
-        selectedDate={selectedDate}
-        onDateSelect={handleDateSelect}
-      />
+      {/* 3. Month Price Calendar */}
+      <div className="rounded-lg bg-muted/20 p-3 shadow-sm">
+        <MonthCalendar
+          legId={legId}
+          preferredDate={result.leg.preferred_date}
+          initialCalendar={result.price_calendar}
+          selectedDate={selectedDate}
+          onDateSelect={handleDateSelect}
+        />
+      </div>
 
-      {/* Price Intelligence Advisor */}
+      {/* 4. Price Intelligence Advisor (compact banner) */}
       <PriceAdvisorPanel legId={legId} />
 
-      {/* Why This Price? panel */}
+      {/* Hidden panels (triggered by calendar/events) */}
       {whyPriceDate && (
         <WhyThisPrice
           date={whyPriceDate}
           events={dateEvents[whyPriceDate] || []}
-          price={
-            result.price_calendar.dates[whyPriceDate]?.min_price ?? 0
-          }
+          price={result.price_calendar.dates[whyPriceDate]?.min_price ?? 0}
           onClose={() => setWhyPriceDate(null)}
         />
       )}
-
-      {/* Event panel */}
       {showEventPanel && (
         <EventPanel
           events={allEvents}
@@ -190,128 +195,114 @@ export function SearchResults({
         />
       )}
 
-      {/* What If Slider */}
+      {/* 5. What If Slider */}
       <WhatIfSlider
         value={sliderValue}
         onChange={onSliderChange}
         loading={sliderLoading}
       />
 
-      {/* Recommendation */}
-      {result.recommendation && (
-        <div>
-          <h3 className="text-sm font-semibold mb-2">Recommended</h3>
-          <FlightOptionCard
-            flight={result.recommendation}
-            isRecommended
-            reason={result.recommendation.reason}
-            onSelect={onFlightSelect}
-          />
-        </div>
-      )}
+      {/* 6. Airline x Date Price Matrix */}
+      <div className="rounded-lg bg-muted/15 p-3 shadow-sm">
+        <AirlineDateMatrix
+          allOptions={result.all_options}
+          datesSearched={result.metadata.dates_searched}
+          excludedAirlines={excludedAirlines}
+          onFlightSelect={onFlightSelect}
+          selectedDate={selectedDate}
+          preferredDate={result.leg.preferred_date}
+        />
+      </div>
 
-      {/* Alternatives */}
-      <RouteComparator
-        alternatives={result.alternatives}
-        onSelect={onFlightSelect}
-      />
-
-      {/* Date filter banner */}
-      {selectedDate && (
-        <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 flex items-center justify-between">
-          <span className="text-sm font-medium">
-            {dateHasFlights ? (
-              <>Showing flights for <span className="font-semibold text-primary">{selectedDate}</span>
-              {" "}({filteredOptions.length} of {result.all_options.length})</>
-            ) : (
-              <>Price context loaded for <span className="font-semibold text-primary">{selectedDate}</span>
-              {" "}<span className="text-muted-foreground">(see calendar above)</span></>
-            )}
-          </span>
-          <button
-            type="button"
-            onClick={() => setSelectedDate(null)}
-            className="text-xs text-primary hover:underline font-medium"
-          >
-            Clear selection
-          </button>
-        </div>
-      )}
-
-      {/* Airline × Date Price Matrix */}
-      <AirlineDateMatrix
-        allOptions={result.all_options}
-        datesSearched={result.metadata.dates_searched}
-        excludedAirlines={excludedAirlines}
-        onFlightSelect={onFlightSelect}
-      />
-
-      {/* Airline filter chips */}
-      {cheapestByAirline.length > 1 && (
-        <div className="flex flex-wrap gap-1.5">
-          {cheapestByAirline.map((f) => (
+      {/* 7. Airline filter chips + date filter */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {cheapestByAirline.length > 1 &&
+          cheapestByAirline.map((f) => (
             <button
               key={f.airline_name}
               type="button"
               onClick={() => toggleAirline(f.airline_name)}
               className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all ${
                 airlineFilter.has(f.airline_name)
-                  ? "bg-primary text-primary-foreground"
+                  ? "bg-primary text-primary-foreground shadow-sm"
                   : "bg-secondary text-secondary-foreground hover:bg-secondary/80"
               }`}
             >
               {f.airline_name}
-              <span className="text-[10px] opacity-70">${Math.round(f.price)}</span>
+              <span className="text-[10px] opacity-60">${Math.round(f.price)}</span>
             </button>
           ))}
-          {airlineFilter.size > 0 && (
-            <button
-              type="button"
-              onClick={() => setAirlineFilter(new Set())}
-              className="text-[11px] text-primary hover:underline px-1"
-            >
-              Clear
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* All Options */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-semibold">
-          {selectedDate
-            ? `Flights on ${selectedDate} (${filteredOptions.length})`
-            : `All Options (${filteredOptions.length})`}
-        </h3>
-
-        {filteredOptions.length === 0 && selectedDate && dateHasFlights && (
-          <p className="text-sm text-muted-foreground py-4 text-center">
-            No flights found for {selectedDate}.{" "}
+        {airlineFilter.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setAirlineFilter(new Set())}
+            className="text-[11px] text-primary hover:underline px-1"
+          >
+            Clear
+          </button>
+        )}
+        {selectedDate && (
+          <>
+            <span className="text-muted-foreground text-[10px]">|</span>
+            <span className="text-[11px] font-medium">
+              {dateHasFlights ? (
+                <>{selectedDate} ({filteredOptions.length})</>
+              ) : (
+                <>{selectedDate} <span className="text-muted-foreground">(calendar only)</span></>
+              )}
+            </span>
             <button
               type="button"
               onClick={() => setSelectedDate(null)}
+              className="text-[11px] text-primary hover:underline"
+            >
+              Clear date
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* 8. Flight list (compact rows, recommendation integrated) */}
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            {selectedDate
+              ? `Flights on ${selectedDate}`
+              : `All Flights (${filteredOptions.length})`}
+          </h3>
+        </div>
+
+        {filteredOptions.length === 0 && selectedDate && dateHasFlights && (
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            No flights match filters.{" "}
+            <button
+              type="button"
+              onClick={() => { setSelectedDate(null); setAirlineFilter(new Set()); }}
               className="text-primary hover:underline"
             >
-              Show all dates
+              Clear all filters
             </button>
           </p>
         )}
 
-        <div className="space-y-2">
+        <div className="space-y-1">
           {displayOptions.map((flight, i) => (
             <FlightOptionCard
               key={flight.id || i}
               flight={flight}
+              isRecommended={flight.id === recommendedId}
+              reason={flight.id === recommendedId ? result.recommendation?.reason : undefined}
               onSelect={onFlightSelect}
+              priceQuartiles={priceQuartiles}
             />
           ))}
         </div>
 
-        {filteredOptions.length > 10 && (
+        {filteredOptions.length > 15 && (
           <button
             type="button"
             onClick={() => setShowAll(!showAll)}
-            className="text-sm text-primary hover:underline"
+            className="text-xs text-primary hover:underline w-full text-center py-2"
           >
             {showAll
               ? "Show less"

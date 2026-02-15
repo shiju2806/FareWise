@@ -266,15 +266,15 @@ export default function TripSearch() {
 
       {/* Loading skeleton */}
       {searchLoading && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* Metadata skeleton */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between bg-muted/30 rounded-lg px-3 py-2">
             <div className="h-3 w-64 bg-muted animate-pulse rounded" />
             <div className="h-3 w-24 bg-muted animate-pulse rounded" />
           </div>
 
           {/* Price calendar skeleton */}
-          <div className="space-y-3">
+          <div className="rounded-lg bg-muted/20 p-3 space-y-3">
             <div className="flex items-center justify-between">
               <div className="h-4 w-28 bg-muted animate-pulse rounded" />
               <div className="h-3 w-44 bg-muted animate-pulse rounded" />
@@ -283,31 +283,57 @@ export default function TripSearch() {
               {Array.from({ length: 15 }).map((_, i) => (
                 <div
                   key={i}
-                  className="w-[72px] h-[88px] bg-muted animate-pulse rounded-lg shrink-0"
+                  className="w-[72px] h-[88px] bg-muted/60 animate-pulse rounded-lg shrink-0"
                 />
               ))}
             </div>
           </div>
 
+          {/* Advisor banner skeleton */}
+          <div className="h-10 bg-muted/40 animate-pulse rounded-lg" />
+
           {/* Slider skeleton */}
           <div className="space-y-2">
             <div className="h-4 w-20 bg-muted animate-pulse rounded" />
-            <div className="h-5 bg-muted animate-pulse rounded-full" />
+            <div className="h-5 bg-muted/40 animate-pulse rounded-full" />
           </div>
 
-          {/* Recommendation skeleton */}
-          <div className="space-y-2">
-            <div className="h-4 w-28 bg-muted animate-pulse rounded" />
-            <div className="h-28 bg-muted animate-pulse rounded-lg border border-primary/20" />
+          {/* Matrix skeleton */}
+          <div className="rounded-lg bg-muted/15 p-3 space-y-2">
+            <div className="h-4 w-48 bg-muted animate-pulse rounded" />
+            <div className="rounded-lg border border-border overflow-hidden">
+              {/* Header row */}
+              <div className="flex bg-muted/40">
+                <div className="w-[120px] h-8 shrink-0 border-r border-border" />
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="w-[68px] h-8 shrink-0 flex items-center justify-center">
+                    <div className="h-3 w-12 bg-muted animate-pulse rounded" />
+                  </div>
+                ))}
+              </div>
+              {/* Data rows */}
+              {Array.from({ length: 5 }).map((_, r) => (
+                <div key={r} className="flex border-t border-border/50">
+                  <div className="w-[120px] h-10 shrink-0 border-r border-border flex items-center px-2">
+                    <div className="h-3 w-20 bg-muted/60 animate-pulse rounded" />
+                  </div>
+                  {Array.from({ length: 8 }).map((_, c) => (
+                    <div key={c} className="w-[68px] h-10 shrink-0 flex items-center justify-center">
+                      <div className="h-5 w-10 bg-muted/40 animate-pulse rounded" />
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* Flight cards skeleton */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <div className="h-4 w-36 bg-muted animate-pulse rounded" />
-            {Array.from({ length: 3 }).map((_, i) => (
+            {Array.from({ length: 5 }).map((_, i) => (
               <div
                 key={i}
-                className="h-20 bg-muted animate-pulse rounded-lg"
+                className="h-[52px] bg-muted/30 animate-pulse rounded-md border border-border/30"
               />
             ))}
           </div>
@@ -349,26 +375,86 @@ export default function TripSearch() {
         />
       )}
 
-      {/* Selected flight confirmation */}
+      {/* Selected flight confirmation bar */}
       {selectedFlight && (
-        <div className="fixed bottom-0 left-60 right-0 bg-card border-t border-border p-4 shadow-lg z-40">
-          <div className="max-w-5xl mx-auto flex items-center justify-between">
-            <div>
-              <span className="text-sm font-medium">
-                Selected: {selectedFlight.airline_name}{" "}
-                {selectedFlight.flight_numbers}
-              </span>
-              <span className="text-sm text-muted-foreground ml-3">
-                ${Math.round(selectedFlight.price)} &middot;{" "}
-                {selectedFlight.origin_airport} &rarr;{" "}
-                {selectedFlight.destination_airport}
-              </span>
+        <div className="fixed bottom-0 left-60 right-0 bg-card border-t border-border shadow-lg z-40">
+          {/* Inline justification banner ($100-$500 savings) */}
+          {justificationAnalysis && justificationAnalysis.savings.amount < 500 && (
+            <div className="max-w-5xl mx-auto px-4 pt-3">
+              <JustificationModal
+                analysis={justificationAnalysis}
+                confirming={confirming}
+                mode="inline"
+                onConfirm={async (justification) => {
+                  if (!activeLeg || !selectedFlight?.id) return;
+                  setConfirming(true);
+                  try {
+                    await apiClient.post(`/search/${activeLeg.id}/select`, {
+                      flight_option_id: selectedFlight.id,
+                      slider_position: sliderValue,
+                      justification_note: justification,
+                    });
+                    setJustificationAnalysis(null);
+                    setConfirmed(true);
+                    setTimeout(() => {
+                      setConfirmed(false);
+                      setSelectedFlight(null);
+                    }, 2000);
+                  } catch {
+                    // Selection failed silently
+                  } finally {
+                    setConfirming(false);
+                  }
+                }}
+                onSwitch={(flightOptionId) => {
+                  const alt = searchResult?.all_options.find(
+                    (f) => f.id === flightOptionId
+                  );
+                  if (alt) setSelectedFlight(alt);
+                  setJustificationAnalysis(null);
+                }}
+                onCancel={() => setJustificationAnalysis(null)}
+              />
             </div>
-            <div className="flex gap-2">
+          )}
+
+          {/* Main selection bar */}
+          <div className="max-w-5xl mx-auto flex items-center justify-between p-4">
+            <div className="flex items-center gap-4">
+              <div>
+                <span className="text-sm font-medium">
+                  {selectedFlight.airline_name}{" "}
+                  {selectedFlight.flight_numbers}
+                </span>
+                <span className="text-sm text-muted-foreground ml-2">
+                  {selectedFlight.origin_airport} &rarr;{" "}
+                  {selectedFlight.destination_airport}
+                </span>
+              </div>
+              <span className="text-base font-bold">
+                ${Math.round(selectedFlight.price).toLocaleString()}
+              </span>
+              {/* Savings context */}
+              {justificationAnalysis && justificationAnalysis.savings.amount > 0 && (
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${
+                  justificationAnalysis.savings.amount >= 500
+                    ? "bg-red-100 text-red-700"
+                    : justificationAnalysis.savings.amount >= 200
+                    ? "bg-amber-100 text-amber-700"
+                    : "bg-muted text-muted-foreground"
+                }`}>
+                  ${Math.round(justificationAnalysis.savings.amount).toLocaleString()} more than cheapest
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2 items-center">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setSelectedFlight(null)}
+                onClick={() => {
+                  setSelectedFlight(null);
+                  setJustificationAnalysis(null);
+                }}
               >
                 Clear
               </Button>
@@ -377,7 +463,7 @@ export default function TripSearch() {
                 disabled={confirming || analyzing}
                 onClick={async () => {
                   if (!activeLeg || !selectedFlight?.id) return;
-                  // Step 1: Analyze the selection for justification
+                  // Analyze the selection for justification
                   setAnalyzing(true);
                   try {
                     const res = await apiClient.post(
@@ -385,7 +471,6 @@ export default function TripSearch() {
                       { flight_option_id: selectedFlight.id }
                     );
                     if (res.data.justification_required) {
-                      // Show justification modal
                       setJustificationAnalysis(res.data);
                       setAnalyzing(false);
                       return;
@@ -424,7 +509,7 @@ export default function TripSearch() {
               </Button>
               {confirmed && tripId && (
                 <Link to={`/trips/${tripId}/review`}>
-                  <Button variant="outline" className="ml-2">
+                  <Button variant="outline" size="sm">
                     Review & Submit
                   </Button>
                 </Link>
@@ -434,11 +519,12 @@ export default function TripSearch() {
         </div>
       )}
 
-      {/* Justification modal */}
-      {justificationAnalysis && selectedFlight && (
+      {/* Full justification modal (>$500 savings) */}
+      {justificationAnalysis && justificationAnalysis.savings.amount >= 500 && selectedFlight && (
         <JustificationModal
           analysis={justificationAnalysis}
           confirming={confirming}
+          mode="modal"
           onConfirm={async (justification) => {
             if (!activeLeg || !selectedFlight?.id) return;
             setConfirming(true);
@@ -461,13 +547,10 @@ export default function TripSearch() {
             }
           }}
           onSwitch={(flightOptionId) => {
-            // Find the alternative flight in search results and select it
             const alt = searchResult?.all_options.find(
               (f) => f.id === flightOptionId
             );
-            if (alt) {
-              setSelectedFlight(alt);
-            }
+            if (alt) setSelectedFlight(alt);
             setJustificationAnalysis(null);
           }}
           onCancel={() => setJustificationAnalysis(null)}

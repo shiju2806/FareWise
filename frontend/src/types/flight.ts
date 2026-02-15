@@ -16,5 +16,6 @@ export interface FlightOption {
   seats_remaining: number | null;
   is_alternate_airport: boolean;
   is_alternate_date: boolean;
+  within_flexibility?: boolean;
   score?: number;
 }
