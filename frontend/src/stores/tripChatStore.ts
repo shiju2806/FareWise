@@ -82,7 +82,7 @@ export const useTripChatStore = create<TripChatState>((set, get) => ({
   },
 
   createFromChat: async () => {
-    const { partialTrip } = get();
+    const { partialTrip, messages, conversationHistory } = get();
     if (!partialTrip || !partialTrip.legs?.length) return null;
 
     set({ loading: true, error: null });
@@ -97,8 +97,18 @@ export const useTripChatStore = create<TripChatState>((set, get) => ({
       }));
 
       const res = await apiClient.post("/trips/structured", { legs });
+      const trip = res.data as Trip;
+
+      // Persist the planning conversation so SearchAssistant can continue it
+      try {
+        sessionStorage.setItem(
+          `farewise-assistant-${trip.id}`,
+          JSON.stringify({ messages, history: conversationHistory }),
+        );
+      } catch { /* sessionStorage full */ }
+
       set({ loading: false });
-      return res.data as Trip;
+      return trip;
     } catch {
       set({ loading: false, error: "Failed to create trip" });
       return null;

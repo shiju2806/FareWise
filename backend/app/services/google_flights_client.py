@@ -77,9 +77,10 @@ async def search_date(
                         trip="one-way",
                         seat=seat,
                         passengers=Passengers(adults=1),
+                        fetch_mode="fallback",
                     ),
                 ),
-                timeout=15.0,
+                timeout=25.0,
             )
         except asyncio.TimeoutError:
             logger.warning(f"Google Flights search_date timeout: {origin}-{destination} on {date_str}")
@@ -197,9 +198,10 @@ async def search_flights(
                         trip="one-way",
                         seat=seat,
                         passengers=Passengers(adults=1),
+                        fetch_mode="fallback",
                     ),
                 ),
-                timeout=15.0,
+                timeout=25.0,
             )
         except asyncio.TimeoutError:
             logger.warning(f"Google Flights search_flights timeout: {origin}-{destination} on {date_str}")
@@ -215,7 +217,8 @@ async def search_flights(
             price = _parse_price(f.price)
             if not price or price <= 0:
                 continue
-            if not f.name and not f.departure:
+            # Skip malformed entries (no airline name or no duration)
+            if not f.name or not f.duration:
                 continue
 
             airline_name = f.name or "Unknown"
