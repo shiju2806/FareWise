@@ -11,9 +11,15 @@ interface Alternative {
   stops: number;
   duration_minutes: number;
   flight_option_id: string;
+  origin_airport?: string;
+  destination_airport?: string;
 }
 
-interface AnalysisResult {
+interface LegAnalysis {
+  leg_id: string;
+  sequence: number;
+  route: string;
+  preferred_date?: string | null;
   justification_required: boolean;
   selected: {
     airline: string;
@@ -22,19 +28,47 @@ interface AnalysisResult {
     stops: number;
     duration_minutes: number;
     flight_option_id: string;
-  };
+  } | null;
   savings: {
     amount: number;
     percent: number;
   };
   alternatives: Alternative[];
+}
+
+interface TripTotals {
+  selected: number;
+  cheapest: number;
+  savings_amount: number;
+  savings_percent: number;
+}
+
+interface AnalysisResult {
+  justification_required: boolean;
+  // Single-leg fields (backward compat)
+  selected?: {
+    airline: string;
+    date: string;
+    price: number;
+    stops: number;
+    duration_minutes: number;
+    flight_option_id: string;
+  };
+  savings?: {
+    amount: number;
+    percent: number;
+  };
+  alternatives?: Alternative[];
   justification_prompt: string | null;
+  // Multi-leg fields
+  legs?: LegAnalysis[];
+  trip_totals?: TripTotals;
 }
 
 interface Props {
   analysis: AnalysisResult;
   onConfirm: (justification: string) => void;
-  onSwitch: (flightOptionId: string) => void;
+  onSwitch: (flightOptionId: string, legId?: string) => void;
   onCancel: () => void;
   confirming?: boolean;
   /** "inline" renders as a banner (for $100-500), "modal" renders full overlay (for >$500) */
@@ -80,7 +114,7 @@ function ComparisonTable({
   selected,
   cheapest,
 }: {
-  selected: AnalysisResult["selected"];
+  selected: NonNullable<AnalysisResult["selected"]>;
   cheapest: Alternative;
 }) {
   const rows: { label: string; selected: string; cheapest: string; selectedWins: boolean }[] = [
@@ -160,7 +194,10 @@ export function JustificationModal({
   // Combined justification text
   const presetText = Array.from(selectedPresets).join("; ");
   const fullJustification = [presetText, justification.trim()].filter(Boolean).join(" — ");
-  const isHighSavings = analysis.savings.amount >= 500;
+  const savingsAmount = analysis.trip_totals?.savings_amount ?? analysis.savings?.amount ?? 0;
+  const savingsPercent = analysis.trip_totals?.savings_percent ?? analysis.savings?.percent ?? 0;
+  const isHighSavings = savingsAmount >= 500;
+  const isMultiLeg = !!(analysis.legs && analysis.legs.length > 0);
   const canConfirm = isHighSavings
     ? fullJustification.length >= 10
     : fullJustification.length > 0;
@@ -174,27 +211,44 @@ export function JustificationModal({
     });
   }
 
-  const cheapestAlt = analysis.alternatives[0];
+  // For single-leg mode
+  const cheapestAlt = analysis.alternatives?.[0];
+  // For multi-leg mode: find leg with biggest savings
+  const biggestSavingsLeg = isMultiLeg
+    ? analysis.legs!.reduce((best, leg) =>
+        leg.savings.amount > (best?.savings.amount ?? 0) ? leg : best,
+      analysis.legs![0])
+    : null;
 
   // ---- Inline banner mode (for $100-$500) ----
   if (mode === "inline") {
+    // For multi-leg inline: show trip savings + biggest savings leg
+    const inlineSavings = savingsAmount;
+    const inlineAlt = isMultiLeg
+      ? biggestSavingsLeg?.alternatives[0]
+      : cheapestAlt;
+    const inlineLegId = isMultiLeg ? biggestSavingsLeg?.leg_id : undefined;
+
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${savingsColor(analysis.savings.amount)}`}>
-              {fmtPrice(analysis.savings.amount)} cheaper option available
+            <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${savingsColor(inlineSavings)}`}>
+              {fmtPrice(inlineSavings)} {isMultiLeg ? "trip savings" : "cheaper option"} available
             </span>
-            <span className="text-xs text-muted-foreground">
-              {cheapestAlt?.airline} at {cheapestAlt ? fmtPrice(cheapestAlt.price) : "—"}
-            </span>
+            {inlineAlt && (
+              <span className="text-xs text-muted-foreground">
+                {isMultiLeg && biggestSavingsLeg ? `${biggestSavingsLeg.route}: ` : ""}
+                {inlineAlt.airline} at {fmtPrice(inlineAlt.price)}
+              </span>
+            )}
           </div>
-          {cheapestAlt && (
+          {inlineAlt && (
             <Button
               size="sm"
               variant="outline"
               className="text-xs h-7"
-              onClick={() => onSwitch(cheapestAlt.flight_option_id)}
+              onClick={() => onSwitch(inlineAlt.flight_option_id, inlineLegId)}
             >
               Switch
             </Button>
@@ -279,13 +333,19 @@ export function JustificationModal({
           <div className="flex items-start justify-between">
             <div>
               <h3 className="text-base font-semibold">Cheaper Options Available</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {analysis.selected.airline} on {fmtDate(analysis.selected.date)}{" "}
-                at {fmtPrice(analysis.selected.price)}
-              </p>
+              {isMultiLeg && analysis.trip_totals ? (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Trip total: {fmtPrice(analysis.trip_totals.selected)} (cheapest: {fmtPrice(analysis.trip_totals.cheapest)})
+                </p>
+              ) : analysis.selected ? (
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {analysis.selected.airline} on {fmtDate(analysis.selected.date)}{" "}
+                  at {fmtPrice(analysis.selected.price)}
+                </p>
+              ) : null}
             </div>
-            <span className={`inline-flex items-center rounded-md border px-2 py-1 text-xs font-semibold ${savingsColor(analysis.savings.amount)}`}>
-              Save {fmtPrice(analysis.savings.amount)} ({analysis.savings.percent}%)
+            <span className={`inline-flex items-center rounded-md border px-2 py-1 text-xs font-semibold ${savingsColor(savingsAmount)}`}>
+              Save {fmtPrice(savingsAmount)} ({savingsPercent}%)
             </span>
           </div>
         </div>
@@ -297,65 +357,138 @@ export function JustificationModal({
           </div>
         )}
 
-        {/* Side-by-side comparison */}
-        {cheapestAlt && (
-          <div className="px-5 pt-4">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-              Comparison
-            </h4>
-            <ComparisonTable selected={analysis.selected} cheapest={cheapestAlt} />
-          </div>
-        )}
+        {/* Multi-leg per-leg sections */}
+        {isMultiLeg ? (
+          <div className="px-5 pt-4 space-y-5">
+            {analysis.legs!.map((leg) => {
+              if (!leg.selected) return null;
+              const legCheapest = leg.alternatives[0];
+              return (
+                <div key={leg.leg_id} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide">
+                      Leg {leg.sequence}: {leg.route}
+                    </h4>
+                    {leg.savings.amount > 0 && (
+                      <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${savingsColor(leg.savings.amount)}`}>
+                        save {fmtPrice(leg.savings.amount)}
+                      </span>
+                    )}
+                  </div>
 
-        {/* Alternative cards */}
-        {analysis.alternatives.length > 0 && (
-          <div className="px-5 pt-4 space-y-2">
-            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Switch to a cheaper option
-            </h4>
-            {analysis.alternatives.map((alt) => (
-              <div
-                key={alt.flight_option_id}
-                className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2.5 hover:bg-muted/40 transition-colors"
-              >
-                <div>
-                  <div className="text-sm font-medium">{alt.airline}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {alt.label} &middot; {fmtDate(alt.date)} &middot;{" "}
-                    {alt.stops === 0
-                      ? "Nonstop"
-                      : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
-                    {alt.duration_minutes > 0 &&
-                      ` · ${fmtDuration(alt.duration_minutes)}`}
-                  </div>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <div className="text-sm font-bold text-emerald-700">
-                      {fmtPrice(alt.price)}
+                  {/* Comparison table for this leg */}
+                  {legCheapest && (
+                    <ComparisonTable selected={leg.selected} cheapest={legCheapest} />
+                  )}
+
+                  {/* Alternative cards for this leg */}
+                  {leg.alternatives.length > 0 && (
+                    <div className="space-y-1.5">
+                      {leg.alternatives.map((alt) => (
+                        <div
+                          key={alt.flight_option_id}
+                          className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2 hover:bg-muted/40 transition-colors"
+                        >
+                          <div>
+                            <div className="text-sm font-medium">{alt.airline}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {alt.label} &middot; {fmtDate(alt.date)} &middot;{" "}
+                              {alt.stops === 0
+                                ? "Nonstop"
+                                : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
+                              {alt.duration_minutes > 0 &&
+                                ` · ${fmtDuration(alt.duration_minutes)}`}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <div className="text-sm font-bold text-emerald-700">
+                                {fmtPrice(alt.price)}
+                              </div>
+                              <div className="text-[10px] text-emerald-600">
+                                save {fmtPrice(alt.savings)}
+                              </div>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => onSwitch(alt.flight_option_id, leg.leg_id)}
+                              className="text-xs"
+                            >
+                              Switch
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="text-[10px] text-emerald-600">
-                      save {fmtPrice(alt.savings)}
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onSwitch(alt.flight_option_id)}
-                    className="text-xs"
-                  >
-                    Switch
-                  </Button>
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
+        ) : (
+          <>
+            {/* Single-leg: side-by-side comparison */}
+            {cheapestAlt && analysis.selected && (
+              <div className="px-5 pt-4">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                  Comparison
+                </h4>
+                <ComparisonTable selected={analysis.selected} cheapest={cheapestAlt} />
+              </div>
+            )}
+
+            {/* Single-leg: alternative cards */}
+            {analysis.alternatives && analysis.alternatives.length > 0 && (
+              <div className="px-5 pt-4 space-y-2">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Switch to a cheaper option
+                </h4>
+                {analysis.alternatives.map((alt) => (
+                  <div
+                    key={alt.flight_option_id}
+                    className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2.5 hover:bg-muted/40 transition-colors"
+                  >
+                    <div>
+                      <div className="text-sm font-medium">{alt.airline}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {alt.label} &middot; {fmtDate(alt.date)} &middot;{" "}
+                        {alt.stops === 0
+                          ? "Nonstop"
+                          : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
+                        {alt.duration_minutes > 0 &&
+                          ` · ${fmtDuration(alt.duration_minutes)}`}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <div className="text-sm font-bold text-emerald-700">
+                          {fmtPrice(alt.price)}
+                        </div>
+                        <div className="text-[10px] text-emerald-600">
+                          save {fmtPrice(alt.savings)}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onSwitch(alt.flight_option_id)}
+                        className="text-xs"
+                      >
+                        Switch
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {/* Quick-justify presets */}
         <div className="px-5 pt-4 space-y-2">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            Why this flight?
+            {isMultiLeg ? "Why these flights?" : "Why this flight?"}
           </h4>
           <div className="flex flex-wrap gap-1.5">
             {PRESETS.map((p) => (

@@ -14,6 +14,7 @@ import { HotelSearch } from "@/components/hotel/HotelSearch";
 import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
 import { LegCard } from "@/components/trip/LegCard";
 import { SearchAssistant } from "@/components/search/SearchAssistant";
+import { InlineReviewPanel, type EvalResult } from "@/components/search/InlineReviewPanel";
 import type { FlightOption } from "@/types/flight";
 import apiClient from "@/api/client";
 
@@ -30,6 +31,8 @@ export default function TripSearch() {
     searchLeg,
     cancelSearch,
     rescoreWithSlider,
+    prefetchLeg,
+    prefetching,
   } = useSearchStore();
   const { legEvents, fetchLegEvents } = useEventStore();
 
@@ -46,6 +49,8 @@ export default function TripSearch() {
   const [analyzing, setAnalyzing] = useState(false);
   const [excludedAirlines, setExcludedAirlines] = useState<string[]>([]);
   const [elapsed, setElapsed] = useState(0);
+  const [showReviewPanel, setShowReviewPanel] = useState(false);
+  const [evalResult, setEvalResult] = useState<EvalResult | null>(null);
 
   // Elapsed timer for search
   useEffect(() => {
@@ -117,14 +122,29 @@ export default function TripSearch() {
     }
   }, [currentTrip, autoSearched, searchLoading, results, searchLeg]);
 
+  // Prefetch remaining unsearched legs when a search completes
+  useEffect(() => {
+    if (!currentTrip || searchLoading) return;
+    const hasAnyResults = currentTrip.legs.some((leg) => results[leg.id]);
+    if (!hasAnyResults) return;
+    const unsearchedLegs = currentTrip.legs.filter(
+      (leg) => !results[leg.id] && !prefetching[leg.id]
+    );
+    if (unsearchedLegs.length > 0) {
+      prefetchLeg(unsearchedLegs[0].id);
+    }
+  }, [currentTrip, searchLoading, results, prefetching, prefetchLeg]);
+
   // Auto-search when user manually switches to a leg that hasn't been searched
   const [userSwitchedLeg, setUserSwitchedLeg] = useState(false);
   useEffect(() => {
     if (userSwitchedLeg && activeLeg && !results[activeLeg.id] && !searchLoading) {
       setUserSwitchedLeg(false);
+      // If this leg is being prefetched, don't fire a duplicate search
+      if (prefetching[activeLeg.id]) return;
       searchLeg(activeLeg.id);
     }
-  }, [userSwitchedLeg, activeLeg, results, searchLoading, searchLeg]);
+  }, [userSwitchedLeg, activeLeg, results, searchLoading, searchLeg, prefetching]);
 
   // Fetch events when search results appear
   useEffect(() => {
@@ -182,45 +202,26 @@ export default function TripSearch() {
 
   // Confirm all leg selections (trip-level)
   async function handleConfirmTrip() {
-    if (!currentTrip || !allLegsSelected) return;
+    if (!currentTrip || !allLegsSelected || !tripId) return;
 
-    // Analyze the most expensive leg for justification
     setAnalyzing(true);
     try {
-      // Find leg with biggest savings potential
-      let maxSavingsLeg = currentTrip.legs[0];
-      let maxSavings = 0;
+      // Build selected_flights map for trip-level endpoint
+      const selectedMap: Record<string, string> = {};
       for (const leg of currentTrip.legs) {
-        const sel = selectedFlights[leg.id];
-        const opts = results[leg.id]?.all_options || [];
-        const cheapest = opts.reduce((min, f) => (f.price < min ? f.price : min), Infinity);
-        const diff = sel.price - cheapest;
-        if (diff > maxSavings) {
-          maxSavings = diff;
-          maxSavingsLeg = leg;
-        }
+        const flight = selectedFlights[leg.id];
+        if (flight) selectedMap[leg.id] = flight.id;
       }
 
-      if (maxSavings >= 100) {
-        const res = await apiClient.post(
-          `/search/${maxSavingsLeg.id}/analyze-selection`,
-          { flight_option_id: selectedFlights[maxSavingsLeg.id].id }
-        );
-        if (res.data.justification_required) {
-          // Enhance with trip-level totals
-          const totalSelected = Object.values(selectedFlights).reduce((s, f) => s + f.price, 0);
-          const totalCheapest = currentTrip.legs.reduce((s, leg) => {
-            const opts = results[leg.id]?.all_options || [];
-            const cheapest = opts.reduce((min, f) => (f.price < min ? f.price : min), Infinity);
-            return s + (cheapest === Infinity ? 0 : cheapest);
-          }, 0);
-          res.data.trip_total = Math.round(totalSelected);
-          res.data.trip_cheapest = Math.round(totalCheapest);
-          res.data.trip_savings = Math.round(totalSelected - totalCheapest);
-          setJustificationAnalysis(res.data);
-          setAnalyzing(false);
-          return;
-        }
+      const res = await apiClient.post(
+        `/trips/${tripId}/analyze-selections`,
+        { selected_flights: selectedMap }
+      );
+
+      if (res.data.justification_required) {
+        setJustificationAnalysis(res.data);
+        setAnalyzing(false);
+        return;
       }
     } catch {
       // If analysis fails, proceed without justification
@@ -232,7 +233,7 @@ export default function TripSearch() {
   }
 
   async function confirmAllLegs(justification?: string) {
-    if (!currentTrip) return;
+    if (!currentTrip || !tripId) return;
     setConfirming(true);
     try {
       for (const leg of currentTrip.legs) {
@@ -247,10 +248,16 @@ export default function TripSearch() {
       }
       setJustificationAnalysis(null);
       setConfirmed(true);
-      setTimeout(() => {
-        setConfirmed(false);
-        setSelectedFlights({});
-      }, 2000);
+
+      // Trigger policy evaluation and show inline review panel
+      try {
+        const evalRes = await apiClient.post(`/trips/${tripId}/evaluate`);
+        setEvalResult(evalRes.data);
+        setShowReviewPanel(true);
+      } catch {
+        // If eval fails, still show confirmed state
+        setShowReviewPanel(false);
+      }
     } catch {
       // Selection failed silently
     } finally {
@@ -552,7 +559,7 @@ export default function TripSearch() {
       {activeSelectedFlight && (
         <div className="fixed bottom-0 left-60 right-0 bg-card border-t border-border shadow-lg z-40">
           {/* Inline justification banner ($100-$500 savings) */}
-          {justificationAnalysis && justificationAnalysis.savings.amount < 500 && (
+          {justificationAnalysis && (justificationAnalysis.trip_totals?.savings_amount ?? justificationAnalysis.savings?.amount ?? 0) < 500 && (
             <div className="max-w-5xl mx-auto px-4 pt-3">
               <JustificationModal
                 analysis={justificationAnalysis}
@@ -561,17 +568,36 @@ export default function TripSearch() {
                 onConfirm={async (justification) => {
                   await confirmAllLegs(justification);
                 }}
-                onSwitch={(flightOptionId) => {
-                  if (!activeLeg) return;
-                  const alt = searchResult?.all_options.find(
-                    (f) => f.id === flightOptionId
-                  );
+                onSwitch={(flightOptionId, legId) => {
+                  const targetLegId = legId || activeLeg?.id;
+                  if (!targetLegId) return;
+                  const legResults = results[targetLegId]?.all_options || [];
+                  const alt = legResults.find((f) => f.id === flightOptionId);
                   if (alt) {
-                    setSelectedFlights((prev) => ({ ...prev, [activeLeg.id]: alt }));
+                    setSelectedFlights((prev) => ({ ...prev, [targetLegId]: alt }));
                   }
                   setJustificationAnalysis(null);
                 }}
                 onCancel={() => setJustificationAnalysis(null)}
+              />
+            </div>
+          )}
+
+          {/* Inline review panel (after confirmation) */}
+          {showReviewPanel && evalResult && currentTrip && tripId && (
+            <div className="max-w-5xl mx-auto px-4 pt-3">
+              <InlineReviewPanel
+                tripId={tripId}
+                evalResult={evalResult}
+                selectedFlights={selectedFlights}
+                legs={currentTrip.legs}
+                onSubmitSuccess={() => {
+                  // Keep panel visible with success state
+                }}
+                onCancel={() => {
+                  setShowReviewPanel(false);
+                  setEvalResult(null);
+                }}
               />
             </div>
           )}
@@ -629,16 +655,16 @@ export default function TripSearch() {
               )}
 
               {/* Savings context */}
-              {justificationAnalysis && justificationAnalysis.savings.amount > 0 && (
+              {justificationAnalysis && (justificationAnalysis.trip_totals?.savings_amount > 0 || justificationAnalysis.savings?.amount > 0) && (
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${
-                  justificationAnalysis.savings.amount >= 500
+                  (justificationAnalysis.trip_totals?.savings_amount ?? justificationAnalysis.savings?.amount ?? 0) >= 500
                     ? "bg-red-100 text-red-700"
-                    : justificationAnalysis.savings.amount >= 200
+                    : (justificationAnalysis.trip_totals?.savings_amount ?? justificationAnalysis.savings?.amount ?? 0) >= 200
                     ? "bg-amber-100 text-amber-700"
                     : "bg-muted text-muted-foreground"
                 }`}>
-                  {justificationAnalysis.trip_savings
-                    ? `$${Math.round(justificationAnalysis.trip_savings).toLocaleString()} trip savings available`
+                  {justificationAnalysis.trip_totals
+                    ? `$${Math.round(justificationAnalysis.trip_totals.savings_amount).toLocaleString()} trip savings available`
                     : `$${Math.round(justificationAnalysis.savings.amount).toLocaleString()} more than cheapest`
                   }
                 </span>
@@ -684,7 +710,7 @@ export default function TripSearch() {
                     : "Confirm Selection"}
                 </Button>
               )}
-              {confirmed && tripId && (
+              {confirmed && !showReviewPanel && tripId && (
                 <Link to={`/trips/${tripId}/review`}>
                   <Button variant="outline" size="sm">
                     Review & Submit
@@ -707,7 +733,7 @@ export default function TripSearch() {
       )}
 
       {/* Full justification modal (>$500 savings) */}
-      {justificationAnalysis && justificationAnalysis.savings.amount >= 500 && activeSelectedFlight && (
+      {justificationAnalysis && (justificationAnalysis.trip_totals?.savings_amount ?? justificationAnalysis.savings?.amount ?? 0) >= 500 && activeSelectedFlight && (
         <JustificationModal
           analysis={justificationAnalysis}
           confirming={confirming}
@@ -715,13 +741,13 @@ export default function TripSearch() {
           onConfirm={async (justification) => {
             await confirmAllLegs(justification);
           }}
-          onSwitch={(flightOptionId) => {
-            if (!activeLeg) return;
-            const alt = searchResult?.all_options.find(
-              (f) => f.id === flightOptionId
-            );
+          onSwitch={(flightOptionId, legId) => {
+            const targetLegId = legId || activeLeg?.id;
+            if (!targetLegId) return;
+            const legResults = results[targetLegId]?.all_options || [];
+            const alt = legResults.find((f) => f.id === flightOptionId);
             if (alt) {
-              setSelectedFlights((prev) => ({ ...prev, [activeLeg.id]: alt }));
+              setSelectedFlights((prev) => ({ ...prev, [targetLegId]: alt }));
             }
             setJustificationAnalysis(null);
           }}

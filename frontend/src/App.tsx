@@ -21,6 +21,7 @@ const PriceWatches = lazy(() => import("@/pages/PriceWatches"));
 const AnalyticsDashboard = lazy(() => import("@/pages/AnalyticsDashboard"));
 const MyStats = lazy(() => import("@/pages/MyStats"));
 const LeaderboardPage = lazy(() => import("@/pages/LeaderboardPage"));
+const MyProfile = lazy(() => import("@/pages/MyProfile"));
 
 function PageLoader() {
   return (
@@ -71,8 +72,9 @@ export default function App() {
             <Route path="/approvals" element={<ApprovalDashboard />} />
             <Route path="/approvals/:approvalId" element={<ApprovalDetailPage />} />
             <Route path="/analytics" element={<AnalyticsDashboard />} />
-            <Route path="/my-stats" element={<MyStats />} />
-            <Route path="/leaderboard" element={<LeaderboardPage />} />
+            <Route path="/profile" element={<MyProfile />} />
+            <Route path="/my-stats" element={<Navigate to="/profile" replace />} />
+            <Route path="/leaderboard" element={<Navigate to="/profile" replace />} />
             <Route path="/policies" element={<PolicyManagement />} />
           </Route>
         </Routes>

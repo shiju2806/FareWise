@@ -251,6 +251,22 @@ class ApprovalThresholdChecker(PolicyChecker):
         )
 
 
+class CabinClassCountChecker(PolicyChecker):
+    """Trip-level check: limits how many legs can be booked in a given cabin class."""
+
+    def check(self, policy, leg, selection, flight) -> PolicyCheckResult:
+        # Per-leg stub — real logic is in evaluate_trip
+        return PolicyCheckResult(
+            policy_id=str(policy.id),
+            policy_name=policy.name,
+            rule_type=policy.rule_type,
+            status="info",
+            action="info",
+            details="Checked at trip level",
+            severity=policy.severity,
+        )
+
+
 CHECKER_MAP: dict[str, type[PolicyChecker]] = {
     "max_price": MaxPriceChecker,
     "advance_booking": AdvanceBookingChecker,
@@ -258,6 +274,7 @@ CHECKER_MAP: dict[str, type[PolicyChecker]] = {
     "preferred_airline": PreferredAirlineChecker,
     "max_stops": MaxStopsChecker,
     "approval_threshold": ApprovalThresholdChecker,
+    "cabin_class_count": CabinClassCountChecker,
 }
 
 
@@ -299,7 +316,7 @@ class PolicyEngine:
                     continue
 
                 checker_cls = CHECKER_MAP.get(policy.rule_type)
-                if not checker_cls or policy.rule_type == "approval_threshold":
+                if not checker_cls or policy.rule_type in ("approval_threshold", "cabin_class_count"):
                     continue
 
                 checker = checker_cls()
@@ -335,6 +352,55 @@ class PolicyEngine:
                         details=f"Total ${total_selected:.0f} requires manager approval (limit: ${auto_approve_limit:.0f})",
                         severity=policy.severity,
                     ))
+
+        # Check cabin_class_count at trip level
+        for policy in policies:
+            if policy.rule_type == "cabin_class_count" and policy.is_active:
+                target_cabin = (policy.conditions or {}).get("target_cabin", "business")
+                max_legs = policy.threshold.get("max_legs", 1)
+                suggest_2 = policy.threshold.get("suggest_2", "premium_economy")
+                suggest_4 = policy.threshold.get("suggest_4", "economy")
+
+                cabin_legs = 0
+                for sel in selections:
+                    flight = flight_options.get(str(sel.flight_option_id))
+                    if flight and (flight.cabin_class or "").lower() == target_cabin.lower():
+                        cabin_legs += 1
+
+                if cabin_legs <= max_legs:
+                    evaluation.checks.append(PolicyCheckResult(
+                        policy_id=str(policy.id),
+                        policy_name=policy.name,
+                        rule_type="cabin_class_count",
+                        status="pass",
+                        action="info",
+                        details=f"{cabin_legs} leg(s) in {target_cabin} — within limit of {max_legs}",
+                        severity=policy.severity,
+                    ))
+                elif cabin_legs >= 4:
+                    result = PolicyCheckResult(
+                        policy_id=str(policy.id),
+                        policy_name=policy.name,
+                        rule_type="cabin_class_count",
+                        status="warn",
+                        action="warn",
+                        details=f"{cabin_legs} legs in {target_cabin} class. With {cabin_legs} legs, consider booking in {suggest_4} to reduce costs.",
+                        severity=policy.severity,
+                    )
+                    evaluation.checks.append(result)
+                    evaluation.warnings.append(result)
+                else:
+                    result = PolicyCheckResult(
+                        policy_id=str(policy.id),
+                        policy_name=policy.name,
+                        rule_type="cabin_class_count",
+                        status="warn",
+                        action="warn",
+                        details=f"{cabin_legs} legs in {target_cabin} class. Consider booking in {suggest_2} for some legs to reduce costs.",
+                        severity=policy.severity,
+                    )
+                    evaluation.checks.append(result)
+                    evaluation.warnings.append(result)
 
         # Determine overall status
         if evaluation.blocks:

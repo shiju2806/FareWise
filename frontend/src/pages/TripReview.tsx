@@ -33,6 +33,8 @@ interface EvalResult {
   warnings: Array<{
     policy_name: string;
     message: string;
+    policy_id?: string;
+    requires_justification?: boolean;
   }>;
   blocks: Array<{
     policy_name: string;
@@ -65,6 +67,8 @@ export default function TripReview() {
   const [submitting, setSubmitting] = useState(false);
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [violationAcks, setViolationAcks] = useState<Record<string, boolean>>({});
+  const [violationNotes, setViolationNotes] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (tripId) {
@@ -88,8 +92,22 @@ export default function TripReview() {
     if (!tripId) return;
     setSubmitting(true);
     try {
+      // Build violation justifications from blocks + acknowledged warnings
+      const justifications: Record<string, string> = {};
+      for (const b of evalResult?.blocks || []) {
+        if (b.policy_id && violationAcks[b.policy_id]) {
+          justifications[b.policy_id] = violationNotes[b.policy_id] || "Acknowledged";
+        }
+      }
+      for (const w of evalResult?.warnings || []) {
+        if (w.policy_id && w.requires_justification && violationAcks[w.policy_id]) {
+          justifications[w.policy_id] = violationNotes[w.policy_id] || "Acknowledged";
+        }
+      }
+
       await apiClient.post(`/trips/${tripId}/submit`, {
         traveler_notes: notes || undefined,
+        violation_justifications: Object.keys(justifications).length > 0 ? justifications : undefined,
       });
       setSubmitted(true);
     } catch (err: unknown) {
@@ -130,6 +148,16 @@ export default function TripReview() {
 
   const sr = evalResult?.savings_report;
   const hasBlocks = (evalResult?.blocks?.length || 0) > 0;
+
+  // Combine blocks + warnings that need justification into one list
+  const allViolations = [
+    ...(evalResult?.blocks || []).map((b) => ({ ...b, message: b.message, requires_justification: true })),
+    ...(evalResult?.warnings || []).filter((w) => w.requires_justification),
+  ];
+  const allViolationsAcked = allViolations.every(
+    (v) => !v.policy_id || violationAcks[v.policy_id]
+  );
+  const isReadOnly = currentTrip?.status && !["draft", "searching", "changes_requested"].includes(currentTrip.status);
 
   return (
     <div className="space-y-6">
@@ -348,24 +376,53 @@ export default function TripReview() {
         </Card>
       )}
 
-      {/* Blocking Violations */}
-      {hasBlocks && (
-        <Card className="border-red-200">
-          <CardContent className="pt-6">
-            <h4 className="text-sm font-semibold text-red-600 mb-2">
-              Blocking Violations
+      {/* Policy Warnings (blocks + warnings that need acknowledgment) */}
+      {allViolations.length > 0 && (
+        <Card className="border-amber-200">
+          <CardContent className="pt-6 space-y-3">
+            <h4 className="text-sm font-semibold text-amber-600 mb-2">
+              Policy Warnings
             </h4>
-            {evalResult?.blocks.map((b, i) => (
-              <p key={i} className="text-sm text-red-600">
-                {b.policy_name}: {b.message}
-              </p>
+            {allViolations.map((v, i) => (
+              <div key={i} className="rounded-md border border-amber-200 bg-amber-50/50 p-3 space-y-2">
+                <p className="text-sm text-amber-800">
+                  <span className="font-medium">{v.policy_name}:</span> {v.message}
+                </p>
+                {v.policy_id && (
+                  <div className="flex items-start gap-2">
+                    <input
+                      type="checkbox"
+                      id={`ack-${v.policy_id}`}
+                      checked={violationAcks[v.policy_id] || false}
+                      onChange={(e) =>
+                        setViolationAcks((prev) => ({ ...prev, [v.policy_id!]: e.target.checked }))
+                      }
+                      className="mt-0.5"
+                    />
+                    <label htmlFor={`ack-${v.policy_id}`} className="text-xs text-amber-700">
+                      I acknowledge this policy exception
+                    </label>
+                  </div>
+                )}
+                {v.policy_id && violationAcks[v.policy_id] && (
+                  <input
+                    type="text"
+                    value={violationNotes[v.policy_id] || ""}
+                    onChange={(e) =>
+                      setViolationNotes((prev) => ({ ...prev, [v.policy_id!]: e.target.value }))
+                    }
+                    placeholder="Brief reason (optional)..."
+                    className="w-full rounded-md border border-amber-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-300/50"
+                  />
+                )}
+              </div>
             ))}
           </CardContent>
         </Card>
       )}
 
       {/* Notes & Submit */}
-      {sr && (
+      {sr && !isReadOnly && (
         <Card>
           <CardContent className="pt-6 space-y-3">
             <textarea
@@ -378,15 +435,35 @@ export default function TripReview() {
             <div className="flex gap-3">
               <Button
                 onClick={handleSubmit}
-                disabled={submitting || hasBlocks}
+                disabled={submitting || (allViolations.length > 0 && !allViolationsAcked)}
                 className="w-full"
               >
                 {submitting
                   ? "Submitting..."
-                  : hasBlocks
-                  ? "Cannot Submit — Policy Violations"
+                  : allViolations.length > 0 && !allViolationsAcked
+                  ? "Acknowledge warnings to submit"
                   : "Submit for Approval"}
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Read-only status for submitted trips */}
+      {isReadOnly && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-2">
+              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                currentTrip?.status === "approved" ? "bg-green-100 text-green-800"
+                  : currentTrip?.status === "rejected" ? "bg-red-100 text-red-800"
+                  : "bg-blue-100 text-blue-800"
+              }`}>
+                {currentTrip?.status === "submitted" ? "Submitted — Pending Approval"
+                  : currentTrip?.status === "approved" ? "Approved"
+                  : currentTrip?.status === "rejected" ? "Rejected"
+                  : currentTrip?.status || "Unknown"}
+              </span>
             </div>
           </CardContent>
         </Card>

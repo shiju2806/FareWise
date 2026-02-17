@@ -30,6 +30,7 @@ class SearchOrchestrator:
         leg: TripLeg,
         weights: Weights | None = None,
         include_nearby: bool = True,
+        user_preferences: dict | None = None,
     ) -> dict:
         """
         Execute full search for a trip leg.
@@ -130,6 +131,40 @@ class SearchOrchestrator:
 
         # 5. Score all flights
         scored_flights = score_flights(all_flights, weights)
+
+        # 6. Apply user preference filters & boosts
+        if user_preferences:
+            max_stops = user_preferences.get("max_stops")
+            max_layover = user_preferences.get("max_layover_minutes")
+            prefer_nonstop = user_preferences.get("prefer_nonstop", False)
+
+            if max_stops is not None or max_layover is not None:
+                filtered = []
+                for f in scored_flights:
+                    if max_stops is not None and f.get("stops", 0) > max_stops:
+                        continue
+                    if max_layover is not None and f.get("layover_minutes", 0) > max_layover:
+                        continue
+                    filtered.append(f)
+                # Only apply filter if it doesn't eliminate everything
+                if filtered:
+                    scored_flights = filtered
+
+            if prefer_nonstop:
+                for f in scored_flights:
+                    if f.get("stops", 0) == 0:
+                        f["score"] = f.get("score", 50) + 10
+                scored_flights.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+            # Boost flights from preferred alliances
+            preferred_alliances = user_preferences.get("preferred_alliances", [])
+            if preferred_alliances:
+                from app.data.airline_tiers import get_alliance
+                for f in scored_flights:
+                    airline_alliance = get_alliance(f.get("airline_code", ""))
+                    if airline_alliance and airline_alliance in preferred_alliances:
+                        f["score"] = f.get("score", 50) + 5
+                scored_flights.sort(key=lambda x: x.get("score", 0), reverse=True)
 
         # 7. Build price calendar
         price_calendar = self._build_price_calendar(
@@ -366,7 +401,7 @@ class SearchOrchestrator:
         is_alt_airport: bool,
         is_alt_date: bool,
     ) -> list[dict]:
-        """Search with cache layer. Google Flights primary, Amadeus fallback."""
+        """Search with cache layer. DB1B primary, Amadeus fallback."""
         date_str = departure_date.isoformat()
 
         # Check cache
@@ -377,13 +412,17 @@ class SearchOrchestrator:
                 f["is_alternate_date"] = is_alt_date
             return cached
 
-        # Primary: Google Flights (real market data, all cabin classes)
-        from app.services import google_flights_client
-        flights = await google_flights_client.search_flights(
-            origin, destination, departure_date, cabin_class
-        )
+        # Primary: DB1B historical fare data (real pricing, reliable)
+        flights = []
+        try:
+            from app.services.db1b_client import db1b_client
+            flights = await db1b_client.search_flights(
+                origin, destination, departure_date, cabin_class
+            )
+        except Exception as e:
+            logger.warning(f"DB1B search failed for {origin}-{destination}: {e}")
 
-        # Fallback: Amadeus (if Google Flights returned nothing)
+        # Fallback: Amadeus (if DB1B has no data for this route)
         if not flights:
             flights = await amadeus_client.search_flight_offers(
                 origin, destination, departure_date, cabin_class, adults
@@ -479,30 +518,29 @@ class SearchOrchestrator:
         if existing_dates:
             dates_data.update(existing_dates)
 
-        # Primary: Google Flights via fast-flights (works for any route)
-        from app.services import google_flights_client
-
-        google_ok = False
+        # Primary: DB1B historical data
+        db1b_ok = False
         try:
-            gf_data = await google_flights_client.search_month_sample(
+            from app.services.db1b_client import db1b_client
+            db1b_data = await db1b_client.search_month_prices(
                 origin=origin,
                 destination=destination,
                 year=year,
                 month=month,
                 cabin_class=cabin_class,
             )
-            for d, entry in gf_data.items():
+            for d, entry in db1b_data.items():
                 # Never overwrite prices from the initial flight search —
                 # those are authoritative (same flights user sees in listing)
                 if d not in dates_data:
                     dates_data[d] = entry
-            if gf_data:
-                google_ok = True
+            if db1b_data:
+                db1b_ok = True
         except Exception as e:
-            logger.warning(f"Google Flights calendar failed for {origin}-{destination}: {e}")
+            logger.warning(f"DB1B calendar failed for {origin}-{destination}: {e}")
 
-        # Fallback 1: Amadeus Flight Cheapest Date Search
-        if not google_ok and not dates_data:
+        # Fallback: Amadeus Flight Cheapest Date Search
+        if not db1b_ok and not dates_data:
             today = date.today()
             first_of_month = date(year, month, 1)
             anchor_date = max(first_of_month, today)
@@ -622,9 +660,14 @@ class SearchOrchestrator:
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             prices = [f["price"] for f in flights] if flights else [0]
 
+            # Determine which provider supplied data
+            provider = "db1b_historical"
+            if flights and flights[0].get("source") == "amadeus":
+                provider = "amadeus"
+
             search_log = SearchLog(
                 trip_leg_id=leg.id,
-                api_provider="amadeus",
+                api_provider=provider,
                 search_params={
                     "origin": leg.origin_airport,
                     "destination": leg.destination_airport,

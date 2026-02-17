@@ -34,7 +34,7 @@ SEED_POLICIES = [
         "rule_type": "max_price",
         "conditions": {"route_type": "domestic", "cabin": "business"},
         "threshold": {"amount": 2000, "currency": "CAD"},
-        "action": "block",
+        "action": "warn",
         "severity": 9,
     },
     {
@@ -72,6 +72,19 @@ SEED_POLICIES = [
         "threshold": {"max_stops": 2},
         "action": "warn",
         "severity": 4,
+    },
+    {
+        "name": "Business Class Leg Limit",
+        "description": "Limit number of legs booked in business class per trip",
+        "rule_type": "cabin_class_count",
+        "conditions": {"target_cabin": "business"},
+        "threshold": {
+            "max_legs": 1,
+            "suggest_2": "premium_economy",
+            "suggest_4": "economy",
+        },
+        "action": "warn",
+        "severity": 7,
     },
     {
         "name": "Auto-Approve Threshold",

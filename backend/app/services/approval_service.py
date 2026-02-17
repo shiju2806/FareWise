@@ -80,7 +80,7 @@ class ApprovalService:
 
             # Get cheapest and most expensive for this leg's search
             search_result = await db.execute(
-                select(SearchLog).where(SearchLog.trip_leg_id == leg.id).order_by(SearchLog.searched_at.desc())
+                select(SearchLog).where(SearchLog.trip_leg_id == leg.id).order_by(SearchLog.searched_at.desc()).limit(1)
             )
             latest_search = search_result.scalar_one_or_none()
             leg_cheapest = flight.price
@@ -129,7 +129,7 @@ class ApprovalService:
         events_context: list[str] = []
         for leg in legs:
             search_result = await db.execute(
-                select(SearchLog).where(SearchLog.trip_leg_id == leg.id).order_by(SearchLog.searched_at.desc())
+                select(SearchLog).where(SearchLog.trip_leg_id == leg.id).order_by(SearchLog.searched_at.desc()).limit(1)
             )
             search = search_result.scalar_one_or_none()
             if search and search.events_during_travel:
@@ -202,7 +202,8 @@ class ApprovalService:
                     "policy_name": w.policy_name,
                     "message": w.details,
                     "action": w.action,
-                    "requires_justification": False,
+                    "policy_id": w.policy_id,
+                    "requires_justification": w.action in ("block", "warn"),
                 }
                 for w in evaluation.warnings
             ],

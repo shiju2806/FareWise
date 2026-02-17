@@ -17,8 +17,7 @@ export function AppShell() {
   const navItems = [
     { label: "Trips", path: "/trips", primary: true, roles: null },
     { label: "Price Watches", path: "/price-watches", primary: false, roles: null },
-    { label: "My Stats", path: "/my-stats", primary: false, roles: null },
-    { label: "Leaderboard", path: "/leaderboard", primary: false, roles: null },
+    { label: "My Profile", path: "/profile", primary: false, roles: null },
     { label: "Approvals", path: "/approvals", primary: false, roles: ["manager", "admin"] },
     { label: "Analytics", path: "/analytics", primary: false, roles: ["manager", "admin"] },
     { label: "Policies", path: "/policies", primary: false, roles: ["admin"] },

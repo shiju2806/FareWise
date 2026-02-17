@@ -69,12 +69,18 @@ async def search_flights(
 
     include_nearby = req.include_nearby_airports if req else True
 
+    # Load user travel preferences
+    user_preferences = None
+    if user.travel_preferences and isinstance(user.travel_preferences, dict):
+        user_preferences = user.travel_preferences
+
     try:
         result = await asyncio.wait_for(
             search_orchestrator.search_leg(
                 db=db,
                 leg=leg,
                 include_nearby=include_nearby,
+                user_preferences=user_preferences,
             ),
             timeout=90.0,
         )
@@ -242,159 +248,81 @@ async def analyze_selection(
     Returns savings analysis and LLM-generated justification prompt if threshold exceeded.
     """
     from app.services.justification_service import justification_service
+    from app.services.selection_analysis_service import analyze_leg_selection
 
     leg = await _get_user_leg(trip_leg_id, db, user)
 
-    # Get the selected flight
-    result = await db.execute(
-        select(FlightOption).where(FlightOption.id == uuid.UUID(req.flight_option_id))
-    )
-    selected = result.scalar_one_or_none()
-    if not selected:
-        raise HTTPException(status_code=404, detail="Flight option not found")
+    # Get user's excluded airlines and full preferences
+    excluded_airlines: set[str] = set()
+    user_preferences: dict | None = None
+    if user.travel_preferences and isinstance(user.travel_preferences, dict):
+        user_preferences = user.travel_preferences
+        excluded_airlines = set(user_preferences.get("excluded_airlines", []))
 
-    # Get all options from the most recent search
-    search_result = await db.execute(
-        select(SearchLog)
-        .where(SearchLog.trip_leg_id == leg.id)
-        .order_by(SearchLog.searched_at.desc())
-        .limit(1)
+    analysis = await analyze_leg_selection(
+        db=db,
+        leg_id=leg.id,
+        flight_option_id=uuid.UUID(req.flight_option_id),
+        excluded_airlines=excluded_airlines,
+        user_preferences=user_preferences,
     )
-    search_log = search_result.scalar_one_or_none()
-    if not search_log:
+
+    if not analysis:
         return {"justification_required": False, "reason": "no_search_data"}
 
-    opts_result = await db.execute(
-        select(FlightOption).where(FlightOption.search_log_id == search_log.id)
+    justification_required = analysis.savings_amount >= 100 or analysis.savings_percent >= 10
+
+    selected_date = (
+        analysis.selected.departure_time.date().isoformat()
+        if analysis.selected.departure_time
+        else ""
     )
-    all_options = opts_result.scalars().all()
-
-    # Get user's excluded airlines
-    excluded_airlines: set[str] = set()
-    if user.travel_preferences and isinstance(user.travel_preferences, dict):
-        excluded_airlines = set(user.travel_preferences.get("excluded_airlines", []))
-
-    # Filter to allowed airlines only
-    allowed_options = [
-        o for o in all_options
-        if o.airline_name not in excluded_airlines
-    ]
-
-    if not allowed_options:
-        return {"justification_required": False, "reason": "no_alternatives"}
-
-    selected_date = selected.departure_time.date().isoformat() if selected.departure_time else ""
-    selected_price = float(selected.price)
-
-    # Find cheapest overall (among allowed airlines)
-    overall_cheapest = min(allowed_options, key=lambda o: float(o.price))
-    overall_cheapest_price = float(overall_cheapest.price)
-
-    # Find cheapest on same date (different airline)
-    same_date_options = [
-        o for o in allowed_options
-        if o.departure_time and o.departure_time.date().isoformat() == selected_date
-        and o.airline_name != selected.airline_name
-    ]
-    cheapest_same_date = min(same_date_options, key=lambda o: float(o.price)) if same_date_options else None
-
-    # Find cheapest any date (already computed as overall_cheapest)
-    cheapest_any_date_info = None
-    if overall_cheapest.id != selected.id:
-        cheapest_any_date_info = {
-            "airline": overall_cheapest.airline_name,
-            "date": overall_cheapest.departure_time.date().isoformat() if overall_cheapest.departure_time else "",
-            "price": overall_cheapest_price,
-            "savings": round(selected_price - overall_cheapest_price, 2),
-            "stops": overall_cheapest.stops,
-            "duration_minutes": overall_cheapest.duration_minutes,
-            "flight_option_id": str(overall_cheapest.id),
-        }
-
-    # Find cheapest same airline, different date
-    same_airline_options = [
-        o for o in allowed_options
-        if o.airline_name == selected.airline_name
-        and o.departure_time
-        and o.departure_time.date().isoformat() != selected_date
-        and float(o.price) < selected_price
-    ]
-    cheapest_same_airline = min(same_airline_options, key=lambda o: float(o.price)) if same_airline_options else None
-
-    # Calculate max savings
-    savings_amount = round(selected_price - overall_cheapest_price, 2)
-    savings_percent = round((savings_amount / selected_price) * 100, 1) if selected_price > 0 else 0
-
-    # Threshold: justification required if savings >= $100 or >= 10%
-    justification_required = savings_amount >= 100 or savings_percent >= 10
-
-    # Build alternatives list for response
-    alternatives = []
-
-    if cheapest_same_date:
-        sd_price = float(cheapest_same_date.price)
-        alternatives.append({
-            "type": "same_date",
-            "label": "Same date, different airline",
-            "airline": cheapest_same_date.airline_name,
-            "date": selected_date,
-            "price": sd_price,
-            "savings": round(selected_price - sd_price, 2),
-            "stops": cheapest_same_date.stops,
-            "duration_minutes": cheapest_same_date.duration_minutes,
-            "flight_option_id": str(cheapest_same_date.id),
-        })
-
-    if cheapest_any_date_info and (
-        not cheapest_same_date or overall_cheapest.id != cheapest_same_date.id
-    ):
-        alternatives.append({
-            "type": "any_date",
-            "label": "Different date",
-            **cheapest_any_date_info,
-        })
-
-    if cheapest_same_airline:
-        sa_price = float(cheapest_same_airline.price)
-        alternatives.append({
-            "type": "same_airline",
-            "label": f"Same airline ({selected.airline_name}), different date",
-            "airline": selected.airline_name,
-            "date": cheapest_same_airline.departure_time.date().isoformat() if cheapest_same_airline.departure_time else "",
-            "price": sa_price,
-            "savings": round(selected_price - sa_price, 2),
-            "stops": cheapest_same_airline.stops,
-            "duration_minutes": cheapest_same_airline.duration_minutes,
-            "flight_option_id": str(cheapest_same_airline.id),
-        })
+    selected_price = float(analysis.selected.price)
 
     # Generate LLM justification prompt if needed
     justification_prompt = None
     if justification_required:
         route = f"{leg.origin_airport} → {leg.destination_airport}"
         selected_info = {
-            "airline": selected.airline_name,
+            "airline": analysis.selected.airline_name,
             "date": selected_date,
             "price": selected_price,
-            "stops": selected.stops,
-            "duration_minutes": selected.duration_minutes,
+            "stops": analysis.selected.stops,
+            "duration_minutes": analysis.selected.duration_minutes,
         }
-        same_date_info = {
-            "airline": cheapest_same_date.airline_name,
-            "price": float(cheapest_same_date.price),
-            "savings": round(selected_price - float(cheapest_same_date.price), 2),
-        } if cheapest_same_date else None
-
-        same_airline_info = {
-            "date": cheapest_same_airline.departure_time.date().isoformat() if cheapest_same_airline.departure_time else "",
-            "price": float(cheapest_same_airline.price),
-            "savings": round(selected_price - float(cheapest_same_airline.price), 2),
-        } if cheapest_same_airline else None
-
+        same_date_info = (
+            {
+                "airline": analysis.cheapest_same_date.airline_name,
+                "price": float(analysis.cheapest_same_date.price),
+                "savings": round(selected_price - float(analysis.cheapest_same_date.price), 2),
+            }
+            if analysis.cheapest_same_date
+            else None
+        )
+        same_airline_info = (
+            {
+                "date": (
+                    analysis.cheapest_same_airline.departure_time.date().isoformat()
+                    if analysis.cheapest_same_airline.departure_time
+                    else ""
+                ),
+                "price": float(analysis.cheapest_same_airline.price),
+                "savings": round(selected_price - float(analysis.cheapest_same_airline.price), 2),
+            }
+            if analysis.cheapest_same_airline
+            else None
+        )
+        cheapest_any_date_info = next(
+            (a for a in analysis.alternatives if a["type"] == "any_date"), None
+        )
         overall_info = {
-            "airline": overall_cheapest.airline_name,
-            "date": overall_cheapest.departure_time.date().isoformat() if overall_cheapest.departure_time else "",
-            "price": overall_cheapest_price,
+            "airline": analysis.overall_cheapest.airline_name,
+            "date": (
+                analysis.overall_cheapest.departure_time.date().isoformat()
+                if analysis.overall_cheapest.departure_time
+                else ""
+            ),
+            "price": float(analysis.overall_cheapest.price),
         }
 
         justification_prompt = await justification_service.generate_prompt(
@@ -403,26 +331,26 @@ async def analyze_selection(
             cheapest_any_date=cheapest_any_date_info,
             cheapest_same_airline=same_airline_info,
             overall_cheapest=overall_info,
-            savings_amount=savings_amount,
-            savings_percent=savings_percent,
+            savings_amount=analysis.savings_amount,
+            savings_percent=analysis.savings_percent,
             route=route,
         )
 
     return {
         "justification_required": justification_required,
         "selected": {
-            "airline": selected.airline_name,
+            "airline": analysis.selected.airline_name,
             "date": selected_date,
             "price": selected_price,
-            "stops": selected.stops,
-            "duration_minutes": selected.duration_minutes,
-            "flight_option_id": str(selected.id),
+            "stops": analysis.selected.stops,
+            "duration_minutes": analysis.selected.duration_minutes,
+            "flight_option_id": str(analysis.selected.id),
         },
         "savings": {
-            "amount": savings_amount,
-            "percent": savings_percent,
+            "amount": analysis.savings_amount,
+            "percent": analysis.savings_percent,
         },
-        "alternatives": alternatives,
+        "alternatives": analysis.alternatives,
         "justification_prompt": justification_prompt,
     }
 
@@ -607,9 +535,9 @@ async def get_price_context(
     except (ValueError, IndexError):
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
 
-    # Check cache first (route-based, not search-based)
+    # Check cache first (route + cabin specific)
     cached = await cache_service.get_price_metrics(
-        leg.origin_airport, leg.destination_airport, target_date
+        leg.origin_airport, leg.destination_airport, target_date, leg.cabin_class
     )
     if cached:
         return cached
@@ -626,22 +554,22 @@ async def get_price_context(
     if search_log and search_log.cheapest_price:
         current_price = float(search_log.cheapest_price)
 
-    # Primary: Google Flights — compute real quartiles from flight results
-    from app.services import google_flights_client
+    # Primary: DB1B historical data — compute quartiles from real fare data
+    from app.services.db1b_client import db1b_client
 
     response = None
     try:
-        gf_context = await google_flights_client.get_price_context(
+        db1b_context = await db1b_client.get_price_context(
             origin=leg.origin_airport,
             destination=leg.destination_airport,
             departure_date=parsed_date,
             cabin_class=leg.cabin_class,
             current_price=current_price,
         )
-        if gf_context:
-            response = gf_context
+        if db1b_context:
+            response = db1b_context
     except Exception as e:
-        logger.warning(f"Google Flights price context failed: {e}")
+        logger.warning(f"DB1B price context failed: {e}")
 
     # Fallback: Amadeus price metrics
     if not response:
@@ -683,9 +611,9 @@ async def get_price_context(
     if not response:
         return {"available": False, "message": "Price data not available for this route"}
 
-    # Cache the result
+    # Cache the result (cabin-class specific)
     await cache_service.set_price_metrics(
-        leg.origin_airport, leg.destination_airport, target_date, response
+        leg.origin_airport, leg.destination_airport, target_date, leg.cabin_class, response
     )
 
     return response

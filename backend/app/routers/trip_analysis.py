@@ -26,6 +26,11 @@ class AnalyzeTripRequest(BaseModel):
     selected_flights: dict[str, str]  # leg_id → flight_option_id
 
 
+class AnalyzeSelectionsRequest(BaseModel):
+    """Selected flight IDs for each leg — for trip-level justification analysis."""
+    selected_flights: dict[str, str]  # leg_id → flight_option_id
+
+
 class OptimizeDatesRequest(BaseModel):
     """Optional: specify which two legs to optimize."""
     outbound_leg_id: str | None = None
@@ -266,3 +271,177 @@ async def optimize_dates(
     )
 
     return result
+
+
+@router.post("/{trip_id}/analyze-selections")
+async def analyze_selections(
+    trip_id: uuid.UUID,
+    req: AnalyzeSelectionsRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Trip-level justification analysis with smart date filtering.
+
+    Analyzes ALL legs together: per-leg alternatives with cross-leg date
+    constraints, trip-level totals, and an LLM-generated justification prompt.
+    Replaces the per-leg analyze-selection call during trip confirmation.
+    """
+    from app.services.justification_service import justification_service
+    from app.services.selection_analysis_service import (
+        analyze_leg_selection,
+        apply_smart_date_filter,
+    )
+
+    trip = await _get_user_trip(trip_id, db, user)
+    legs_sorted = sorted(trip.legs, key=lambda l: l.sequence)
+
+    # Get user excluded airlines and full preferences
+    excluded_airlines: set[str] = set()
+    user_preferences: dict | None = None
+    if user.travel_preferences and isinstance(user.travel_preferences, dict):
+        user_preferences = user.travel_preferences
+        excluded_airlines = set(user_preferences.get("excluded_airlines", []))
+
+    # Compute original trip duration (days between first and last leg preferred dates)
+    original_trip_duration = None
+    if len(legs_sorted) >= 2:
+        try:
+            first_date = legs_sorted[0].preferred_date
+            last_date = legs_sorted[-1].preferred_date
+            if first_date and last_date:
+                original_trip_duration = (last_date - first_date).days
+        except (TypeError, AttributeError):
+            pass
+
+    # Analyze each leg
+    per_leg_analyses = []
+    selected_dates: dict[str, str] = {}  # leg_id -> selected departure date string
+
+    for leg in legs_sorted:
+        flight_id_str = req.selected_flights.get(str(leg.id))
+        if not flight_id_str:
+            per_leg_analyses.append(None)
+            continue
+
+        analysis = await analyze_leg_selection(
+            db=db,
+            leg_id=leg.id,
+            flight_option_id=uuid.UUID(flight_id_str),
+            excluded_airlines=excluded_airlines,
+            user_preferences=user_preferences,
+        )
+        per_leg_analyses.append(analysis)
+
+        if analysis and analysis.selected.departure_time:
+            selected_dates[str(leg.id)] = (
+                analysis.selected.departure_time.date().isoformat()
+            )
+
+    # Cross-leg date context for smart filtering
+    outbound_date = selected_dates.get(str(legs_sorted[0].id)) if legs_sorted else None
+    return_date = (
+        selected_dates.get(str(legs_sorted[-1].id))
+        if len(legs_sorted) >= 2
+        else None
+    )
+
+    legs_result = []
+    total_selected = 0.0
+    total_cheapest = 0.0
+
+    for i, leg in enumerate(legs_sorted):
+        analysis = per_leg_analyses[i]
+        if not analysis:
+            legs_result.append({
+                "leg_id": str(leg.id),
+                "sequence": leg.sequence,
+                "route": f"{leg.origin_airport} → {leg.destination_airport}",
+                "justification_required": False,
+                "selected": None,
+                "savings": {"amount": 0, "percent": 0},
+                "alternatives": [],
+            })
+            continue
+
+        sel_price = float(analysis.selected.price)
+        cheapest_price = float(analysis.overall_cheapest.price)
+        total_selected += sel_price
+        total_cheapest += cheapest_price
+
+        # Apply smart date filter
+        filtered_alternatives = apply_smart_date_filter(
+            alternatives=analysis.alternatives,
+            leg_sequence=leg.sequence,
+            total_legs=len(legs_sorted),
+            outbound_selected_date=outbound_date,
+            return_selected_date=return_date,
+            original_trip_duration_days=original_trip_duration,
+        )
+
+        sel_date = (
+            analysis.selected.departure_time.date().isoformat()
+            if analysis.selected.departure_time
+            else ""
+        )
+
+        legs_result.append({
+            "leg_id": str(leg.id),
+            "sequence": leg.sequence,
+            "route": f"{leg.origin_airport} → {leg.destination_airport}",
+            "preferred_date": (
+                leg.preferred_date.isoformat() if leg.preferred_date else None
+            ),
+            "justification_required": (
+                analysis.savings_amount >= 100 or analysis.savings_percent >= 10
+            ),
+            "selected": {
+                "airline": analysis.selected.airline_name,
+                "date": sel_date,
+                "price": sel_price,
+                "stops": analysis.selected.stops,
+                "duration_minutes": analysis.selected.duration_minutes,
+                "flight_option_id": str(analysis.selected.id),
+            },
+            "savings": {
+                "amount": analysis.savings_amount,
+                "percent": analysis.savings_percent,
+            },
+            "alternatives": filtered_alternatives,
+        })
+
+    # Trip-level totals
+    trip_savings_amount = round(total_selected - total_cheapest, 2)
+    trip_savings_percent = (
+        round((trip_savings_amount / total_selected) * 100, 1)
+        if total_selected > 0
+        else 0
+    )
+    trip_justification_required = (
+        trip_savings_amount >= 100 or trip_savings_percent >= 10
+    )
+
+    # Generate trip-level LLM justification prompt
+    justification_prompt = None
+    if trip_justification_required:
+        try:
+            justification_prompt = await justification_service.generate_trip_prompt(
+                legs=legs_result,
+                trip_total_selected=total_selected,
+                trip_total_cheapest=total_cheapest,
+                trip_savings_amount=trip_savings_amount,
+                trip_savings_percent=trip_savings_percent,
+            )
+        except Exception as e:
+            logger.warning(f"Trip justification prompt failed: {e}")
+
+    return {
+        "justification_required": trip_justification_required,
+        "legs": legs_result,
+        "trip_totals": {
+            "selected": round(total_selected, 2),
+            "cheapest": round(total_cheapest, 2),
+            "savings_amount": trip_savings_amount,
+            "savings_percent": trip_savings_percent,
+        },
+        "justification_prompt": justification_prompt,
+    }
