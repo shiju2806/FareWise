@@ -13,6 +13,7 @@ import { MonthPriceTrend } from "@/components/search/MonthPriceTrend";
 import { HotelSearch } from "@/components/hotel/HotelSearch";
 import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
 import { LegCard } from "@/components/trip/LegCard";
+import { formatPrice } from "@/lib/currency";
 import { SearchAssistant } from "@/components/search/SearchAssistant";
 import { InlineReviewPanel, type EvalResult } from "@/components/search/InlineReviewPanel";
 import type { FlightOption } from "@/types/flight";
@@ -664,8 +665,8 @@ export default function TripSearch() {
                     : "bg-muted text-muted-foreground"
                 }`}>
                   {justificationAnalysis.trip_totals
-                    ? `$${Math.round(justificationAnalysis.trip_totals.savings_amount).toLocaleString()} trip savings available`
-                    : `$${Math.round(justificationAnalysis.savings.amount).toLocaleString()} more than cheapest`
+                    ? `${formatPrice(justificationAnalysis.trip_totals.savings_amount)} trip savings available`
+                    : `${formatPrice(justificationAnalysis.savings.amount)} more than cheapest`
                   }
                 </span>
               )}

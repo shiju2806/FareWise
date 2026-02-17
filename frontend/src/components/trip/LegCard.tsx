@@ -15,7 +15,6 @@ const CABIN_OPTIONS = ["economy", "premium_economy", "business", "first"];
 export function LegCard({ leg, index, onRemove, editable = false }: Props) {
   const [cabinClass, setCabinClass] = useState(leg.cabin_class);
   const [passengers, setPassengers] = useState(leg.passengers);
-  const [flexDays, setFlexDays] = useState(leg.flexibility_days);
   const [saving, setSaving] = useState(false);
   const patchLeg = useTripStore((s) => s.patchLeg);
   const searchLeg = useSearchStore((s) => s.searchLeg);
@@ -45,21 +44,6 @@ export function LegCard({ leg, index, onRemove, editable = false }: Props) {
       searchLeg(leg.id);
     } catch {
       setPassengers(prev);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleFlexChange(value: number) {
-    if (value === flexDays) return;
-    const prev = flexDays;
-    setFlexDays(value);
-    setSaving(true);
-    try {
-      await patchLeg(leg.id, { flexibility_days: value });
-      searchLeg(leg.id);
-    } catch {
-      setFlexDays(prev);
     } finally {
       setSaving(false);
     }
@@ -114,18 +98,6 @@ export function LegCard({ leg, index, onRemove, editable = false }: Props) {
             {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
               <option key={n} value={n}>
                 {n} {n === 1 ? "passenger" : "passengers"}
-              </option>
-            ))}
-          </select>
-          <select
-            value={flexDays}
-            onChange={(e) => handleFlexChange(Number(e.target.value))}
-            disabled={saving}
-            className="bg-transparent border border-border rounded px-1.5 py-0.5 text-xs cursor-pointer hover:border-primary/50 transition-colors"
-          >
-            {[0, 1, 2, 3].map((n) => (
-              <option key={n} value={n}>
-                &plusmn;{n}d flex
               </option>
             ))}
           </select>

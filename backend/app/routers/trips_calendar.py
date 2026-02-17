@@ -62,10 +62,12 @@ async def get_calendar(
     window_start = first_day - timedelta(days=7)
     window_end = last_day + timedelta(days=7)
 
-    # Fetch trips with legs, filter to those with any leg in the window
+    # Only show trips that have been submitted (not drafts/searching)
+    CALENDAR_STATUSES = {"submitted", "approved", "changes_requested", "rejected"}
+
     result = await db.execute(
         select(Trip)
-        .where(Trip.traveler_id == user.id)
+        .where(Trip.traveler_id == user.id, Trip.status.in_(CALENDAR_STATUSES))
         .options(selectinload(Trip.legs))
         .order_by(Trip.updated_at.desc())
     )

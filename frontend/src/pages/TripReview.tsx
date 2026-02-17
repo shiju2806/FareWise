@@ -5,9 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import apiClient from "@/api/client";
 import { useTripStore } from "@/stores/tripStore";
 import { ExportButton } from "@/components/shared/ExportButton";
+import { formatPrice } from "@/lib/currency";
 
 interface EvalResult {
   savings_report: {
+    currency: string;
     selected_total: number;
     cheapest_total: number;
     most_expensive_total: number;
@@ -229,7 +231,7 @@ export default function TripReview() {
           <CardContent className="pt-6 space-y-4">
             <div className="flex items-baseline justify-between">
               <span className="text-3xl font-bold">
-                ${sr.selected_total.toFixed(0)} CAD
+                {formatPrice(sr.selected_total, sr.currency)}
               </span>
               <span
                 className={`px-3 py-1 rounded-full text-sm font-medium ${
@@ -249,9 +251,9 @@ export default function TripReview() {
             </div>
 
             {/* Cost Bar */}
-            <div className="relative h-3 bg-muted rounded-full overflow-hidden">
+            <div className="relative h-6 bg-muted rounded-full overflow-visible">
               <div
-                className="absolute h-full bg-green-400 rounded-l-full"
+                className="absolute h-full bg-green-200 rounded-l-full"
                 style={{
                   width: `${
                     (sr.cheapest_total / sr.most_expensive_total) * 100
@@ -259,7 +261,7 @@ export default function TripReview() {
                 }}
               />
               <div
-                className="absolute h-full w-1 bg-primary"
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-primary border-2 border-white shadow-md z-10"
                 style={{
                   left: `${
                     (sr.selected_total / sr.most_expensive_total) * 100
@@ -268,9 +270,9 @@ export default function TripReview() {
               />
             </div>
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Cheapest: ${sr.cheapest_total.toFixed(0)}</span>
-              <span>Selected: ${sr.selected_total.toFixed(0)}</span>
-              <span>Expensive: ${sr.most_expensive_total.toFixed(0)}</span>
+              <span>Cheapest: {formatPrice(sr.cheapest_total, sr.currency)}</span>
+              <span className="font-medium text-foreground">Selected: {formatPrice(sr.selected_total, sr.currency)}</span>
+              <span>Expensive: {formatPrice(sr.most_expensive_total, sr.currency)}</span>
             </div>
 
             {/* Narrative */}
@@ -282,7 +284,7 @@ export default function TripReview() {
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center p-3 bg-green-50 rounded-lg">
                 <p className="text-2xl font-bold text-green-700">
-                  ${sr.savings_vs_expensive.toFixed(0)}
+                  {formatPrice(sr.savings_vs_expensive, sr.currency)}
                 </p>
                 <p className="text-xs text-green-600">
                   Saved vs. expensive
@@ -290,7 +292,7 @@ export default function TripReview() {
               </div>
               <div className="text-center p-3 bg-amber-50 rounded-lg">
                 <p className="text-2xl font-bold text-amber-700">
-                  ${sr.premium_vs_cheapest.toFixed(0)}
+                  {formatPrice(sr.premium_vs_cheapest, sr.currency)}
                 </p>
                 <p className="text-xs text-amber-600">
                   Over cheapest
@@ -304,12 +306,10 @@ export default function TripReview() {
                 <h4 className="text-sm font-semibold mb-1">Hotel</h4>
                 <div className="flex items-baseline gap-3">
                   <span className="text-lg font-bold text-indigo-700">
-                    ${sr.hotel_selected_total.toFixed(0)} CAD
+                    {formatPrice(sr.hotel_selected_total, sr.currency)}
                   </span>
                   <span className="text-xs text-muted-foreground">
-                    Combined total: $
-                    {(sr.selected_total + sr.hotel_selected_total).toFixed(0)}{" "}
-                    CAD
+                    Combined total: {formatPrice(sr.selected_total + sr.hotel_selected_total, sr.currency)}
                   </span>
                 </div>
               </div>
@@ -365,8 +365,7 @@ export default function TripReview() {
                   >
                     <span className="font-medium">{leg.route}</span>
                     <span className="text-muted-foreground">
-                      ${leg.selected_price.toFixed(0)} (cheapest: $
-                      {leg.cheapest_price.toFixed(0)})
+                      {formatPrice(leg.selected_price, sr.currency)} (cheapest: {formatPrice(leg.cheapest_price, sr.currency)})
                     </span>
                   </div>
                 ))}

@@ -20,7 +20,7 @@ const EMPTY_LEG: LegInput = {
   origin_city: "",
   destination_city: "",
   preferred_date: "",
-  flexibility_days: 3,
+  flexibility_days: 0,
   cabin_class: "economy",
   passengers: 1,
 };
@@ -138,7 +138,7 @@ export function StructuredTripForm({ onSubmit, loading, initialLegs }: Props) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">
                     Date
@@ -151,23 +151,6 @@ export function StructuredTripForm({ onSubmit, loading, initialLegs }: Props) {
                     }
                     required
                   />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-muted-foreground">
-                    Flexibility
-                  </label>
-                  <select
-                    value={leg.flexibility_days}
-                    onChange={(e) =>
-                      updateLeg(i, "flexibility_days", Number(e.target.value))
-                    }
-                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                  >
-                    <option value={0}>Exact date</option>
-                    <option value={1}>&plusmn;1 day</option>
-                    <option value={3}>&plusmn;3 days</option>
-                    <option value={7}>&plusmn;7 days</option>
-                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">

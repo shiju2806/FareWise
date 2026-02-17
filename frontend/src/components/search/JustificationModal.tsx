@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { formatPrice } from "@/lib/currency";
 
 interface Alternative {
   type: string;
@@ -84,7 +85,7 @@ const PRESETS = [
 ];
 
 function fmtPrice(price: number): string {
-  return `$${Math.round(price).toLocaleString()}`;
+  return formatPrice(price);
 }
 
 function fmtDate(dateStr: string): string {

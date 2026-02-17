@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useApprovalStore } from "@/stores/approvalStore";
+import { formatPrice } from "@/lib/currency";
 
 const statusColors: Record<string, string> = {
   pending: "bg-amber-100 text-amber-800",
@@ -115,7 +116,7 @@ export default function ApprovalDashboard() {
                     <div className="text-right space-y-1">
                       {approval.trip.total_estimated_cost && (
                         <p className="text-lg font-bold">
-                          ${approval.trip.total_estimated_cost.toFixed(0)}
+                          {formatPrice(approval.trip.total_estimated_cost, approval.trip.currency)}
                         </p>
                       )}
                       {approval.savings_report && (

@@ -9,6 +9,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.data.currency import convert_to_usd
 from app.models.policy import Policy, Selection
 from app.models.search_log import FlightOption
 from app.models.trip import Trip, TripLeg
@@ -52,13 +53,12 @@ class MaxPriceChecker(PolicyChecker):
     def check(self, policy, leg, selection, flight) -> PolicyCheckResult:
         threshold = policy.threshold
         max_amount = Decimal(str(threshold.get("amount", 0)))
+        threshold_currency = threshold.get("currency", "USD")
         conditions = policy.conditions or {}
 
         # Check route_type condition
         route_type = conditions.get("route_type")
         if route_type == "domestic":
-            # Simple domestic check: same country prefix not reliably determinable from IATA
-            # Use as-is for now, applies to all legs
             pass
 
         # Check cabin condition
@@ -75,27 +75,32 @@ class MaxPriceChecker(PolicyChecker):
                 leg_id=str(leg.id),
             )
 
-        price = flight.price
-        if price <= max_amount:
+        # Convert both to USD for comparison
+        flight_currency = getattr(flight, "currency", "CAD") or "CAD"
+        price_usd = Decimal(str(convert_to_usd(float(flight.price), flight_currency)))
+        limit_usd = Decimal(str(convert_to_usd(float(max_amount), threshold_currency)))
+
+        if price_usd <= limit_usd:
             return PolicyCheckResult(
                 policy_id=str(policy.id),
                 policy_name=policy.name,
                 rule_type=policy.rule_type,
                 status="pass",
                 action=policy.action,
-                details=f"${price:.0f} within limit ${max_amount:.0f}",
+                details=f"{flight_currency} {flight.price:.0f} (~${price_usd:.0f} USD) within limit ${limit_usd:.0f} USD",
                 severity=policy.severity,
                 leg_id=str(leg.id),
             )
         else:
             status = "block" if policy.action == "block" else "warn"
+            over = price_usd - limit_usd
             return PolicyCheckResult(
                 policy_id=str(policy.id),
                 policy_name=policy.name,
                 rule_type=policy.rule_type,
                 status=status,
                 action=policy.action,
-                details=f"${price:.0f} exceeds limit ${max_amount:.0f} by ${price - max_amount:.0f}",
+                details=f"{flight_currency} {flight.price:.0f} (~${price_usd:.0f} USD) exceeds limit ${limit_usd:.0f} USD by ${over:.0f}",
                 severity=policy.severity,
                 leg_id=str(leg.id),
             )
@@ -295,14 +300,15 @@ class PolicyEngine:
         policies = result.scalars().all()
 
         evaluation = PolicyEvaluation(overall_status="compliant")
-        total_selected = Decimal("0")
+        total_selected_usd = Decimal("0")
 
         for sel in selections:
             flight = flight_options.get(str(sel.flight_option_id))
             if not flight:
                 continue
 
-            total_selected += flight.price
+            flight_currency = getattr(flight, "currency", "CAD") or "CAD"
+            total_selected_usd += Decimal(str(convert_to_usd(float(flight.price), flight_currency)))
 
             # Find the leg for this selection
             leg = next((l for l in legs if l.id == sel.trip_leg_id), None)
@@ -328,18 +334,20 @@ class PolicyEngine:
                 elif check_result.status == "warn":
                     evaluation.warnings.append(check_result)
 
-        # Check approval_threshold at trip level
+        # Check approval_threshold at trip level (compare in USD)
         for policy in policies:
             if policy.rule_type == "approval_threshold" and policy.is_active:
-                auto_approve_limit = Decimal(str(policy.threshold.get("amount", 0)))
-                if total_selected <= auto_approve_limit:
+                threshold_amount = Decimal(str(policy.threshold.get("amount", 0)))
+                threshold_currency = policy.threshold.get("currency", "USD")
+                limit_usd = Decimal(str(convert_to_usd(float(threshold_amount), threshold_currency)))
+                if total_selected_usd <= limit_usd:
                     evaluation.checks.append(PolicyCheckResult(
                         policy_id=str(policy.id),
                         policy_name=policy.name,
                         rule_type="approval_threshold",
                         status="pass",
                         action="info",
-                        details=f"Total ${total_selected:.0f} qualifies for auto-approval (limit: ${auto_approve_limit:.0f})",
+                        details=f"Total ~${total_selected_usd:.0f} USD qualifies for auto-approval (limit: ${limit_usd:.0f} USD)",
                         severity=policy.severity,
                     ))
                 else:
@@ -349,7 +357,7 @@ class PolicyEngine:
                         rule_type="approval_threshold",
                         status="info",
                         action="info",
-                        details=f"Total ${total_selected:.0f} requires manager approval (limit: ${auto_approve_limit:.0f})",
+                        details=f"Total ~${total_selected_usd:.0f} USD requires manager approval (limit: ${limit_usd:.0f} USD)",
                         severity=policy.severity,
                     ))
 

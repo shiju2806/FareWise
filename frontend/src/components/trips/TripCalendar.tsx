@@ -76,6 +76,7 @@ export function TripCalendar() {
   const [viewMonth, setViewMonth] = useState(now.getMonth());
   const [trips, setTrips] = useState<CalendarTripData[]>([]);
   const [loading, setLoading] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   useEffect(() => {
     const monthStr = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}`;
@@ -144,10 +145,17 @@ export function TripCalendar() {
           return (
             <div
               key={day.date}
+              onClick={() => {
+                if (dayTrips.length > 0) {
+                  setSelectedDate(selectedDate === day.date ? null : day.date);
+                }
+              }}
               className={`
                 min-h-[80px] border-r border-b border-border p-1
                 ${day.isCurrentMonth ? "bg-background" : "bg-muted/30"}
                 ${day.isToday ? "ring-1 ring-inset ring-primary/40" : ""}
+                ${dayTrips.length > 0 ? "cursor-pointer hover:bg-muted/50" : ""}
+                ${selectedDate === day.date ? "ring-2 ring-inset ring-primary" : ""}
               `}
             >
               <span
@@ -180,6 +188,47 @@ export function TripCalendar() {
           );
         })}
       </div>
+
+      {/* Date detail popover */}
+      {selectedDate && tripsByDate.get(selectedDate) && (
+        <div className="border border-border rounded-lg p-3 mt-2 space-y-2 bg-card shadow-sm">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-medium">{selectedDate}</h4>
+            <button
+              onClick={() => setSelectedDate(null)}
+              className="text-muted-foreground hover:text-foreground text-xs"
+            >
+              &times;
+            </button>
+          </div>
+          {tripsByDate.get(selectedDate)!.map((trip) => (
+            <div
+              key={trip.id}
+              className="flex items-center justify-between text-sm py-1.5 px-2 rounded hover:bg-muted/50 cursor-pointer"
+              onClick={() => navigate(`/trips/${trip.id}/search`)}
+            >
+              <span className="truncate mr-3">
+                {trip.title || trip.legs.map((l) => `${l.origin}\u2192${l.destination}`).join(", ")}
+              </span>
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
+                  trip.status === "approved"
+                    ? "bg-green-100 text-green-700"
+                    : trip.status === "submitted"
+                    ? "bg-blue-100 text-blue-700"
+                    : trip.status === "changes_requested"
+                    ? "bg-amber-100 text-amber-700"
+                    : trip.status === "rejected"
+                    ? "bg-red-100 text-red-700"
+                    : "bg-muted text-muted-foreground"
+                }`}
+              >
+                {trip.status.replace("_", " ")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {loading && (
         <div className="text-center py-4 text-xs text-muted-foreground">

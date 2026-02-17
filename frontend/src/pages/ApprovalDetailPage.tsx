@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import apiClient from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
+import { formatPrice } from "@/lib/currency";
 
 interface ApprovalDetail {
   id: string;
@@ -185,7 +186,7 @@ export default function ApprovalDetailPage() {
             {/* Cost Summary */}
             <div className="flex items-baseline justify-between">
               <span className="text-3xl font-bold">
-                ${sr.selected_total.toFixed(0)} CAD
+                {formatPrice(sr.selected_total, sr.currency || "USD")}
               </span>
               <span
                 className={`text-sm font-medium ${
@@ -205,9 +206,9 @@ export default function ApprovalDetailPage() {
             </div>
 
             {/* Cost Comparison Bar */}
-            <div className="relative h-3 bg-muted rounded-full overflow-hidden">
+            <div className="relative h-6 bg-muted rounded-full overflow-visible">
               <div
-                className="absolute h-full bg-green-400 rounded-l-full"
+                className="absolute h-full bg-green-200 rounded-l-full"
                 style={{
                   width: `${
                     ((sr.cheapest_total) / sr.most_expensive_total) * 100
@@ -215,7 +216,7 @@ export default function ApprovalDetailPage() {
                 }}
               />
               <div
-                className="absolute h-full w-1 bg-primary"
+                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-primary border-2 border-white shadow-md z-10"
                 style={{
                   left: `${
                     (sr.selected_total / sr.most_expensive_total) * 100
@@ -224,9 +225,9 @@ export default function ApprovalDetailPage() {
               />
             </div>
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Cheapest: ${sr.cheapest_total.toFixed(0)}</span>
-              <span>Selected: ${sr.selected_total.toFixed(0)}</span>
-              <span>Most Expensive: ${sr.most_expensive_total.toFixed(0)}</span>
+              <span>Cheapest: {formatPrice(sr.cheapest_total, sr.currency || "USD")}</span>
+              <span className="font-medium text-foreground">Selected: {formatPrice(sr.selected_total, sr.currency || "USD")}</span>
+              <span>Most Expensive: {formatPrice(sr.most_expensive_total, sr.currency || "USD")}</span>
             </div>
 
             {/* Narrative */}
@@ -238,7 +239,7 @@ export default function ApprovalDetailPage() {
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center p-3 bg-green-50 rounded-lg">
                 <p className="text-2xl font-bold text-green-700">
-                  ${sr.savings_vs_expensive.toFixed(0)}
+                  {formatPrice(sr.savings_vs_expensive, sr.currency || "USD")}
                 </p>
                 <p className="text-xs text-green-600">
                   Saved vs. most expensive
@@ -246,7 +247,7 @@ export default function ApprovalDetailPage() {
               </div>
               <div className="text-center p-3 bg-amber-50 rounded-lg">
                 <p className="text-2xl font-bold text-amber-700">
-                  ${sr.premium_vs_cheapest.toFixed(0)}
+                  {formatPrice(sr.premium_vs_cheapest, sr.currency || "USD")}
                 </p>
                 <p className="text-xs text-amber-600">
                   Premium over cheapest

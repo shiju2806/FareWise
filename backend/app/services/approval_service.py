@@ -17,6 +17,7 @@ from app.models.policy import (
     SavingsReport,
     Selection,
 )
+from app.data.currency import get_currency_for_airport
 from app.models.search_log import FlightOption, SearchLog
 from app.models.trip import Trip, TripLeg
 from app.models.user import User
@@ -151,6 +152,7 @@ class ApprovalService:
             per_leg_details=per_leg_details,
             hotel_total=hotel_selected_total if has_hotel else None,
             events_context=events_context or None,
+            currency=primary_currency,
         )
 
         # Build slider positions map
@@ -159,7 +161,13 @@ class ApprovalService:
             for s in selections
         }
 
+        # Determine primary currency from first leg's origin airport
+        primary_currency = "USD"
+        if legs:
+            primary_currency = get_currency_for_airport(legs[0].origin_airport)
+
         report_data = {
+            "currency": primary_currency,
             "selected_total": float(selected_total),
             "cheapest_total": float(cheapest_total),
             "most_expensive_total": float(most_expensive_total),

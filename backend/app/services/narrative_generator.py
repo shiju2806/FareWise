@@ -10,18 +10,22 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a corporate travel savings analyst. Generate a concise, professional
-but human-readable narrative (max 5 sentences) summarizing a traveler's travel selections.
+SYSTEM_PROMPT = """You are a corporate travel cost analyst. Generate a brief, factual summary
+(max 4 sentences) of a traveler's flight selections.
 
 Include:
-- Total cost (flights + hotel if applicable) and comparison to cheapest/most expensive options
-- Specific dollar savings achieved
-- Key tradeoffs the traveler made (e.g., chose Tuesday departure to save money, picked a value hotel)
-- Any event-driven pricing context (e.g., conference or sports event inflating hotel rates)
+- Total cost and comparison to cheapest/most expensive options
+- Dollar savings achieved
+- Key tradeoffs (e.g., chose a different date or airline)
 - Policy compliance status
 
-Tone: professional but friendly, like a finance team member writing to a manager.
-Use actual dollar amounts. Do not use markdown formatting.
+Rules:
+- Be factual and neutral. State numbers and facts only.
+- Do NOT use superlatives (e.g., "excellent", "impressive", "great").
+- Do NOT use exclamation marks or judgment language.
+- Do NOT praise or criticize the traveler's choices.
+- Use actual dollar amounts with currency codes.
+- Do not use markdown formatting.
 
 Respond with ONLY the narrative text, no JSON, no preamble."""
 
@@ -44,11 +48,12 @@ class NarrativeGenerator:
         hotel_total: Decimal | None = None,
         hotel_cheapest: Decimal | None = None,
         events_context: list[str] | None = None,
+        currency: str = "USD",
     ) -> str:
         prompt = self._build_prompt(
             traveler_name, trip_title, selected_total,
             cheapest_total, most_expensive_total, policy_status, per_leg_details,
-            hotel_total, hotel_cheapest, events_context,
+            hotel_total, hotel_cheapest, events_context, currency,
         )
 
         try:
@@ -64,13 +69,13 @@ class NarrativeGenerator:
             logger.error(f"Claude API failed for narrative generation: {e}")
             return self._fallback_narrative(
                 traveler_name, trip_title, selected_total,
-                cheapest_total, most_expensive_total, policy_status,
+                cheapest_total, most_expensive_total, policy_status, currency,
             )
 
     def _build_prompt(
         self, traveler_name, trip_title, selected_total,
         cheapest_total, most_expensive_total, policy_status, per_leg_details,
-        hotel_total=None, hotel_cheapest=None, events_context=None,
+        hotel_total=None, hotel_cheapest=None, events_context=None, currency="USD",
     ) -> str:
         savings = most_expensive_total - selected_total
         premium = selected_total - cheapest_total
@@ -87,9 +92,9 @@ class NarrativeGenerator:
 
         hotel_text = ""
         if hotel_total is not None:
-            hotel_text = f"\nHotel total: ${hotel_total:.2f} CAD"
+            hotel_text = f"\nHotel total: {currency} {hotel_total:.2f}"
             if hotel_cheapest is not None:
-                hotel_text += f" (cheapest available: ${hotel_cheapest:.2f} CAD)"
+                hotel_text += f" (cheapest available: {currency} {hotel_cheapest:.2f})"
 
         events_text = ""
         if events_context:
@@ -97,11 +102,12 @@ class NarrativeGenerator:
 
         return f"""Traveler: {traveler_name}
 Trip: {trip_title}
-Flight total selected: ${selected_total:.2f} CAD
-Cheapest available: ${cheapest_total:.2f} CAD
-Most expensive: ${most_expensive_total:.2f} CAD
-Savings vs expensive: ${savings:.2f}
-Premium over cheapest: ${premium:.2f}
+Currency: {currency}
+Flight total selected: {currency} {selected_total:.2f}
+Cheapest available: {currency} {cheapest_total:.2f}
+Most expensive: {currency} {most_expensive_total:.2f}
+Savings vs expensive: {currency} {savings:.2f}
+Premium over cheapest: {currency} {premium:.2f}
 Policy status: {policy_status}{hotel_text}{events_text}
 
 Per-leg breakdown:{legs_text}"""
@@ -109,11 +115,12 @@ Per-leg breakdown:{legs_text}"""
     def _fallback_narrative(
         self, traveler_name, trip_title, selected_total,
         cheapest_total, most_expensive_total, policy_status,
+        currency="USD",
     ) -> str:
         savings = most_expensive_total - selected_total
         return (
             f"{traveler_name} selected a {trip_title} itinerary totaling "
-            f"${selected_total:.0f} CAD — ${savings:.0f} less than the most expensive "
+            f"{currency} {selected_total:.0f} — {currency} {savings:.0f} less than the most expensive "
             f"option. Policy status: {policy_status}."
         )
 

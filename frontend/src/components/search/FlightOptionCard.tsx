@@ -1,4 +1,5 @@
 import type { FlightOption } from "@/types/flight";
+import { formatPrice } from "@/lib/currency";
 
 interface Props {
   flight: FlightOption;
@@ -222,7 +223,7 @@ export function FlightOptionCard({
         {/* ---- Price ---- */}
         <div className="w-[80px] shrink-0 flex flex-col items-end gap-0.5">
           <span className={`inline-flex items-center text-sm font-bold px-2.5 py-0.5 rounded-full ${priceBadgeColor(flight.price, priceQuartiles)}`}>
-            ${Math.round(flight.price).toLocaleString()}
+            {formatPrice(flight.price, flight.currency)}
           </span>
           {flight.cabin_class && (
             <span className="text-[10px] text-muted-foreground capitalize leading-tight">

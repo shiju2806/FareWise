@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import apiClient from "@/api/client";
+import { formatPrice } from "@/lib/currency";
 
 interface PolicyCheck {
   policy_name: string;
@@ -170,8 +171,7 @@ export function InlineReviewPanel({
               </span>
               {flight ? (
                 <span className="font-medium">
-                  {flight.airline_name} · $
-                  {Math.round(flight.price).toLocaleString()}
+                  {flight.airline_name} · {formatPrice(flight.price, flight.currency)}
                 </span>
               ) : (
                 <span className="text-muted-foreground italic">No selection</span>
@@ -183,7 +183,7 @@ export function InlineReviewPanel({
           <div className="flex items-center justify-between text-xs pt-1 border-t border-border">
             <span className="font-medium">Total</span>
             <span className="font-bold">
-              ${Math.round(sr.selected_total).toLocaleString()} CAD
+              ${Math.round(sr.selected_total).toLocaleString()}
             </span>
           </div>
         )}

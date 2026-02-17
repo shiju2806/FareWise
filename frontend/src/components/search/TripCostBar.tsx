@@ -3,6 +3,7 @@ import type { TripLeg } from "@/types/trip";
 import type { FlightOption } from "@/types/flight";
 import type { SearchResult } from "@/types/search";
 import apiClient from "@/api/client";
+import { formatPrice } from "@/lib/currency";
 
 interface Props {
   tripId: string;
@@ -13,16 +14,16 @@ interface Props {
   onLegClick: (index: number) => void;
 }
 
-/** Per-cabin-class daily policy budgets (one-way, CAD) — mirrors backend */
+/** Per-cabin-class daily policy budgets (one-way, USD) — mirrors backend */
 const POLICY_BUDGET: Record<string, number> = {
-  economy: 800,
-  premium_economy: 1500,
-  business: 3500,
-  first: 6000,
+  economy: 600,
+  premium_economy: 1100,
+  business: 2000,
+  first: 4500,
 };
 
-function fmtPrice(n: number): string {
-  return `$${Math.round(n).toLocaleString()}`;
+function fmtPrice(n: number, currency?: string): string {
+  return formatPrice(n, currency || "USD");
 }
 
 interface LegComparison {
@@ -148,14 +149,14 @@ export function TripCostBar({ tripId, legs, selectedFlights, results, activeLegI
               {c.selected ? (
                 <div className="mt-1">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-sm font-bold">{fmtPrice(c.selected.price)}</span>
+                    <span className="text-sm font-bold">{fmtPrice(c.selected.price, c.selected.currency)}</span>
                     <span className="text-[10px] text-muted-foreground">
                       {c.selected.airline_name} &middot; {c.selected.stops === 0 ? "Nonstop" : `${c.selected.stops} stop`}
                     </span>
                   </div>
                   {c.cheapestOverall && c.selected.price > c.cheapestOverall.price + 10 && (
                     <div className="text-[10px] text-amber-600 mt-0.5">
-                      Cheapest: {fmtPrice(c.cheapestOverall.price)} ({c.cheapestOverall.airline_name})
+                      Cheapest: {fmtPrice(c.cheapestOverall.price, c.cheapestOverall.currency)} ({c.cheapestOverall.airline_name})
                     </div>
                   )}
                 </div>
@@ -163,7 +164,7 @@ export function TripCostBar({ tripId, legs, selectedFlights, results, activeLegI
                 <div className="mt-1 text-xs text-muted-foreground">
                   {results[c.legId] ? (
                     <span>
-                      From {fmtPrice(c.cheapestOverall?.price || 0)} &middot; Select a flight
+                      From {fmtPrice(c.cheapestOverall?.price || 0, c.cheapestOverall?.currency)} &middot; Select a flight
                     </span>
                   ) : (
                     <span>Search pending</span>

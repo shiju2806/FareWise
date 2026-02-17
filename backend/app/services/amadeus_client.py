@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 
 from app.config import settings
+from app.data.currency import get_currency_for_airport
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class AmadeusClient:
                     "adults": adults,
                     "travelClass": amadeus_cabin,
                     "max": max_results,
-                    "currencyCode": "CAD",
+                    "currencyCode": get_currency_for_airport(origin),
                 }
 
                 for attempt in range(3):
@@ -200,7 +201,7 @@ class AmadeusClient:
     def _parse_offer(self, offer: dict, origin: str, destination: str) -> dict:
         """Parse Amadeus offer JSON into our FlightOffer format."""
         price = float(offer.get("price", {}).get("grandTotal", 0))
-        currency = offer.get("price", {}).get("currency", "CAD")
+        currency = offer.get("price", {}).get("currency", "USD")
 
         itineraries = offer.get("itineraries", [{}])
         itin = itineraries[0] if itineraries else {}
@@ -287,7 +288,7 @@ class AmadeusClient:
         origin: str,
         destination: str,
         departure_date: date,
-        currency: str = "CAD",
+        currency: str = "USD",
     ) -> dict | None:
         """Get historical price quartiles for a route+date.
 
