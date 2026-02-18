@@ -42,19 +42,26 @@ export function LegCard({ leg, index, onRemove, editable = false }: Props) {
     setPassengers(value);
     setSaving(true);
     try {
-      await patchLeg(leg.id, { passengers: value });
-      // Show policy feedback based on passenger count
-      if (value >= 4) {
+      // Determine if cabin needs to downgrade based on passenger policy
+      let newCabin = cabinClass;
+      if (value >= 4 && cabinClass !== "economy") {
+        newCabin = "economy";
+      } else if (value >= 2 && (cabinClass === "business" || cabinClass === "first")) {
+        newCabin = "premium_economy";
+      }
+
+      // Patch passengers (and cabin if policy requires downgrade)
+      const patch: Record<string, unknown> = { passengers: value };
+      if (newCabin !== cabinClass) {
+        patch.cabin_class = newCabin;
+        setCabinClass(newCabin);
         useToastStore.getState().addToast(
           "info",
-          `${value} passengers — company policy requires economy class for groups of 4+.`
-        );
-      } else if (value >= 2) {
-        useToastStore.getState().addToast(
-          "info",
-          `${value} passengers — company policy limits cabin to premium economy or below for groups of 2+.`
+          `${value} passengers — cabin changed to ${newCabin.replace("_", " ")} per company policy.`
         );
       }
+      await patchLeg(leg.id, patch);
+
       // Silent refresh: prices update in background without loading skeleton
       refreshLeg(leg.id);
     } catch {
