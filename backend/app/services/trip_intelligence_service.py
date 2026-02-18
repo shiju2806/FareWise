@@ -749,32 +749,49 @@ class TripIntelligenceService:
 
         all_sorted = sorted(unique.values(), key=lambda p: p["savings"], reverse=True)
 
+        # Diversity pass: pick best proposal from each distinct airline pair first,
+        # then fill remaining slots with highest savings regardless of airline
+        def _airline_pair(p: dict) -> tuple[str, str]:
+            return (p["outbound_flight"]["airline_code"], p["return_flight"]["airline_code"])
+
+        best_per_airline: dict[tuple[str, str], dict] = {}
+        for p in all_sorted:
+            pair = _airline_pair(p)
+            if pair not in best_per_airline:
+                best_per_airline[pair] = p
+
+        # Start with the best from each airline pair (up to max_proposals)
+        diverse_picks = list(best_per_airline.values())[:max_proposals]
+        diverse_set = set(id(p) for p in diverse_picks)
+
+        # Fill remaining slots with highest savings (any airline)
+        for p in all_sorted:
+            if len(diverse_picks) >= max_proposals:
+                break
+            if id(p) not in diverse_set:
+                diverse_picks.append(p)
+                diverse_set.add(id(p))
+
         # Ensure at least one proposal matches the user's selected airline
         selected_codes = set(selected_airline_codes or [])
         if selected_codes:
-            selected_airline_proposals = [
-                p for p in all_sorted
-                if p["outbound_flight"]["airline_code"] in selected_codes
+            has_selected = any(
+                p["outbound_flight"]["airline_code"] in selected_codes
                 or p["return_flight"]["airline_code"] in selected_codes
-            ]
-            other_proposals = [
-                p for p in all_sorted
-                if p not in selected_airline_proposals
-            ]
-            # Take up to 2 selected-airline proposals + fill rest with best overall
-            result = selected_airline_proposals[:2]
-            for p in other_proposals:
-                if len(result) >= max_proposals:
-                    break
-                result.append(p)
-            # Fill remaining if needed
-            for p in selected_airline_proposals[2:]:
-                if len(result) >= max_proposals:
-                    break
-                result.append(p)
-            sorted_proposals = sorted(result, key=lambda p: p["savings"], reverse=True)
-        else:
-            sorted_proposals = all_sorted
+                for p in diverse_picks
+            )
+            if not has_selected:
+                # Find the best selected-airline proposal and swap it in
+                for p in all_sorted:
+                    if (p["outbound_flight"]["airline_code"] in selected_codes
+                            or p["return_flight"]["airline_code"] in selected_codes):
+                        if len(diverse_picks) >= max_proposals:
+                            diverse_picks[-1] = p  # replace worst
+                        else:
+                            diverse_picks.append(p)
+                        break
+
+        sorted_proposals = sorted(diverse_picks, key=lambda p: p["savings"], reverse=True)
 
         return {
             "original_trip_duration": trip_duration,

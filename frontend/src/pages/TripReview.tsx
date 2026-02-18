@@ -156,9 +156,10 @@ export default function TripReview() {
     ...(evalResult?.blocks || []).map((b) => ({ ...b, message: b.message, requires_justification: true })),
     ...(evalResult?.warnings || []).filter((w) => w.requires_justification),
   ];
-  const allViolationsAcked = allViolations.every(
-    (v) => !v.policy_id || violationAcks[v.policy_id]
-  );
+  const unackedCount = allViolations.filter(
+    (v) => v.policy_id && !violationAcks[v.policy_id]
+  ).length;
+  const allViolationsAcked = unackedCount === 0;
   const isReadOnly = currentTrip?.status && !["draft", "searching", "changes_requested"].includes(currentTrip.status);
 
   return (
@@ -252,6 +253,7 @@ export default function TripReview() {
 
             {/* Cost Bar */}
             <div className="relative h-6 bg-muted rounded-full overflow-visible">
+              {/* Green zone: 0 → cheapest */}
               <div
                 className="absolute h-full bg-green-200 rounded-l-full"
                 style={{
@@ -260,6 +262,21 @@ export default function TripReview() {
                   }%`,
                 }}
               />
+              {/* Amber zone: cheapest → selected (premium over cheapest) */}
+              {sr.selected_total > sr.cheapest_total && (
+                <div
+                  className="absolute h-full bg-amber-200"
+                  style={{
+                    left: `${
+                      (sr.cheapest_total / sr.most_expensive_total) * 100
+                    }%`,
+                    width: `${
+                      ((sr.selected_total - sr.cheapest_total) / sr.most_expensive_total) * 100
+                    }%`,
+                  }}
+                />
+              )}
+              {/* Selected price indicator */}
               <div
                 className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-primary border-2 border-white shadow-md z-10"
                 style={{
@@ -440,7 +457,7 @@ export default function TripReview() {
                 {submitting
                   ? "Submitting..."
                   : allViolations.length > 0 && !allViolationsAcked
-                  ? "Review notes above to submit"
+                  ? `Acknowledge ${unackedCount} policy note${unackedCount > 1 ? "s" : ""} above to submit`
                   : "Submit for Approval"}
               </Button>
             </div>

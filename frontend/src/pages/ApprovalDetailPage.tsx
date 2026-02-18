@@ -236,14 +236,30 @@ export default function ApprovalDetailPage() {
 
             {/* Cost Comparison Bar */}
             <div className="relative h-6 bg-muted rounded-full overflow-visible">
+              {/* Green zone: 0 → cheapest */}
               <div
                 className="absolute h-full bg-green-200 rounded-l-full"
                 style={{
                   width: `${
-                    ((sr.cheapest_total) / sr.most_expensive_total) * 100
+                    (sr.cheapest_total / sr.most_expensive_total) * 100
                   }%`,
                 }}
               />
+              {/* Amber zone: cheapest → selected (premium over cheapest) */}
+              {sr.selected_total > sr.cheapest_total && (
+                <div
+                  className="absolute h-full bg-amber-200"
+                  style={{
+                    left: `${
+                      (sr.cheapest_total / sr.most_expensive_total) * 100
+                    }%`,
+                    width: `${
+                      ((sr.selected_total - sr.cheapest_total) / sr.most_expensive_total) * 100
+                    }%`,
+                  }}
+                />
+              )}
+              {/* Selected price indicator */}
               <div
                 className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-primary border-2 border-white shadow-md z-10"
                 style={{
