@@ -101,6 +101,11 @@ class SavingsReport(Base):
     hotel_cheapest_total: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     bundle_savings: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     events_impacting_price: Mapped[dict | None] = mapped_column(JSONB, default=list)
+    # Phase F additions — detail snapshots for manager approval view
+    per_leg_summary: Mapped[dict | None] = mapped_column(JSONB)
+    alternatives_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+    trip_window_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+    cheaper_months_snapshot: Mapped[dict | None] = mapped_column(JSONB)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

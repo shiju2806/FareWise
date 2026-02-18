@@ -48,7 +48,7 @@ class ApprovalService:
                 "violations": [],
                 "warnings": [],
                 "blocks": [],
-                "error": "No flight selections found. Please select flights for all legs.",
+                "error": "Select flights for all legs to see your trip summary.",
             }
 
         # Load flight options for selections
@@ -108,6 +108,11 @@ class ApprovalService:
         savings_vs_expensive = most_expensive_total - selected_total
         premium_vs_cheapest = selected_total - cheapest_total
 
+        # Determine primary currency from first leg's origin airport
+        primary_currency = "USD"
+        if legs:
+            primary_currency = get_currency_for_airport(legs[0].origin_airport)
+
         # Collect hotel costs
         hotel_selected_total = Decimal("0")
         hotel_cheapest_total = Decimal("0")
@@ -160,11 +165,6 @@ class ApprovalService:
             str(s.trip_leg_id): float(s.slider_position) if s.slider_position else None
             for s in selections
         }
-
-        # Determine primary currency from first leg's origin airport
-        primary_currency = "USD"
-        if legs:
-            primary_currency = get_currency_for_airport(legs[0].origin_airport)
 
         report_data = {
             "currency": primary_currency,
@@ -303,6 +303,8 @@ class ApprovalService:
                 policy_status=report_data["policy_status"],
                 policy_checks=report_data["policy_checks"],
                 slider_positions=report_data.get("slider_positions"),
+                # Detail snapshots for manager approval view
+                per_leg_summary=report_data.get("per_leg_summary"),
             )
             db.add(savings_report)
 

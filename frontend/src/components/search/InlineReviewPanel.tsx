@@ -220,9 +220,9 @@ export function InlineReviewPanel({
           {allViolations.map((v, i) => (
             <div
               key={i}
-              className="rounded-md border border-amber-200 bg-amber-50/50 p-2.5 space-y-1.5"
+              className="rounded-md border border-blue-200 bg-blue-50/50 p-2.5 space-y-1.5"
             >
-              <p className="text-xs text-amber-800">
+              <p className="text-xs text-blue-800">
                 <span className="font-medium">{v.policy_name}:</span> {v.message}
               </p>
               {v.policy_id && (
@@ -240,9 +240,9 @@ export function InlineReviewPanel({
                   />
                   <label
                     htmlFor={`inline-ack-${v.policy_id}`}
-                    className="text-[11px] text-amber-700"
+                    className="text-[11px] text-blue-700"
                   >
-                    I acknowledge this exception
+                    I acknowledge this note
                   </label>
                 </div>
               )}
@@ -256,8 +256,8 @@ export function InlineReviewPanel({
                       [v.policy_id!]: e.target.value,
                     }))
                   }
-                  placeholder="Brief reason (optional)..."
-                  className="w-full rounded-md border border-amber-200 bg-white px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-amber-300/50"
+                  placeholder="Brief context (optional)..."
+                  className="w-full rounded-md border border-blue-200 bg-white px-2 py-1 text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-300/50"
                 />
               )}
             </div>
@@ -314,7 +314,7 @@ export function InlineReviewPanel({
           {submitting
             ? "Submitting..."
             : allViolations.length > 0 && !allViolationsAcked
-            ? "Acknowledge warnings"
+            ? "Review notes above"
             : "Submit to Manager"}
         </Button>
       </div>

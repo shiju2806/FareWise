@@ -23,3 +23,26 @@ export function formatPrice(
     return `${currency} ${Math.round(amount).toLocaleString()}`;
   }
 }
+
+/**
+ * Compact price for space-constrained UI: $1.5k for >=1000, $843 for <1000.
+ *
+ * Examples:
+ *   formatCompactPrice(1500) → "$1.5k"
+ *   formatCompactPrice(2000) → "$2k"
+ *   formatCompactPrice(843)  → "$843"
+ */
+export function formatCompactPrice(price: number): string {
+  if (price >= 1000) {
+    const k = price / 1000;
+    return `$${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
+  }
+  return `$${Math.round(price)}`;
+}
+
+/**
+ * Simple price with locale formatting: $1,234.
+ */
+export function formatSimplePrice(price: number): string {
+  return `$${Math.round(price).toLocaleString()}`;
+}

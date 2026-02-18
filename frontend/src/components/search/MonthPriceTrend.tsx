@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import apiClient from "@/api/client";
 import type { MonthCalendarData } from "@/types/search";
+import { formatSimplePrice as fmtPrice } from "@/lib/currency";
 
 interface Props {
   legId: string;
@@ -16,10 +17,6 @@ interface MonthSummary {
   cheapestDate: string | null;
   datesWithFlights: number;
   datesWithDirect: number;
-}
-
-function fmtPrice(n: number): string {
-  return `$${Math.round(n).toLocaleString()}`;
 }
 
 const MONTH_NAMES = [

@@ -1,5 +1,6 @@
 import type { FlightOption } from "@/types/flight";
 import { formatPrice } from "@/lib/currency";
+import { formatShortDate } from "@/lib/dates";
 
 interface Props {
   flight: FlightOption;
@@ -8,6 +9,10 @@ interface Props {
   onSelect?: (flight: FlightOption) => void;
   /** Price quartile thresholds for color-coding [q1, q3] */
   priceQuartiles?: { q1: number; q3: number };
+  /** Preferred date for the leg (used for date badge styling) */
+  preferredDate?: string;
+  /** Show departure date badge (used in all-dates view) */
+  showDate?: boolean;
 }
 
 /** Hash a short string into a hue (0-360) for deterministic airline colors */
@@ -61,6 +66,8 @@ export function FlightOptionCard({
   reason,
   onSelect,
   priceQuartiles,
+  preferredDate,
+  showDate,
 }: Props) {
   const hue = airlineHue(flight.airline_code);
   const overnight = dayOffset(flight.departure_time, flight.arrival_time);
@@ -203,9 +210,18 @@ export function FlightOptionCard({
               Alt Airport
             </span>
           )}
-          {flight.is_alternate_date && (
+          {flight.is_alternate_date && !showDate && (
             <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 whitespace-nowrap">
               Flex Date
+            </span>
+          )}
+          {showDate && flight.departure_time && (
+            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap ${
+              flight.departure_time.startsWith(preferredDate || "")
+                ? "bg-primary/10 text-primary"
+                : "bg-purple-50 text-purple-700"
+            }`}>
+              {formatShortDate(flight.departure_time)}
             </span>
           )}
           {flight.stops > 0 && flight.duration_minutes > 720 && (

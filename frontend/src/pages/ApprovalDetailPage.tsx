@@ -40,11 +40,24 @@ interface ApprovalDetail {
     premium_vs_cheapest: number;
     narrative: string;
     policy_status: string;
+    currency?: string;
     policy_checks: Array<{
       policy_name: string;
       status: string;
       details: string;
     }>;
+    per_leg_summary?: Array<{
+      leg_id: string;
+      route: string;
+      selected_price: number;
+      cheapest_price: number;
+      most_expensive_price: number;
+      selected_airline: string;
+      justification_note: string | null;
+    }> | null;
+    alternatives_snapshot?: unknown[] | null;
+    trip_window_snapshot?: unknown | null;
+    cheaper_months_snapshot?: unknown[] | null;
   } | null;
   history: Array<{
     id: string;
@@ -292,6 +305,50 @@ export default function ApprovalDetailPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Per-Leg Breakdown (from Phase F — null for old reports) */}
+      {sr && sr.per_leg_summary && sr.per_leg_summary.length > 0 && (
+        <Card>
+          <CardContent className="pt-6">
+            <h4 className="text-sm font-semibold mb-3">Per-Leg Breakdown</h4>
+            <div className="space-y-2">
+              {sr.per_leg_summary.map((leg, i) => (
+                <div
+                  key={leg.leg_id || i}
+                  className="flex items-center justify-between py-2 border-b last:border-0"
+                >
+                  <div>
+                    <span className="font-medium text-sm">{leg.route}</span>
+                    {leg.selected_airline && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {leg.selected_airline}
+                      </span>
+                    )}
+                    {leg.justification_note && (
+                      <p className="text-xs text-muted-foreground mt-0.5 italic">
+                        &ldquo;{leg.justification_note}&rdquo;
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right text-xs space-y-0.5">
+                    <div className="font-medium">
+                      Selected: {formatPrice(leg.selected_price)}
+                    </div>
+                    <div className="text-muted-foreground">
+                      Cheapest: {formatPrice(leg.cheapest_price)}
+                    </div>
+                    {leg.selected_price > leg.cheapest_price && (
+                      <div className="text-amber-600">
+                        +{formatPrice(leg.selected_price - leg.cheapest_price)} premium
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>

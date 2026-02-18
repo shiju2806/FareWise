@@ -1,11 +1,14 @@
 import { create } from "zustand";
-import type { MonthCalendarData, PriceAdvice, PriceTrend, PriceContext } from "@/types/search";
+import type { MonthCalendarData, PriceAdvice, PriceTrend, PriceContext, MatrixEntry } from "@/types/search";
 import apiClient from "@/api/client";
 
 interface PriceIntelState {
   monthData: Record<string, MonthCalendarData>;
   monthLoading: Record<string, boolean>;
   monthError: Record<string, boolean>;
+
+  matrixData: Record<string, MatrixEntry[]>;
+  matrixLoading: Record<string, boolean>;
 
   advice: Record<string, PriceAdvice>;
   adviceLoading: Record<string, boolean>;
@@ -17,6 +20,7 @@ interface PriceIntelState {
   priceContextLoading: Record<string, boolean>;
 
   fetchMonthCalendar: (legId: string, year: number, month: number) => Promise<void>;
+  fetchMonthMatrix: (legId: string, year: number, month: number) => Promise<void>;
   fetchAdvice: (legId: string) => Promise<void>;
   fetchTrend: (legId: string) => Promise<void>;
   fetchPriceContext: (legId: string, date: string) => Promise<void>;
@@ -26,6 +30,8 @@ export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
   monthData: {},
   monthLoading: {},
   monthError: {},
+  matrixData: {},
+  matrixLoading: {},
   advice: {},
   adviceLoading: {},
   trends: {},
@@ -58,6 +64,25 @@ export const usePriceIntelStore = create<PriceIntelState>((set, get) => ({
         monthLoading: { ...s.monthLoading, [key]: false },
         monthError: { ...s.monthError, [key]: true },
       }));
+    }
+  },
+
+  fetchMonthMatrix: async (legId: string, year: number, month: number) => {
+    const key = `${legId}:${year}-${String(month).padStart(2, "0")}`;
+    if (get().matrixData[key] || get().matrixLoading[key]) return;
+
+    set((s) => ({ matrixLoading: { ...s.matrixLoading, [key]: true } }));
+
+    try {
+      const res = await apiClient.get(
+        `/search/${legId}/matrix?year=${year}&month=${month}`
+      );
+      set((s) => ({
+        matrixData: { ...s.matrixData, [key]: (res.data as any).entries as MatrixEntry[] },
+        matrixLoading: { ...s.matrixLoading, [key]: false },
+      }));
+    } catch {
+      set((s) => ({ matrixLoading: { ...s.matrixLoading, [key]: false } }));
     }
   },
 

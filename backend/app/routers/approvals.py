@@ -327,6 +327,10 @@ async def get_approval_detail(
             "policy_status": savings_report.policy_status,
             "policy_checks": savings_report.policy_checks,
             "slider_positions": savings_report.slider_positions,
+            "per_leg_summary": savings_report.per_leg_summary,
+            "alternatives_snapshot": savings_report.alternatives_snapshot,
+            "trip_window_snapshot": savings_report.trip_window_snapshot,
+            "cheaper_months_snapshot": savings_report.cheaper_months_snapshot,
         } if savings_report else None,
         "history": history_list,
     }

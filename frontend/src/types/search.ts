@@ -24,6 +24,7 @@ export interface SearchResult {
   price_calendar: PriceCalendar;
   recommendation: FlightOption & { reason: string };
   alternatives: {
+    same_airline_cheaper: FlightOption[];
     cheaper_dates: FlightOption[];
     alternate_airports: FlightOption[];
     different_routing: FlightOption[];
@@ -111,4 +112,40 @@ export interface PriceContext {
   percentile?: number | null;
   percentile_label?: "excellent" | "good" | "average" | "high" | null;
   message?: string;
+}
+
+// Airline×Date matrix entry from DB1B calendar data
+export interface MatrixEntry {
+  airline_code: string;
+  airline_name: string;
+  date: string;
+  price: number;
+  stops: number;
+}
+
+// Trip-window alternatives (preserve trip duration, shift dates)
+export interface TripWindowFlight {
+  airline_name: string;
+  airline_code: string;
+  price: number;
+  stops: number;
+}
+
+export interface TripWindowProposal {
+  outbound_date: string;
+  return_date: string;
+  trip_duration: number;
+  outbound_flight: TripWindowFlight;
+  return_flight: TripWindowFlight;
+  total_price: number;
+  savings: number;
+  savings_percent: number;
+  same_airline: boolean;
+  airline_name: string | null;
+}
+
+export interface TripWindowAlternatives {
+  original_trip_duration: number;
+  original_total_price: number;
+  proposals: TripWindowProposal[];
 }

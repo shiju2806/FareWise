@@ -22,9 +22,7 @@ const POLICY_BUDGET: Record<string, number> = {
   first: 4500,
 };
 
-function fmtPrice(n: number, currency?: string): string {
-  return formatPrice(n, currency || "USD");
-}
+const fmtPrice = (n: number, currency?: string) => formatPrice(n, currency || "USD");
 
 interface LegComparison {
   legId: string;

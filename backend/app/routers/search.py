@@ -53,6 +53,19 @@ async def _get_user_leg(
     return leg
 
 
+async def _reset_trip_status(db: AsyncSession, trip_id: uuid.UUID) -> None:
+    """Reset trip status to draft on search failure."""
+    try:
+        await db.rollback()
+        trip_result = await db.execute(select(Trip).where(Trip.id == trip_id))
+        trip = trip_result.scalar_one_or_none()
+        if trip and trip.status == "searching":
+            trip.status = "draft"
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"Failed to reset trip status for {trip_id}: {e}")
+
+
 @router.post("/{trip_leg_id}")
 async def search_flights(
     trip_leg_id: uuid.UUID,
@@ -74,6 +87,16 @@ async def search_flights(
     if user.travel_preferences and isinstance(user.travel_preferences, dict):
         user_preferences = user.travel_preferences
 
+    # Set trip status to "searching" BEFORE starting the search
+    try:
+        trip_result = await db.execute(select(Trip).where(Trip.id == leg.trip_id))
+        trip = trip_result.scalar_one_or_none()
+        if trip and trip.status == "draft":
+            trip.status = "searching"
+            await db.commit()
+    except Exception as e:
+        logger.warning(f"Failed to set trip status to searching for leg {trip_leg_id}: {e}")
+
     try:
         result = await asyncio.wait_for(
             search_orchestrator.search_leg(
@@ -86,29 +109,12 @@ async def search_flights(
         )
     except asyncio.TimeoutError:
         logger.error(f"Search timed out for leg {trip_leg_id}")
+        await _reset_trip_status(db, leg.trip_id)
         raise HTTPException(status_code=504, detail="Search timed out. Please try again.")
     except Exception as e:
         logger.error(f"Search orchestrator failed for leg {trip_leg_id}: {e}")
-        # Reset trip status on failure
-        try:
-            trip_result = await db.execute(select(Trip).where(Trip.id == leg.trip_id))
-            trip = trip_result.scalar_one_or_none()
-            if trip and trip.status == "searching":
-                trip.status = "draft"
-                await db.commit()
-        except Exception:
-            pass
+        await _reset_trip_status(db, leg.trip_id)
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
-
-    # Update trip status to searching
-    try:
-        trip_result = await db.execute(select(Trip).where(Trip.id == leg.trip_id))
-        trip = trip_result.scalar_one_or_none()
-        if trip and trip.status == "draft":
-            trip.status = "searching"
-            await db.commit()
-    except Exception:
-        pass  # Don't fail the search over a status update
 
     return result
 
@@ -353,6 +359,52 @@ async def analyze_selection(
         "alternatives": analysis.alternatives,
         "justification_prompt": justification_prompt,
     }
+
+
+@router.get("/{trip_leg_id}/matrix")
+async def get_month_matrix(
+    trip_leg_id: uuid.UUID,
+    year: int = Query(..., ge=2024, le=2028),
+    month: int = Query(..., ge=1, le=12),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Get airline x date matrix data for an entire month from DB1B.
+
+    Returns per-carrier, per-date entries for the AirlineDateMatrix component.
+    Cached for 1 hour.
+    """
+    from app.services.cache_service import cache_service
+    from app.services.db1b_client import db1b_client
+
+    leg = await _get_user_leg(trip_leg_id, db, user)
+
+    cache_key = f"matrix:{leg.origin_airport}:{leg.destination_airport}:{year}-{month:02d}:{leg.cabin_class}"
+    cached = await cache_service.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        entries = await db1b_client.search_month_matrix(
+            origin=leg.origin_airport,
+            destination=leg.destination_airport,
+            year=year,
+            month=month,
+            cabin_class=leg.cabin_class,
+        )
+    except Exception as e:
+        logger.error(f"Matrix fetch failed: {e}")
+        entries = []
+
+    result = {
+        "entries": entries,
+        "month": f"{year}-{month:02d}",
+    }
+
+    if entries:
+        await cache_service.set(cache_key, result, ttl=3600)
+
+    return result
 
 
 @router.get("/{trip_leg_id}/calendar")

@@ -26,6 +26,7 @@ interface Props {
   initialCalendar: PriceCalendar;
   selectedDate: string | null;
   onDateSelect: (date: string) => void;
+  onMonthChange?: (year: number, month: number) => void;
 }
 
 /** Get year/month for the Nth month offset from a base. */
@@ -43,6 +44,7 @@ export function MonthCalendar({
   initialCalendar,
   selectedDate,
   onDateSelect,
+  onMonthChange,
 }: Props) {
   const prefDate = new Date(preferredDate + "T00:00:00");
   const [viewYear, setViewYear] = useState(prefDate.getFullYear());
@@ -142,6 +144,7 @@ export function MonthCalendar({
     const next = offsetMonth(viewYear, viewMonth, delta);
     setViewYear(next.year);
     setViewMonth(next.month);
+    onMonthChange?.(next.year, next.month);
   }
 
   // Stats across both months
@@ -215,6 +218,7 @@ export function MonthCalendar({
           selectedDate={selectedDate}
           getQuartile={getQuartile}
           onDateSelect={onDateSelect}
+          showHeader={expanded}
         />
         {expanded && (
           <SingleMonthGrid
@@ -341,6 +345,7 @@ interface GridProps {
   selectedDate: string | null;
   getQuartile: (price: number | null) => "cheap" | "mid" | "expensive" | "none";
   onDateSelect: (date: string) => void;
+  showHeader?: boolean;
 }
 
 function SingleMonthGrid({
@@ -354,6 +359,7 @@ function SingleMonthGrid({
   selectedDate,
   getQuartile,
   onDateSelect,
+  showHeader = true,
 }: GridProps) {
   const firstDay = new Date(year, month - 1, 1);
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -374,9 +380,11 @@ function SingleMonthGrid({
 
   return (
     <div>
-      <p className="text-xs font-semibold text-center mb-1">
-        {MONTH_NAMES[month - 1]} {year}
-      </p>
+      {showHeader && (
+        <p className="text-xs font-semibold text-center mb-1">
+          {MONTH_NAMES[month - 1]} {year}
+        </p>
+      )}
       <div className="grid grid-cols-7 gap-0.5">
         {DAY_NAMES.map((d) => (
           <div key={d} className="text-center text-[8px] font-medium text-muted-foreground py-0.5">

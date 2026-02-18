@@ -296,27 +296,35 @@ def apply_smart_date_filter(
 
         valid = True
 
-        # Return leg: don't suggest dates too early (would shorten trip below threshold)
+        # Return leg: must be AFTER outbound and within ±2 days of original duration
         if leg_sequence > 1 and outbound_selected_date:
             try:
                 out_date = date_type.fromisoformat(outbound_selected_date)
-                min_return_ordinal = (
-                    out_date.toordinal() + original_trip_duration_days - 1
-                )
-                if alt_date.toordinal() < min_return_ordinal:
+                # Hard constraint: return must be after outbound
+                if alt_date <= out_date:
                     valid = False
+                elif original_trip_duration_days and original_trip_duration_days >= 2:
+                    actual_duration = (alt_date - out_date).days
+                    min_duration = max(2, original_trip_duration_days - 2)
+                    max_duration = original_trip_duration_days + 2
+                    if actual_duration < min_duration or actual_duration > max_duration:
+                        valid = False
             except ValueError:
                 pass
 
-        # Outbound leg: don't suggest dates too late (would shorten trip below threshold)
+        # Outbound leg: must be BEFORE return and within ±2 days of original duration
         if leg_sequence == 1 and return_selected_date:
             try:
                 ret_date = date_type.fromisoformat(return_selected_date)
-                max_outbound_ordinal = (
-                    ret_date.toordinal() - original_trip_duration_days + 1
-                )
-                if alt_date.toordinal() > max_outbound_ordinal:
+                # Hard constraint: outbound must be before return
+                if alt_date >= ret_date:
                     valid = False
+                elif original_trip_duration_days and original_trip_duration_days >= 2:
+                    actual_duration = (ret_date - alt_date).days
+                    min_duration = max(2, original_trip_duration_days - 2)
+                    max_duration = original_trip_duration_days + 2
+                    if actual_duration < min_duration or actual_duration > max_duration:
+                        valid = False
             except ValueError:
                 pass
 

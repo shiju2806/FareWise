@@ -581,4 +581,206 @@ class TripIntelligenceService:
         }
 
 
+    def compute_trip_window_alternatives(
+        self,
+        outbound_options: list[dict],
+        return_options: list[dict],
+        preferred_outbound: str,
+        preferred_return: str,
+        max_proposals: int = 5,
+        selected_airline_codes: list[str] | None = None,
+    ) -> dict:
+        """Compute trip-window alternatives that preserve trip duration.
+
+        For each candidate outbound date, pairs with (outbound + trip_duration)
+        for return. Scores PAIRS by total cost. Pure computation — no LLM call.
+
+        If selected_airline_codes is provided, ensures at least one proposal
+        uses the traveler's selected airline(s).
+        """
+        if not preferred_outbound or not preferred_return:
+            return {"original_trip_duration": 0, "original_total_price": 0, "proposals": []}
+
+        pref_out = date.fromisoformat(preferred_outbound)
+        pref_ret = date.fromisoformat(preferred_return)
+        trip_duration = (pref_ret - pref_out).days
+
+        if trip_duration <= 0:
+            return {"original_trip_duration": 0, "original_total_price": 0, "proposals": []}
+
+        # Build cheapest flight per date for each leg
+        out_by_date: dict[str, dict] = {}
+        for f in outbound_options:
+            d = f.get("departure_time", "")[:10]
+            if d and (d not in out_by_date or f["price"] < out_by_date[d]["price"]):
+                out_by_date[d] = f
+
+        ret_by_date: dict[str, dict] = {}
+        for f in return_options:
+            d = f.get("departure_time", "")[:10]
+            if d and (d not in ret_by_date or f["price"] < ret_by_date[d]["price"]):
+                ret_by_date[d] = f
+
+        # Build per-airline cheapest by date for same-airline matching
+        out_by_airline_date: dict[tuple[str, str], dict] = {}
+        for f in outbound_options:
+            d = f.get("departure_time", "")[:10]
+            airline = f.get("airline_code", "")
+            key = (airline, d)
+            if d and (key not in out_by_airline_date or f["price"] < out_by_airline_date[key]["price"]):
+                out_by_airline_date[key] = f
+
+        ret_by_airline_date: dict[tuple[str, str], dict] = {}
+        for f in return_options:
+            d = f.get("departure_time", "")[:10]
+            airline = f.get("airline_code", "")
+            key = (airline, d)
+            if d and (key not in ret_by_airline_date or f["price"] < ret_by_airline_date[key]["price"]):
+                ret_by_airline_date[key] = f
+
+        # Original trip cost
+        orig_out_price = out_by_date.get(preferred_outbound, {}).get("price", 0)
+        orig_ret_price = ret_by_date.get(preferred_return, {}).get("price", 0)
+        original_total = orig_out_price + orig_ret_price
+
+        proposals = []
+        seen_pairs: set[tuple] = set()
+
+        # Generic proposals: cheapest per date, paired by trip duration
+        from datetime import timedelta as td
+        for out_date_str, out_flight in out_by_date.items():
+            out_date = date.fromisoformat(out_date_str)
+            ret_date = out_date + td(days=trip_duration)
+            ret_date_str = ret_date.isoformat()
+
+            pair_key = (out_date_str, ret_date_str)
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+
+            if out_date_str == preferred_outbound and ret_date_str == preferred_return:
+                continue
+
+            ret_flight = ret_by_date.get(ret_date_str)
+            if not ret_flight:
+                continue
+
+            total = out_flight["price"] + ret_flight["price"]
+            savings = original_total - total
+            if savings <= 0:
+                continue
+
+            proposals.append({
+                "outbound_date": out_date_str,
+                "return_date": ret_date_str,
+                "trip_duration": trip_duration,
+                "outbound_flight": {
+                    "airline_name": out_flight.get("airline_name", ""),
+                    "airline_code": out_flight.get("airline_code", ""),
+                    "price": out_flight["price"],
+                    "stops": out_flight.get("stops", 0),
+                },
+                "return_flight": {
+                    "airline_name": ret_flight.get("airline_name", ""),
+                    "airline_code": ret_flight.get("airline_code", ""),
+                    "price": ret_flight["price"],
+                    "stops": ret_flight.get("stops", 0),
+                },
+                "total_price": round(total, 2),
+                "savings": round(savings, 2),
+                "savings_percent": round((savings / original_total) * 100, 1) if original_total > 0 else 0,
+                "same_airline": out_flight.get("airline_code") == ret_flight.get("airline_code"),
+                "airline_name": out_flight.get("airline_name") if out_flight.get("airline_code") == ret_flight.get("airline_code") else None,
+            })
+
+        # Same-airline proposals
+        airlines_seen: set[tuple] = set()
+        for (airline, out_date_str), out_flight in out_by_airline_date.items():
+            out_date = date.fromisoformat(out_date_str)
+            ret_date = out_date + td(days=trip_duration)
+            ret_date_str = ret_date.isoformat()
+
+            ret_flight = ret_by_airline_date.get((airline, ret_date_str))
+            if not ret_flight:
+                continue
+
+            pair_key = (out_date_str, ret_date_str, airline)
+            if pair_key in airlines_seen:
+                continue
+            airlines_seen.add(pair_key)
+
+            if out_date_str == preferred_outbound and ret_date_str == preferred_return:
+                continue
+
+            total = out_flight["price"] + ret_flight["price"]
+            savings = original_total - total
+            if savings <= 0:
+                continue
+
+            proposals.append({
+                "outbound_date": out_date_str,
+                "return_date": ret_date_str,
+                "trip_duration": trip_duration,
+                "outbound_flight": {
+                    "airline_name": out_flight.get("airline_name", ""),
+                    "airline_code": out_flight.get("airline_code", ""),
+                    "price": out_flight["price"],
+                    "stops": out_flight.get("stops", 0),
+                },
+                "return_flight": {
+                    "airline_name": ret_flight.get("airline_name", ""),
+                    "airline_code": ret_flight.get("airline_code", ""),
+                    "price": ret_flight["price"],
+                    "stops": ret_flight.get("stops", 0),
+                },
+                "total_price": round(total, 2),
+                "savings": round(savings, 2),
+                "savings_percent": round((savings / original_total) * 100, 1) if original_total > 0 else 0,
+                "same_airline": True,
+                "airline_name": out_flight.get("airline_name"),
+            })
+
+        # Deduplicate: keep best savings per (outDate, retDate, airline)
+        unique: dict[tuple, dict] = {}
+        for p in proposals:
+            key = (p["outbound_date"], p["return_date"], p.get("airline_name", ""))
+            if key not in unique or p["savings"] > unique[key]["savings"]:
+                unique[key] = p
+
+        all_sorted = sorted(unique.values(), key=lambda p: p["savings"], reverse=True)
+
+        # Ensure at least one proposal matches the user's selected airline
+        selected_codes = set(selected_airline_codes or [])
+        if selected_codes:
+            selected_airline_proposals = [
+                p for p in all_sorted
+                if p["outbound_flight"]["airline_code"] in selected_codes
+                or p["return_flight"]["airline_code"] in selected_codes
+            ]
+            other_proposals = [
+                p for p in all_sorted
+                if p not in selected_airline_proposals
+            ]
+            # Take up to 2 selected-airline proposals + fill rest with best overall
+            result = selected_airline_proposals[:2]
+            for p in other_proposals:
+                if len(result) >= max_proposals:
+                    break
+                result.append(p)
+            # Fill remaining if needed
+            for p in selected_airline_proposals[2:]:
+                if len(result) >= max_proposals:
+                    break
+                result.append(p)
+            sorted_proposals = sorted(result, key=lambda p: p["savings"], reverse=True)
+        else:
+            sorted_proposals = all_sorted
+
+        return {
+            "original_trip_duration": trip_duration,
+            "original_total_price": round(original_total, 2),
+            "proposals": sorted_proposals[:max_proposals],
+        }
+
+
 trip_intelligence = TripIntelligenceService()

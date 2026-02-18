@@ -198,8 +198,8 @@ class PriceAdvisorService:
             seats_remaining=min_seats,
         )
 
-        # Historical price context — try Google Flights first, then Amadeus
-        from app.services import google_flights_client
+        # Historical price context — DB1B primary, Amadeus fallback
+        from app.services.db1b_client import db1b_client
         from app.services.amadeus_client import amadeus_client
 
         price_metrics = None
@@ -210,7 +210,7 @@ class PriceAdvisorService:
         try:
             # Check cache first
             cached_metrics = await cache_service.get_price_metrics(
-                origin, destination, departure_date.isoformat()
+                origin, destination, departure_date.isoformat(), cabin_class
             )
             if cached_metrics and cached_metrics.get("available"):
                 price_metrics = cached_metrics.get("historical")
@@ -218,21 +218,25 @@ class PriceAdvisorService:
                 price_percentile_label = cached_metrics.get("percentile_label")
                 google_assessment = cached_metrics.get("google_assessment")
             elif cached_metrics is None:
-                # Primary: Google Flights
-                gf_context = await google_flights_client.get_price_context(
+                # Primary: DB1B historical data
+                db1b_context = await db1b_client.get_price_context(
                     origin=origin,
                     destination=destination,
                     departure_date=departure_date,
                     cabin_class=cabin_class,
                     current_price=price_stats["cheapest"],
                 )
-                if gf_context and gf_context.get("available"):
-                    price_metrics = gf_context.get("historical")
-                    price_percentile = gf_context.get("percentile")
-                    price_percentile_label = gf_context.get("percentile_label")
-                    google_assessment = gf_context.get("google_assessment")
+                if db1b_context and db1b_context.get("available"):
+                    price_metrics = db1b_context.get("historical")
+                    price_percentile = db1b_context.get("percentile")
+                    price_percentile_label = db1b_context.get("percentile_label")
+                    # Cache it
+                    await cache_service.set_price_metrics(
+                        origin, destination, departure_date.isoformat(),
+                        cabin_class, db1b_context,
+                    )
                 else:
-                    # Fallback: Amadeus
+                    # Fallback: Amadeus (no cabin-specific metrics available)
                     raw_metrics = await amadeus_client.get_price_metrics(
                         origin=origin,
                         destination=destination,

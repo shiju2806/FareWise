@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FlightOption } from "@/types/flight";
-import type { SearchResult } from "@/types/search";
+import type { SearchResult, TripWindowAlternatives } from "@/types/search";
 import apiClient from "@/api/client";
+import { formatSimplePrice as fmtPrice } from "@/lib/currency";
+import { formatShortDate as fmtShortDate } from "@/lib/dates";
 
 interface Props {
   tripId: string;
@@ -32,19 +34,12 @@ interface LLMInsight {
   } | null;
 }
 
-function fmtPrice(n: number): string {
-  return `$${Math.round(n).toLocaleString()}`;
-}
-
-function fmtShortDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", weekday: "short" });
-}
-
 export function ReturnDateOptimizer({ tripId, outboundResult, returnResult, onSelectCombo }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [llmInsight, setLlmInsight] = useState<LLMInsight | null>(null);
   const [loadingInsight, setLoadingInsight] = useState(false);
+  const [tripWindowData, setTripWindowData] = useState<TripWindowAlternatives | null>(null);
+  const [loadingTripWindow, setLoadingTripWindow] = useState(false);
 
   // Compute combos from frontend data (fast, immediate)
   const combos = useMemo<DateCombo[]>(() => {
@@ -83,6 +78,25 @@ export function ReturnDateOptimizer({ tripId, outboundResult, returnResult, onSe
     results.sort((a, b) => a.totalPrice - b.totalPrice);
     return results.slice(0, 10);
   }, [outboundResult.all_options, returnResult.all_options]);
+
+  // Fetch trip-window alternatives (duration-preserving date shifts)
+  useEffect(() => {
+    if (!tripId) return;
+    let cancelled = false;
+    setLoadingTripWindow(true);
+
+    apiClient
+      .post(`/trips/${tripId}/trip-window-alternatives`, {})
+      .then((res) => {
+        if (!cancelled) setTripWindowData(res.data || null);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoadingTripWindow(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [tripId]);
 
   // Fetch LLM date optimization insights
   useEffect(() => {
@@ -140,6 +154,66 @@ export function ReturnDateOptimizer({ tripId, outboundResult, returnResult, onSe
         <div className="px-3 py-1.5 border-b border-border flex items-center gap-2">
           <div className="h-3 w-3 animate-spin rounded-full border border-primary border-t-transparent" />
           <span className="text-[10px] text-muted-foreground">AI analyzing date patterns...</span>
+        </div>
+      )}
+
+      {/* Trip Window Shift Proposals */}
+      {loadingTripWindow && (
+        <div className="px-3 py-1.5 border-b border-border flex items-center gap-2">
+          <div className="h-3 w-3 animate-spin rounded-full border border-blue-500 border-t-transparent" />
+          <span className="text-[10px] text-muted-foreground">Finding trip window shifts...</span>
+        </div>
+      )}
+      {tripWindowData && tripWindowData.proposals.length > 0 && (
+        <div className="border-b border-blue-100 bg-blue-50/30">
+          <div className="px-3 py-2 border-b border-blue-100">
+            <h5 className="text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+              Shift Your Trip Window
+            </h5>
+            <p className="text-[10px] text-blue-600 mt-0.5">
+              Same {tripWindowData.original_trip_duration}-day trip, different dates, lower price
+            </p>
+          </div>
+          {tripWindowData.proposals.slice(0, 3).map((proposal) => (
+            <div
+              key={`${proposal.outbound_date}-${proposal.return_date}-${proposal.airline_name || ""}`}
+              className="flex items-center justify-between px-3 py-2.5 border-b border-blue-100/50 hover:bg-blue-50/50"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="font-medium">{fmtShortDate(proposal.outbound_date)}</span>
+                  <span className="text-muted-foreground">&rarr;</span>
+                  <span className="font-medium">{fmtShortDate(proposal.return_date)}</span>
+                  <span className="text-[10px] text-muted-foreground ml-1">
+                    ({proposal.trip_duration}d)
+                  </span>
+                  {proposal.same_airline && proposal.airline_name && (
+                    <span className="text-[9px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5">
+                      {proposal.airline_name}
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-muted-foreground flex gap-2 mt-0.5">
+                  <span>
+                    Out: {proposal.outbound_flight.airline_name} {fmtPrice(proposal.outbound_flight.price)}
+                    {proposal.outbound_flight.stops === 0 ? " (nonstop)" : ` (${proposal.outbound_flight.stops} stop)`}
+                  </span>
+                  <span>
+                    Ret: {proposal.return_flight.airline_name} {fmtPrice(proposal.return_flight.price)}
+                    {proposal.return_flight.stops === 0 ? " (nonstop)" : ` (${proposal.return_flight.stops} stop)`}
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <div className="text-right">
+                  <div className="text-sm font-bold">{fmtPrice(proposal.total_price)}</div>
+                  <div className="text-[10px] font-semibold text-blue-700">
+                    Save {fmtPrice(proposal.savings)} ({proposal.savings_percent}%)
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

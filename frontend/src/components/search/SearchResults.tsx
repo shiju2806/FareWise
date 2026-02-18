@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import type { SearchResult } from "@/types/search";
 import type { FlightOption } from "@/types/flight";
 import type { DateEvent, EventData } from "@/types/event";
@@ -10,6 +10,7 @@ import { AirlineDateMatrix } from "./AirlineDateMatrix";
 import { WhyThisPrice } from "@/components/events/WhyThisPrice";
 import { EventPanel } from "@/components/events/EventPanel";
 import { PriceWatchSetup } from "@/components/pricewatch/PriceWatchSetup";
+import { usePriceIntelStore } from "@/stores/priceIntelStore";
 
 interface Props {
   result: SearchResult;
@@ -40,12 +41,37 @@ export function SearchResults({
   eventSummary,
   destination,
 }: Props) {
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(
+    result.leg.preferred_date
+  );
+
+  // Reset date filter when switching legs
+  useEffect(() => {
+    setSelectedDate(result.leg.preferred_date);
+  }, [result.leg.preferred_date]);
   const [showAll, setShowAll] = useState(false);
   const [whyPriceDate, setWhyPriceDate] = useState<string | null>(null);
   const [showEventPanel, setShowEventPanel] = useState(false);
   const [showWatchForm, setShowWatchForm] = useState(false);
   const [airlineFilter, setAirlineFilter] = useState<Set<string>>(new Set());
+  const [maxBudget, setMaxBudget] = useState<number | null>(null);
+
+  // Matrix data from DB1B calendar (keyed by "legId:YYYY-MM")
+  const prefDate = new Date(result.leg.preferred_date + "T00:00:00");
+  const [matrixYear, setMatrixYear] = useState(prefDate.getFullYear());
+  const [matrixMonth, setMatrixMonth] = useState(prefDate.getMonth() + 1);
+  const { matrixData, fetchMonthMatrix } = usePriceIntelStore();
+  const matrixKey = `${legId}:${matrixYear}-${String(matrixMonth).padStart(2, "0")}`;
+  const externalMatrixData = matrixData[matrixKey] ?? undefined;
+
+  const handleMonthChange = useCallback(
+    (year: number, month: number) => {
+      setMatrixYear(year);
+      setMatrixMonth(month);
+      fetchMonthMatrix(legId, year, month);
+    },
+    [legId, fetchMonthMatrix]
+  );
 
   function handleDateSelect(date: string) {
     const newDate = date === selectedDate ? null : date;
@@ -81,20 +107,44 @@ export function SearchResults({
   }
 
   // Filter by selected date
-  const dateHasFlights = selectedDate
-    ? result.all_options.some((f) => f.departure_time.startsWith(selectedDate))
-    : false;
+  const dateHasFlights = useMemo(
+    () =>
+      selectedDate
+        ? result.all_options.some((f) => f.departure_time.startsWith(selectedDate))
+        : false,
+    [selectedDate, result.all_options]
+  );
 
-  let filteredOptions = selectedDate && dateHasFlights
-    ? result.all_options.filter((f) => f.departure_time.startsWith(selectedDate))
-    : result.all_options;
+  const filteredOptions = useMemo(() => {
+    let opts = selectedDate && dateHasFlights
+      ? result.all_options.filter((f) => f.departure_time.startsWith(selectedDate))
+      : result.all_options;
 
-  // Apply airline filter
-  if (airlineFilter.size > 0) {
-    filteredOptions = filteredOptions.filter((f) => airlineFilter.has(f.airline_name));
-  }
+    if (airlineFilter.size > 0) {
+      opts = opts.filter((f) => airlineFilter.has(f.airline_name));
+    }
 
-  const displayOptions = showAll ? filteredOptions : filteredOptions.slice(0, 15);
+    if (maxBudget != null) {
+      opts = opts.filter((f) => f.price <= maxBudget);
+    }
+
+    return opts;
+  }, [result.all_options, selectedDate, dateHasFlights, airlineFilter, maxBudget]);
+
+  const preBudgetCount = useMemo(() => {
+    let opts = selectedDate && dateHasFlights
+      ? result.all_options.filter((f) => f.departure_time.startsWith(selectedDate))
+      : result.all_options;
+    if (airlineFilter.size > 0) {
+      opts = opts.filter((f) => airlineFilter.has(f.airline_name));
+    }
+    return opts.length;
+  }, [result.all_options, selectedDate, dateHasFlights, airlineFilter]);
+
+  const displayOptions = useMemo(
+    () => (showAll ? filteredOptions : filteredOptions.slice(0, 15)),
+    [showAll, filteredOptions]
+  );
 
   // Empty state
   if (result.all_options.length === 0) {
@@ -172,6 +222,7 @@ export function SearchResults({
           initialCalendar={result.price_calendar}
           selectedDate={selectedDate}
           onDateSelect={handleDateSelect}
+          onMonthChange={handleMonthChange}
         />
       </div>
 
@@ -186,10 +237,12 @@ export function SearchResults({
           activeAirlines={airlineFilter}
           selectedDate={selectedDate}
           preferredDate={result.leg.preferred_date}
+          externalMatrixData={externalMatrixData}
+          maxBudget={maxBudget}
         />
       </div>
 
-      {/* 5. Airline filter chips + date filter */}
+      {/* 5. Airline filter chips + budget filter + date filter */}
       <div className="flex items-center gap-2 flex-wrap">
         {cheapestByAirline.length > 1 &&
           cheapestByAirline.map((f) => (
@@ -216,6 +269,38 @@ export function SearchResults({
             Clear
           </button>
         )}
+
+        <span className="text-muted-foreground text-[10px]">|</span>
+
+        {/* Budget filter */}
+        <div className="inline-flex items-center gap-1">
+          <span className="text-[11px] text-muted-foreground">$</span>
+          <input
+            type="number"
+            placeholder="Max budget"
+            value={maxBudget ?? ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              setMaxBudget(v === "" ? null : Number(v));
+            }}
+            className="w-20 rounded border border-border bg-background px-1.5 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          {maxBudget != null && (
+            <>
+              <button
+                type="button"
+                onClick={() => setMaxBudget(null)}
+                className="text-[11px] text-primary hover:underline"
+              >
+                Clear
+              </button>
+              <span className="text-[10px] text-muted-foreground">
+                {filteredOptions.length} of {preBudgetCount} under ${maxBudget.toLocaleString()}
+              </span>
+            </>
+          )}
+        </div>
+
         {selectedDate && (
           <>
             <span className="text-muted-foreground text-[10px]">|</span>
@@ -272,6 +357,15 @@ export function SearchResults({
               ? `Flights on ${selectedDate}`
               : `All Flights (${filteredOptions.length})`}
           </h3>
+          {selectedDate && (
+            <button
+              type="button"
+              onClick={() => setSelectedDate(null)}
+              className="text-[10px] text-primary hover:underline"
+            >
+              Show all dates
+            </button>
+          )}
         </div>
 
         {filteredOptions.length === 0 && selectedDate && dateHasFlights && (
@@ -296,6 +390,8 @@ export function SearchResults({
               reason={flight.id === recommendedId ? result.recommendation?.reason : undefined}
               onSelect={onFlightSelect}
               priceQuartiles={priceQuartiles}
+              preferredDate={result.leg.preferred_date}
+              showDate={!selectedDate}
             />
           ))}
         </div>

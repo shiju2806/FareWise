@@ -139,14 +139,16 @@ class CacheService:
 
     # Price metrics (historical quartiles)
 
-    def price_metrics_key(self, origin: str, dest: str, date_str: str) -> str:
-        return f"pricemetrics:{origin}:{dest}:{date_str}"
+    def price_metrics_key(self, origin: str, dest: str, date_str: str, cabin: str = "economy") -> str:
+        return f"pricemetrics:{origin}:{dest}:{date_str}:{cabin}"
 
-    async def get_price_metrics(self, origin: str, dest: str, date_str: str) -> dict | None:
-        return await self.get(self.price_metrics_key(origin, dest, date_str))
+    async def get_price_metrics(self, origin: str, dest: str, date_str: str, cabin: str = "economy") -> dict | None:
+        return await self.get(self.price_metrics_key(origin, dest, date_str, cabin))
 
-    async def set_price_metrics(self, origin: str, dest: str, date_str: str, data: dict):
-        await self.set(self.price_metrics_key(origin, dest, date_str), data, TTL_PRICE_METRICS)
+    async def set_price_metrics(self, origin: str, dest: str, date_str: str, cabin: str = "economy", data: dict | None = None):
+        if data is None:
+            return
+        await self.set(self.price_metrics_key(origin, dest, date_str, cabin), data, TTL_PRICE_METRICS)
 
     async def close(self):
         if self._redis:

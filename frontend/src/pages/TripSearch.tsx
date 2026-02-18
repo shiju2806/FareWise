@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useTripStore } from "@/stores/tripStore";
@@ -15,13 +15,18 @@ import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
 import { LegCard } from "@/components/trip/LegCard";
 import { formatPrice } from "@/lib/currency";
 import { SearchAssistant } from "@/components/search/SearchAssistant";
-import { InlineReviewPanel, type EvalResult } from "@/components/search/InlineReviewPanel";
-import { useToastStore } from "@/stores/toastStore";
 import type { FlightOption } from "@/types/flight";
+import type { TripWindowProposal } from "@/types/search";
 import apiClient from "@/api/client";
+
+/** Normalize any datetime string to YYYY-MM-DD */
+function toDateStr(dt: string): string {
+  return dt.split("T")[0];
+}
 
 export default function TripSearch() {
   const { tripId } = useParams<{ tripId: string }>();
+  const navigate = useNavigate();
   const { currentTrip, loading: tripLoading, fetchTrip } = useTripStore();
   const {
     results,
@@ -51,8 +56,6 @@ export default function TripSearch() {
   const [analyzing, setAnalyzing] = useState(false);
   const [excludedAirlines, setExcludedAirlines] = useState<string[]>([]);
   const [elapsed, setElapsed] = useState(0);
-  const [showReviewPanel, setShowReviewPanel] = useState(false);
-  const [evalResult, setEvalResult] = useState<EvalResult | null>(null);
 
   // Elapsed timer for search
   useEffect(() => {
@@ -202,6 +205,42 @@ export default function TripSearch() {
     });
   }
 
+  // Handle switching to a trip-window proposal (shared by inline + modal)
+  const handleSwitchTripWindow = useCallback((proposal: TripWindowProposal) => {
+    if (!currentTrip || currentTrip.legs.length < 2) return;
+    const outLeg = currentTrip.legs[0];
+    const retLeg = currentTrip.legs[currentTrip.legs.length - 1];
+    const outOptions = results[outLeg.id]?.all_options || [];
+    const retOptions = results[retLeg.id]?.all_options || [];
+
+    // Exact match: same airline + same date
+    let outFlight = outOptions.find((f) =>
+      toDateStr(f.departure_time) === proposal.outbound_date &&
+      f.airline_code === proposal.outbound_flight.airline_code
+    );
+    let retFlight = retOptions.find((f) =>
+      toDateStr(f.departure_time) === proposal.return_date &&
+      f.airline_code === proposal.return_flight.airline_code
+    );
+
+    // Fallback: cheapest flight on that date (any airline)
+    if (!outFlight) {
+      outFlight = outOptions
+        .filter((f) => toDateStr(f.departure_time) === proposal.outbound_date)
+        .sort((a, b) => a.price - b.price)[0];
+    }
+    if (!retFlight) {
+      retFlight = retOptions
+        .filter((f) => toDateStr(f.departure_time) === proposal.return_date)
+        .sort((a, b) => a.price - b.price)[0];
+    }
+
+    if (outFlight && retFlight) {
+      setSelectedFlights({ [outLeg.id]: outFlight, [retLeg.id]: retFlight });
+    }
+    setJustificationAnalysis(null);
+  }, [currentTrip, results]);
+
   // Confirm all leg selections (trip-level)
   async function handleConfirmTrip() {
     if (!currentTrip || !allLegsSelected || !tripId) return;
@@ -226,7 +265,9 @@ export default function TripSearch() {
         return;
       }
     } catch {
-      // If analysis fails, proceed without justification
+      setAnalyzing(false);
+      alert("Could not verify compliance. Please try again.");
+      return;
     }
     setAnalyzing(false);
 
@@ -251,39 +292,10 @@ export default function TripSearch() {
       setJustificationAnalysis(null);
       setConfirmed(true);
 
-      // Trigger policy evaluation and show inline review panel
-      try {
-        const evalRes = await apiClient.post(`/trips/${tripId}/evaluate`);
-        setEvalResult(evalRes.data);
-        setShowReviewPanel(true);
-
-        // Savings toast — feedback after all legs confirmed
-        if (evalRes.data?.savings_report) {
-          const sr = evalRes.data.savings_report;
-          const diff = sr.cheapest_total > 0 ? sr.selected_total - sr.cheapest_total : 0;
-          if (diff <= 0) {
-            useToastStore.getState().addToast(
-              "success",
-              "Great choice! Your selections match the cheapest available options."
-            );
-          } else if (diff < 200) {
-            useToastStore.getState().addToast(
-              "success",
-              `Selections confirmed. Only ${formatPrice(diff, sr.currency || "USD")} above cheapest — good balance of cost and convenience.`
-            );
-          } else {
-            useToastStore.getState().addToast(
-              "info",
-              `Selections confirmed. ${formatPrice(diff, sr.currency || "USD")} above cheapest combination — consider reviewing for savings.`
-            );
-          }
-        }
-      } catch {
-        // If eval fails, still show confirmed state
-        setShowReviewPanel(false);
-      }
+      // Navigate to the review & submit page for manager approval
+      navigate(`/trips/${tripId}/review`);
     } catch {
-      // Selection failed silently
+      alert("Failed to save your flight selection. Please try again.");
     } finally {
       setConfirming(false);
     }
@@ -602,26 +614,8 @@ export default function TripSearch() {
                   }
                   setJustificationAnalysis(null);
                 }}
+                onSwitchTripWindow={handleSwitchTripWindow}
                 onCancel={() => setJustificationAnalysis(null)}
-              />
-            </div>
-          )}
-
-          {/* Inline review panel (after confirmation) */}
-          {showReviewPanel && evalResult && currentTrip && tripId && (
-            <div className="max-w-5xl mx-auto px-4 pt-3">
-              <InlineReviewPanel
-                tripId={tripId}
-                evalResult={evalResult}
-                selectedFlights={selectedFlights}
-                legs={currentTrip.legs}
-                onSubmitSuccess={() => {
-                  // Keep panel visible with success state
-                }}
-                onCancel={() => {
-                  setShowReviewPanel(false);
-                  setEvalResult(null);
-                }}
               />
             </div>
           )}
@@ -717,6 +711,13 @@ export default function TripSearch() {
                 >
                   Select Leg {currentTrip.legs.findIndex((l) => !selectedFlights[l.id]) + 1}
                 </Button>
+              ) : confirmed ? (
+                <Button
+                  size="sm"
+                  onClick={() => navigate(`/trips/${tripId}/review`)}
+                >
+                  Submit for Approval
+                </Button>
               ) : (
                 <Button
                   size="sm"
@@ -727,19 +728,10 @@ export default function TripSearch() {
                     ? "Analyzing..."
                     : confirming
                     ? "Saving..."
-                    : confirmed
-                    ? "Confirmed!"
                     : allLegsSelected
-                    ? "Confirm Trip"
+                    ? "Confirm & Review"
                     : "Confirm Selection"}
                 </Button>
-              )}
-              {confirmed && !showReviewPanel && tripId && (
-                <Link to={`/trips/${tripId}/review`}>
-                  <Button variant="outline" size="sm">
-                    Review & Submit
-                  </Button>
-                </Link>
               )}
             </div>
           </div>
@@ -775,6 +767,7 @@ export default function TripSearch() {
             }
             setJustificationAnalysis(null);
           }}
+          onSwitchTripWindow={handleSwitchTripWindow}
           onCancel={() => setJustificationAnalysis(null)}
         />
       )}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatPrice } from "@/lib/currency";
+import { formatShortDate as fmtDate } from "@/lib/dates";
 
 interface Alternative {
   type: string;
@@ -44,6 +45,40 @@ interface TripTotals {
   savings_percent: number;
 }
 
+interface TripWindowFlight {
+  airline_name: string;
+  airline_code: string;
+  price: number;
+  stops: number;
+}
+
+interface TripWindowProposal {
+  outbound_date: string;
+  return_date: string;
+  trip_duration: number;
+  outbound_flight: TripWindowFlight;
+  return_flight: TripWindowFlight;
+  total_price: number;
+  savings: number;
+  savings_percent: number;
+  same_airline: boolean;
+  airline_name: string | null;
+}
+
+interface TripWindowAlternatives {
+  original_trip_duration: number;
+  original_total_price: number;
+  proposals: TripWindowProposal[];
+}
+
+interface CheaperMonthSuggestion {
+  month: string;
+  avg_price: number;
+  min_price: number;
+  current_month_avg: number;
+  savings_percent: number;
+}
+
 interface AnalysisResult {
   justification_required: boolean;
   // Single-leg fields (backward compat)
@@ -64,12 +99,17 @@ interface AnalysisResult {
   // Multi-leg fields
   legs?: LegAnalysis[];
   trip_totals?: TripTotals;
+  // Trip-window alternatives (shift entire trip)
+  trip_window_alternatives?: TripWindowAlternatives | null;
+  // Cheaper month suggestions
+  cheaper_month_suggestions?: CheaperMonthSuggestion[];
 }
 
 interface Props {
   analysis: AnalysisResult;
   onConfirm: (justification: string) => void;
   onSwitch: (flightOptionId: string, legId?: string) => void;
+  onSwitchTripWindow?: (proposal: TripWindowProposal) => void;
   onCancel: () => void;
   confirming?: boolean;
   /** "inline" renders as a banner (for $100-500), "modal" renders full overlay (for >$500) */
@@ -80,21 +120,16 @@ const PRESETS = [
   "Schedule alignment with meetings",
   "Loyalty program / status",
   "Nonstop preference",
+  "Red-eye avoidance",
+  "Same-day arrival required",
+  "Connecting flight risk (tight layover)",
   "Client / customer requirement",
+  "Company-negotiated fare",
   "Personal safety / comfort",
 ];
 
 function fmtPrice(price: number): string {
   return formatPrice(price);
-}
-
-function fmtDate(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    weekday: "short",
-  });
 }
 
 function fmtDuration(minutes: number): string {
@@ -105,9 +140,9 @@ function fmtDuration(minutes: number): string {
 }
 
 function savingsColor(amount: number): string {
-  if (amount >= 500) return "bg-red-100 text-red-800 border-red-200";
-  if (amount >= 200) return "bg-amber-100 text-amber-800 border-amber-200";
-  return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (amount >= 500) return "bg-blue-100 text-blue-800 border-blue-200";
+  if (amount >= 200) return "bg-sky-100 text-sky-800 border-sky-200";
+  return "bg-slate-100 text-slate-700 border-slate-200";
 }
 
 /** Comparison table — Selected vs Cheapest alternative */
@@ -158,7 +193,7 @@ function ComparisonTable({
           <tr className="bg-muted/50">
             <th className="text-left px-3 py-1.5 font-medium text-muted-foreground" />
             <th className="text-center px-3 py-1.5 font-semibold">Your Pick</th>
-            <th className="text-center px-3 py-1.5 font-semibold text-emerald-700">Cheapest</th>
+            <th className="text-center px-3 py-1.5 font-semibold text-emerald-700">Lowest Fare</th>
           </tr>
         </thead>
         <tbody>
@@ -184,6 +219,7 @@ export function JustificationModal({
   analysis,
   onConfirm,
   onSwitch,
+  onSwitchTripWindow,
   onCancel,
   confirming = false,
   mode = "modal",
@@ -231,11 +267,11 @@ export function JustificationModal({
     const inlineLegId = isMultiLeg ? biggestSavingsLeg?.leg_id : undefined;
 
     return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-3">
+      <div className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold ${savingsColor(inlineSavings)}`}>
-              {fmtPrice(inlineSavings)} {isMultiLeg ? "trip savings" : "cheaper option"} available
+              {fmtPrice(inlineSavings)} {isMultiLeg ? "lower-fare combination" : "lower fare"} available
             </span>
             {inlineAlt && (
               <span className="text-xs text-muted-foreground">
@@ -300,7 +336,7 @@ export function JustificationModal({
 
         <div className="flex items-center justify-between">
           <p className="text-[10px] text-muted-foreground">
-            {canConfirm ? "Click confirm to proceed" : "Select a reason to continue"}
+            {canConfirm ? "Your note will be included with your travel request" : "Tap a reason or add your own"}
           </p>
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={onCancel}>
@@ -333,10 +369,10 @@ export function JustificationModal({
         <div className="px-5 pt-5 pb-3">
           <div className="flex items-start justify-between">
             <div>
-              <h3 className="text-base font-semibold">Cheaper Options Available</h3>
+              <h3 className="text-base font-semibold">We found some alternatives</h3>
               {isMultiLeg && analysis.trip_totals ? (
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Trip total: {fmtPrice(analysis.trip_totals.selected)} (cheapest: {fmtPrice(analysis.trip_totals.cheapest)})
+                  Trip total: {fmtPrice(analysis.trip_totals.selected)} (lowest available: {fmtPrice(analysis.trip_totals.cheapest)})
                 </p>
               ) : analysis.selected ? (
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -346,7 +382,7 @@ export function JustificationModal({
               ) : null}
             </div>
             <span className={`inline-flex items-center rounded-md border px-2 py-1 text-xs font-semibold ${savingsColor(savingsAmount)}`}>
-              Save {fmtPrice(savingsAmount)} ({savingsPercent}%)
+              {fmtPrice(savingsAmount)} difference ({savingsPercent}%)
             </span>
           </div>
         </div>
@@ -355,6 +391,92 @@ export function JustificationModal({
         {analysis.justification_prompt && (
           <div className="mx-5 rounded-lg border border-blue-200 bg-blue-50/80 p-3 text-sm text-blue-800 leading-relaxed">
             {analysis.justification_prompt}
+          </div>
+        )}
+
+        {/* Trip-window alternatives — shift entire trip, preserve duration */}
+        {isMultiLeg && analysis.trip_window_alternatives && analysis.trip_window_alternatives.proposals.length > 0 && (
+          <div className="mx-5 mt-4 rounded-lg border border-blue-200 bg-blue-50/30">
+            <div className="px-3 py-2 border-b border-blue-100">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                Shift Your Entire Trip
+              </h4>
+              <p className="text-[10px] text-blue-600 mt-0.5">
+                Same {analysis.trip_window_alternatives.original_trip_duration}-day trip, different dates, lower price
+              </p>
+            </div>
+            {analysis.trip_window_alternatives.proposals.slice(0, 3).map((proposal) => (
+              <div
+                key={`${proposal.outbound_date}-${proposal.return_date}`}
+                className="flex items-center justify-between px-3 py-2.5 border-b border-blue-100/50 last:border-b-0"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="font-medium">{fmtDate(proposal.outbound_date)}</span>
+                    <span className="text-muted-foreground">&rarr;</span>
+                    <span className="font-medium">{fmtDate(proposal.return_date)}</span>
+                    <span className="text-[10px] text-muted-foreground ml-1">
+                      ({proposal.trip_duration}d)
+                    </span>
+                    {proposal.same_airline && proposal.airline_name && (
+                      <span className="text-[9px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5">
+                        {proposal.airline_name}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[10px] text-muted-foreground flex gap-2 mt-0.5">
+                    <span>
+                      Out: {proposal.outbound_flight.airline_name} {fmtPrice(proposal.outbound_flight.price)}
+                      {proposal.outbound_flight.stops === 0 ? " (nonstop)" : ` (${proposal.outbound_flight.stops} stop)`}
+                    </span>
+                    <span>
+                      Ret: {proposal.return_flight.airline_name} {fmtPrice(proposal.return_flight.price)}
+                      {proposal.return_flight.stops === 0 ? " (nonstop)" : ` (${proposal.return_flight.stops} stop)`}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <div className="text-right">
+                    <div className="text-sm font-bold">{fmtPrice(proposal.total_price)}</div>
+                    <div className="text-[10px] font-semibold text-blue-700">
+                      Save {fmtPrice(proposal.savings)} ({proposal.savings_percent}%)
+                    </div>
+                  </div>
+                  {onSwitchTripWindow && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onSwitchTripWindow(proposal)}
+                      className="text-xs"
+                    >
+                      Switch
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Cheaper month suggestions */}
+        {analysis.cheaper_month_suggestions && analysis.cheaper_month_suggestions.length > 0 && (
+          <div className="mx-5 mt-3 rounded-lg border border-amber-200 bg-amber-50/30 px-3 py-2.5">
+            <h4 className="text-[10px] font-semibold uppercase tracking-wide text-amber-700 mb-1.5">
+              Flexible dates? Same airline, cheaper months
+            </h4>
+            {analysis.cheaper_month_suggestions.map((s) => (
+              <div key={s.month} className="flex items-center justify-between text-xs py-1">
+                <span className="font-medium">{s.month}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">
+                    avg {fmtPrice(s.avg_price)} (from {fmtPrice(s.min_price)})
+                  </span>
+                  <span className="text-[10px] font-semibold text-amber-700">
+                    {s.savings_percent}% cheaper
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
@@ -372,7 +494,7 @@ export function JustificationModal({
                     </h4>
                     {leg.savings.amount > 0 && (
                       <span className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${savingsColor(leg.savings.amount)}`}>
-                        save {fmtPrice(leg.savings.amount)}
+                        {fmtPrice(leg.savings.amount)} diff
                       </span>
                     )}
                   </div>
@@ -407,7 +529,7 @@ export function JustificationModal({
                                 {fmtPrice(alt.price)}
                               </div>
                               <div className="text-[10px] text-emerald-600">
-                                save {fmtPrice(alt.savings)}
+                                {fmtPrice(alt.savings)} less
                               </div>
                             </div>
                             <Button
@@ -443,7 +565,7 @@ export function JustificationModal({
             {analysis.alternatives && analysis.alternatives.length > 0 && (
               <div className="px-5 pt-4 space-y-2">
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Switch to a cheaper option
+                  Other options on this route
                 </h4>
                 {analysis.alternatives.map((alt) => (
                   <div
@@ -489,7 +611,7 @@ export function JustificationModal({
         {/* Quick-justify presets */}
         <div className="px-5 pt-4 space-y-2">
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-            {isMultiLeg ? "Why these flights?" : "Why this flight?"}
+            Add a note for your approver
           </h4>
           <div className="flex flex-wrap gap-1.5">
             {PRESETS.map((p) => (
@@ -520,15 +642,15 @@ export function JustificationModal({
           <textarea
             value={justification}
             onChange={(e) => setJustification(e.target.value)}
-            placeholder={selectedPresets.size > 0 ? "Add any additional context (optional)..." : "Type a custom justification..."}
+            placeholder={selectedPresets.size > 0 ? "Add any additional context (optional)..." : "Add a note about your preference..."}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm min-h-[60px] resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
           <p className="text-[10px] text-muted-foreground">
             {isHighSavings && fullJustification.length < 10
-              ? `Justification required for savings over $500 (${fullJustification.length}/10 chars)`
+              ? `A note is needed for differences over $500 (${fullJustification.length}/10 chars)`
               : canConfirm
               ? "This note will be included with your travel request"
-              : "Select a reason above or type a custom justification"}
+              : "Tap a reason above or add your own note"}
           </p>
         </div>
 

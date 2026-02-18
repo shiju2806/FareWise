@@ -2,7 +2,7 @@
 
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 import anthropic
 
@@ -15,6 +15,15 @@ extract structured travel legs. Today's date is {today}.
 
 Rules:
 - Resolve relative dates ("next Tuesday", "this Friday") against today's date
+- For vague date expressions:
+  - "Mid [month]" -> use the 15th of that month, regardless of day of week
+  - "Early [month]" -> use the 3rd
+  - "End of [month]" / "Late [month]" -> use the 25th
+  - "Next week" -> Monday of next week
+- Saturday/Sunday travel is fine — corporate travelers often fly on weekends to arrive for Monday meetings
+- For round trips with no explicit return date: default return 4-5 days after departure.
+  Examples: depart Wed -> return Mon (5 nights). Depart Mon -> return Fri (4 nights). Depart Thu -> return Tue (5 nights).
+  A typical business round trip is 4-5 nights. NEVER suggest a trip longer than 7 days unless the user explicitly asks.
 - Infer return legs if the trip implies returning home (e.g., "Toronto to NYC and back")
 - For multi-city trips, infer connecting legs
 - Default cabin class: economy
@@ -60,6 +69,7 @@ class NLPParser:
         """
         system = SYSTEM_PROMPT.format(today=date.today().isoformat())
 
+        raw = ""
         for attempt in range(max_retries + 1):
             try:
                 message = await self.client.messages.create(
@@ -86,6 +96,7 @@ class NLPParser:
                 if "confidence" not in parsed:
                     parsed["confidence"] = 0.8
 
+                self._snap_dates(parsed)
                 return parsed
 
             except json.JSONDecodeError as e:
@@ -102,6 +113,19 @@ class NLPParser:
                     return self._fallback_response(text)
 
         return self._fallback_response(text)
+
+    @staticmethod
+    def _snap_dates(parsed: dict) -> None:
+        """Post-process: validate parsed date strings."""
+        for leg in parsed.get("legs", []):
+            raw_date = leg.get("preferred_date")
+            if not raw_date:
+                continue
+            try:
+                d = date.fromisoformat(raw_date)
+                leg["preferred_date"] = d.isoformat()
+            except (ValueError, TypeError):
+                pass
 
     def _fallback_response(self, original_text: str) -> dict:
         """Return a low-confidence result when parsing fails."""
@@ -124,9 +148,12 @@ Help users plan trips through brief conversation. Given the conversation history
 
 IMPORTANT — be decisive, not interrogative:
 - When the user gives enough info to act (origin, destination, rough timeframe), FILL IN sensible defaults and set trip_ready=true. Do NOT keep asking questions.
-- "Mid March" → pick the 15th. "Next week" → pick the Monday. "End of month" → pick the 28th.
-- "Round trip" or "and back" → add a return leg 5-7 days later by default.
+- "Mid March" → use the 15th of March, regardless of day of week. Saturday/Sunday is fine for travel.
+- "Early [month]" → use the 3rd.
+- "End of month" / "Late [month]" → use the 25th.
+- "Next week" → Monday of next week.
 - "Business" → set cabin_class to business. If no class mentioned, default to economy.
+- "Round trip" or "and back" → add a return leg matching the requested duration. If user says "for a week" → 7 days. If no duration specified, default to 5 days. Examples: depart Apr 15 "for a week" → return Apr 22. Depart Apr 15 with no duration → return Apr 20. NEVER exceed the requested duration.
 - When the user says "book", "let's go", "search", or "find flights" — proceed immediately with what you have. Use defaults for anything missing.
 - Only ask a question if you truly cannot infer the origin OR destination.
 
@@ -211,10 +238,30 @@ class NLPChatParser:
             if "missing_fields" not in parsed:
                 parsed["missing_fields"] = []
 
+            # Snap dates to business days
+            pt = parsed.get("partial_trip")
+            if pt and isinstance(pt, dict):
+                for leg in pt.get("legs", []):
+                    raw = leg.get("preferred_date")
+                    if raw:
+                        try:
+                            d = date.fromisoformat(raw)
+                            leg["preferred_date"] = d.isoformat()
+                        except (ValueError, TypeError):
+                            pass
+
             return parsed
 
-        except (json.JSONDecodeError, anthropic.APIError, Exception) as e:
-            logger.error(f"Chat parse error: {e}")
+        except (json.JSONDecodeError, anthropic.APIError) as e:
+            logger.warning(f"Chat parse error: {e}")
+            return {
+                "reply": "I understand. Could you tell me where you'd like to travel, when, and from where?",
+                "partial_trip": partial_trip,
+                "trip_ready": False,
+                "missing_fields": ["origin", "destination", "date"],
+            }
+        except Exception as e:
+            logger.error(f"Chat parse unexpected error: {e}", exc_info=True)
             return {
                 "reply": "I understand. Could you tell me where you'd like to travel, when, and from where?",
                 "partial_trip": partial_trip,

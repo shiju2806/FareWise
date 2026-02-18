@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -273,6 +274,42 @@ async def optimize_dates(
     return result
 
 
+@router.post("/{trip_id}/trip-window-alternatives")
+async def trip_window_alternatives(
+    trip_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Compute trip-window alternatives that preserve trip duration.
+
+    Shifts the entire trip window (outbound + return) to find cheaper
+    date pairs while maintaining the same trip length.
+    """
+    trip = await _get_user_trip(trip_id, db, user)
+    legs_sorted = sorted(trip.legs, key=lambda l: l.sequence)
+
+    if len(legs_sorted) < 2:
+        raise HTTPException(status_code=400, detail="Trip window requires 2 legs (round trip)")
+
+    outbound_leg = legs_sorted[0]
+    return_leg = legs_sorted[1]
+
+    outbound_options = await _get_leg_flights(outbound_leg, db)
+    return_options = await _get_leg_flights(return_leg, db)
+
+    if not outbound_options or not return_options:
+        return {"original_trip_duration": 0, "original_total_price": 0, "proposals": []}
+
+    result = trip_intelligence.compute_trip_window_alternatives(
+        outbound_options=outbound_options,
+        return_options=return_options,
+        preferred_outbound=outbound_leg.preferred_date.isoformat() if outbound_leg.preferred_date else "",
+        preferred_return=return_leg.preferred_date.isoformat() if return_leg.preferred_date else "",
+    )
+
+    return result
+
+
 @router.post("/{trip_id}/analyze-selections")
 async def analyze_selections(
     trip_id: uuid.UUID,
@@ -434,6 +471,106 @@ async def analyze_selections(
         except Exception as e:
             logger.warning(f"Trip justification prompt failed: {e}")
 
+    # Compute trip-window alternatives for round trips (both legs shift together)
+    trip_window_alternatives = None
+    if len(legs_sorted) >= 2:
+        try:
+            outbound_leg = legs_sorted[0]
+            return_leg = legs_sorted[-1]
+            outbound_options = await _get_leg_flights(outbound_leg, db)
+            return_options = await _get_leg_flights(return_leg, db)
+            if outbound_options and return_options:
+                # Collect airline codes from user's selected flights
+                selected_codes = []
+                for analysis in per_leg_analyses:
+                    if analysis and analysis.selected and analysis.selected.airline_code:
+                        selected_codes.append(analysis.selected.airline_code)
+                trip_window_alternatives = trip_intelligence.compute_trip_window_alternatives(
+                    outbound_options=outbound_options,
+                    return_options=return_options,
+                    preferred_outbound=outbound_leg.preferred_date.isoformat() if outbound_leg.preferred_date else "",
+                    preferred_return=return_leg.preferred_date.isoformat() if return_leg.preferred_date else "",
+                    selected_airline_codes=selected_codes if selected_codes else None,
+                )
+        except Exception as e:
+            logger.warning(f"Trip window alternatives failed: {e}")
+
+    # Compute cheaper-month suggestions for the user's selected airline
+    cheaper_month_suggestions = []
+    if legs_sorted and legs_sorted[0].preferred_date:
+        try:
+            from app.services.db1b_client import db1b_client
+            import asyncio as _asyncio
+
+            selected_codes = set()
+            for analysis in per_leg_analyses:
+                if analysis and analysis.selected and analysis.selected.airline_code:
+                    selected_codes.add(analysis.selected.airline_code)
+
+            if selected_codes:
+                outbound_leg = legs_sorted[0]
+                pref_date = outbound_leg.preferred_date
+                cabin = outbound_leg.cabin_class or "economy"
+
+                months_to_check = []
+                for offset in [-1, 0, 1, 2]:
+                    m = pref_date.month + offset
+                    y = pref_date.year
+                    if m < 1:
+                        m += 12
+                        y -= 1
+                    elif m > 12:
+                        m -= 12
+                        y += 1
+                    months_to_check.append((y, m))
+
+                month_tasks = [
+                    db1b_client.search_month_matrix(
+                        outbound_leg.origin_airport,
+                        outbound_leg.destination_airport,
+                        y, m, cabin,
+                    )
+                    for y, m in months_to_check
+                ]
+                month_results = await _asyncio.gather(*month_tasks, return_exceptions=True)
+
+                airline_month_prices: dict[tuple[int, int], list[float]] = {}
+                for i, (y, m) in enumerate(months_to_check):
+                    data = month_results[i]
+                    if isinstance(data, Exception) or not data:
+                        continue
+                    for entry in data:
+                        if entry["airline_code"] in selected_codes:
+                            airline_month_prices.setdefault((y, m), []).append(entry["price"])
+
+                current_key = (pref_date.year, pref_date.month)
+                current_prices = airline_month_prices.get(current_key, [])
+                current_avg = sum(current_prices) / len(current_prices) if current_prices else None
+
+                if current_avg:
+                    for (y, m), prices in sorted(airline_month_prices.items()):
+                        if (y, m) == current_key:
+                            continue
+                        avg_price = sum(prices) / len(prices)
+                        min_price = min(prices)
+                        if avg_price < current_avg * 0.85:  # 15%+ cheaper
+                            savings_pct = round((1 - avg_price / current_avg) * 100, 1)
+                            month_name = date(y, m, 1).strftime("%B %Y")
+                            cheaper_month_suggestions.append({
+                                "month": month_name,
+                                "year": y,
+                                "month_num": m,
+                                "avg_price": round(avg_price, 2),
+                                "min_price": round(min_price, 2),
+                                "current_month_avg": round(current_avg, 2),
+                                "savings_percent": savings_pct,
+                                "data_points": len(prices),
+                            })
+                    cheaper_month_suggestions.sort(key=lambda s: s["savings_percent"], reverse=True)
+                    cheaper_month_suggestions = cheaper_month_suggestions[:3]
+        except Exception as e:
+            logger.warning(f"Cheaper month suggestions failed: {e}")
+
     return {
         "justification_required": trip_justification_required,
         "legs": legs_result,
@@ -444,4 +581,106 @@ async def analyze_selections(
             "savings_percent": trip_savings_percent,
         },
         "justification_prompt": justification_prompt,
+        "trip_window_alternatives": trip_window_alternatives,
+        "cheaper_month_suggestions": cheaper_month_suggestions,
     }
+
+
+class CheaperMonthRequest(BaseModel):
+    """Airline codes to check for cheaper months."""
+    airline_codes: list[str]
+
+
+@router.post("/{trip_id}/cheaper-months")
+async def cheaper_months(
+    trip_id: uuid.UUID,
+    req: CheaperMonthRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Find cheaper months for the user's selected airline on this route.
+
+    Queries DB1B data for the selected airline across adjacent months
+    and returns suggestions if a significantly cheaper month exists.
+    """
+    from app.services.db1b_client import db1b_client
+
+    trip = await _get_user_trip(trip_id, db, user)
+    legs_sorted = sorted(trip.legs, key=lambda l: l.sequence)
+
+    if not legs_sorted:
+        return {"suggestions": []}
+
+    outbound_leg = legs_sorted[0]
+    if not outbound_leg.preferred_date:
+        return {"suggestions": []}
+
+    pref_date = outbound_leg.preferred_date
+    cabin = outbound_leg.cabin_class or "economy"
+    origin = outbound_leg.origin_airport
+    destination = outbound_leg.destination_airport
+    airline_codes = set(req.airline_codes)
+
+    # Query 3 months: prev, current, next
+    months_to_check = []
+    for offset in [-1, 0, 1, 2]:
+        m = pref_date.month + offset
+        y = pref_date.year
+        if m < 1:
+            m += 12
+            y -= 1
+        elif m > 12:
+            m -= 12
+            y += 1
+        months_to_check.append((y, m))
+
+    # Fetch matrix data for each month (per-airline per-date)
+    import asyncio
+    month_tasks = [
+        db1b_client.search_month_matrix(origin, destination, y, m, cabin)
+        for y, m in months_to_check
+    ]
+    month_results = await asyncio.gather(*month_tasks, return_exceptions=True)
+
+    # Compute per-month average for selected airline(s)
+    airline_month_prices: dict[tuple[int, int], list[float]] = {}
+    for i, (y, m) in enumerate(months_to_check):
+        data = month_results[i]
+        if isinstance(data, Exception) or not data:
+            continue
+        for entry in data:
+            if entry["airline_code"] in airline_codes:
+                airline_month_prices.setdefault((y, m), []).append(entry["price"])
+
+    if not airline_month_prices:
+        return {"suggestions": []}
+
+    # Current month average
+    current_key = (pref_date.year, pref_date.month)
+    current_prices = airline_month_prices.get(current_key, [])
+    current_avg = sum(current_prices) / len(current_prices) if current_prices else None
+
+    suggestions = []
+    for (y, m), prices in sorted(airline_month_prices.items()):
+        if (y, m) == current_key:
+            continue
+        avg_price = sum(prices) / len(prices)
+        min_price = min(prices)
+
+        if current_avg and avg_price < current_avg * 0.8:  # 20%+ cheaper
+            savings_pct = round((1 - avg_price / current_avg) * 100, 1)
+            month_name = date(y, m, 1).strftime("%B %Y")
+            suggestions.append({
+                "month": month_name,
+                "year": y,
+                "month_num": m,
+                "avg_price": round(avg_price, 2),
+                "min_price": round(min_price, 2),
+                "current_month_avg": round(current_avg, 2),
+                "savings_percent": savings_pct,
+                "data_points": len(prices),
+            })
+
+    suggestions.sort(key=lambda s: s["savings_percent"], reverse=True)
+
+    return {"suggestions": suggestions[:3]}

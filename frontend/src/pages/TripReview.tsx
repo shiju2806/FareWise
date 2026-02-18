@@ -218,9 +218,9 @@ export default function TripReview() {
 
       {/* Error */}
       {evalResult?.error && (
-        <Card className="border-red-200">
+        <Card className="border-amber-200">
           <CardContent className="pt-6">
-            <p className="text-red-600">{evalResult.error}</p>
+            <p className="text-amber-700">{evalResult.error}</p>
           </CardContent>
         </Card>
       )}
@@ -239,14 +239,14 @@ export default function TripReview() {
                     ? "bg-green-100 text-green-800"
                     : sr.policy_status === "warning"
                     ? "bg-amber-100 text-amber-800"
-                    : "bg-red-100 text-red-800"
+                    : "bg-blue-100 text-blue-800"
                 }`}
               >
                 {sr.policy_status === "compliant"
                   ? "Compliant"
                   : sr.policy_status === "warning"
-                  ? "Warnings"
-                  : "Violations"}
+                  ? "Items to Review"
+                  : "Items to Review"}
               </span>
             </div>
 
@@ -295,7 +295,7 @@ export default function TripReview() {
                   {formatPrice(sr.premium_vs_cheapest, sr.currency)}
                 </p>
                 <p className="text-xs text-amber-600">
-                  Over cheapest
+                  Above lowest fare
                 </p>
               </div>
             </div>
@@ -377,14 +377,14 @@ export default function TripReview() {
 
       {/* Policy Warnings (blocks + warnings that need acknowledgment) */}
       {allViolations.length > 0 && (
-        <Card className="border-amber-200">
+        <Card className="border-blue-200">
           <CardContent className="pt-6 space-y-3">
-            <h4 className="text-sm font-semibold text-amber-600 mb-2">
-              Policy Warnings
+            <h4 className="text-sm font-semibold text-blue-700 mb-2">
+              Policy Notes
             </h4>
             {allViolations.map((v, i) => (
-              <div key={i} className="rounded-md border border-amber-200 bg-amber-50/50 p-3 space-y-2">
-                <p className="text-sm text-amber-800">
+              <div key={i} className="rounded-md border border-blue-200 bg-blue-50/50 p-3 space-y-2">
+                <p className="text-sm text-blue-800">
                   <span className="font-medium">{v.policy_name}:</span> {v.message}
                 </p>
                 {v.policy_id && (
@@ -398,8 +398,8 @@ export default function TripReview() {
                       }
                       className="mt-0.5"
                     />
-                    <label htmlFor={`ack-${v.policy_id}`} className="text-xs text-amber-700">
-                      I acknowledge this policy exception
+                    <label htmlFor={`ack-${v.policy_id}`} className="text-xs text-blue-700">
+                      I acknowledge this note
                     </label>
                   </div>
                 )}
@@ -410,8 +410,8 @@ export default function TripReview() {
                     onChange={(e) =>
                       setViolationNotes((prev) => ({ ...prev, [v.policy_id!]: e.target.value }))
                     }
-                    placeholder="Brief reason (optional)..."
-                    className="w-full rounded-md border border-amber-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-300/50"
+                    placeholder="Brief context (optional)..."
+                    className="w-full rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300/50"
                   />
                 )}
               </div>
@@ -440,7 +440,7 @@ export default function TripReview() {
                 {submitting
                   ? "Submitting..."
                   : allViolations.length > 0 && !allViolationsAcked
-                  ? "Acknowledge warnings to submit"
+                  ? "Review notes above to submit"
                   : "Submit for Approval"}
               </Button>
             </div>

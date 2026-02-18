@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 import type { FlightOption } from "@/types/flight";
+import type { MatrixEntry } from "@/types/search";
+import { formatCompactPrice as fmtPrice } from "@/lib/currency";
 
 interface Props {
   allOptions: FlightOption[];
@@ -10,6 +12,8 @@ interface Props {
   activeAirlines?: Set<string>;
   selectedDate?: string | null;
   preferredDate?: string | null;
+  externalMatrixData?: MatrixEntry[];
+  maxBudget?: number | null;
 }
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -18,14 +22,6 @@ function fmtDate(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00");
   const mon = d.toLocaleString("en-US", { month: "short" });
   return `${mon} ${d.getDate()} ${DAY_NAMES[d.getDay()]}`;
-}
-
-function fmtPrice(price: number): string {
-  if (price >= 1000) {
-    const k = price / 1000;
-    return `$${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
-  }
-  return `$${Math.round(price)}`;
 }
 
 export function AirlineDateMatrix({
@@ -37,6 +33,8 @@ export function AirlineDateMatrix({
   activeAirlines,
   selectedDate,
   preferredDate,
+  externalMatrixData,
+  maxBudget,
 }: Props) {
   const excludedSet = useMemo(() => new Set(excludedAirlines), [excludedAirlines]);
 
@@ -55,6 +53,40 @@ export function AirlineDateMatrix({
       }
     }
 
+    // Merge external DB1B matrix entries (initial search data wins on overlap)
+    const externalDatesSet = new Set<string>();
+    if (externalMatrixData && externalMatrixData.length > 0) {
+      for (const entry of externalMatrixData) {
+        externalDatesSet.add(entry.date);
+        if (!airlineMap.has(entry.airline_name)) {
+          airlineMap.set(entry.airline_name, new Map());
+        }
+        const dateMap = airlineMap.get(entry.airline_name)!;
+        // Only fill if no initial search data for this cell
+        if (!dateMap.has(entry.date)) {
+          dateMap.set(entry.date, {
+            id: `db1b-${entry.airline_code}-${entry.date}`,
+            airline_code: entry.airline_code,
+            airline_name: entry.airline_name,
+            flight_numbers: "",
+            origin_airport: "",
+            destination_airport: "",
+            departure_time: `${entry.date}T00:00:00`,
+            arrival_time: "",
+            duration_minutes: 0,
+            stops: entry.stops,
+            stop_airports: null,
+            price: entry.price,
+            currency: "USD",
+            cabin_class: null,
+            seats_remaining: null,
+            is_alternate_airport: false,
+            is_alternate_date: true,
+          } as FlightOption);
+        }
+      }
+    }
+
     // Sort airlines by cheapest overall
     const airlines = Array.from(airlineMap.entries())
       .map(([name, dateMap]) => ({
@@ -69,26 +101,31 @@ export function AirlineDateMatrix({
         return a.minPrice - b.minPrice;
       });
 
-    // Sorted dates
-    const dates = [...datesSearched].sort();
+    // Sorted dates: merge datesSearched with external dates
+    const allDateSet = new Set([...datesSearched, ...externalDatesSet]);
+    const dates = [...allDateSet].sort();
 
     // Cheapest per date (among non-excluded airlines only)
     const cheapestByDate = new Map<string, number>();
     for (const d of dates) {
-      const dayPrices = allOptions
-        .filter(
-          (f) =>
-            f.departure_time.startsWith(d) && !excludedSet.has(f.airline_name)
-        )
-        .map((f) => f.price);
+      const dayPrices: number[] = [];
+      for (const airline of airlines) {
+        if (airline.excluded) continue;
+        const flight = airline.dateMap.get(d);
+        if (flight) dayPrices.push(flight.price);
+      }
       if (dayPrices.length > 0) cheapestByDate.set(d, Math.min(...dayPrices));
     }
 
     // Quartiles for color coding (non-excluded only)
-    const allPrices = allOptions
-      .filter((f) => !excludedSet.has(f.airline_name))
-      .map((f) => f.price)
-      .sort((a, b) => a - b);
+    const allPrices: number[] = [];
+    for (const airline of airlines) {
+      if (airline.excluded) continue;
+      for (const f of airline.dateMap.values()) {
+        allPrices.push(f.price);
+      }
+    }
+    allPrices.sort((a, b) => a - b);
     const q1 =
       allPrices.length > 0
         ? allPrices[Math.floor(allPrices.length * 0.25)]
@@ -99,12 +136,13 @@ export function AirlineDateMatrix({
         : 0;
 
     return { airlines, dates, cheapestByDate, q1, q3 };
-  }, [allOptions, datesSearched, excludedSet]);
+  }, [allOptions, datesSearched, excludedSet, externalMatrixData]);
 
   if (airlines.length === 0 || dates.length === 0) return null;
 
   function cellColor(price: number, excluded: boolean): string {
     if (excluded) return "bg-muted/30 text-muted-foreground/50";
+    if (maxBudget != null && price > maxBudget) return "bg-red-50/60 text-red-400 line-through";
     if (price <= q1) return "bg-emerald-50 text-emerald-700";
     if (price >= q3) return "bg-red-50 text-red-700";
     return "bg-amber-50 text-amber-700";

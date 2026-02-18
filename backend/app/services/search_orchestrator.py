@@ -66,12 +66,13 @@ class SearchOrchestrator:
             for d in range(-flex, flex + 1)
         ]
 
-        # 3. Build search matrix and execute searches in parallel
+        # 3. Group dates by route pair and execute batch queries
         all_flights: list[dict] = []
         airports_searched = set()
 
-        # Build task list for parallel execution
-        search_tasks = []
+        # Group dates by (origin, dest) pair for batch DB1B queries
+        route_pairs: dict[tuple[str, str], list[tuple[date, bool, bool]]] = {}
+        search_tasks = []  # Still needed for metadata (dates_searched)
         for orig in origin_airports:
             for dest in dest_airports:
                 if orig == dest:
@@ -80,32 +81,37 @@ class SearchOrchestrator:
                 airports_searched.add(dest)
                 is_primary_pair = (orig == leg.origin_airport and dest == leg.destination_airport)
                 search_dates = primary_dates if is_primary_pair else flex_dates
+                pair_key = (orig, dest)
+                route_pairs[pair_key] = [
+                    (d, not is_primary_pair, d != leg.preferred_date)
+                    for d in search_dates
+                ]
                 for d in search_dates:
-                    search_tasks.append((
-                        orig, dest, d, leg.cabin_class, leg.passengers,
-                        not is_primary_pair,
-                        d != leg.preferred_date,
-                    ))
+                    search_tasks.append((orig, dest, d, leg.cabin_class, leg.passengers,
+                                         not is_primary_pair, d != leg.preferred_date))
 
-        # Execute in parallel batches of 10 (Amadeus rate limit)
-        batch_size = 10
-        for i in range(0, len(search_tasks), batch_size):
-            batch = search_tasks[i:i + batch_size]
-            coros = [
-                self._search_with_timeout(
-                    orig, dest, d, cabin, pax,
-                    is_alt_airport=is_alt_ap,
-                    is_alt_date=is_alt_dt,
-                )
-                for orig, dest, d, cabin, pax, is_alt_ap, is_alt_dt in batch
-            ]
-            results = await asyncio.gather(*coros, return_exceptions=True)
-            for idx, result in enumerate(results):
-                if isinstance(result, Exception):
-                    task = batch[idx]
-                    logger.warning(f"Search task failed for {task[0]}->{task[1]} on {task[2]}: {result}")
+        # Execute batch queries per route pair (1 SQL query per pair instead of 1 per date)
+        pair_coros = [
+            self._batch_search_pair(
+                orig, dest, dates_info, leg.cabin_class, leg.passengers,
+            )
+            for (orig, dest), dates_info in route_pairs.items()
+        ]
+        pair_results = await asyncio.gather(*pair_coros, return_exceptions=True)
+        pair_keys = list(route_pairs.keys())
+        warnings = []
+        for idx, result in enumerate(pair_results):
+            if isinstance(result, Exception):
+                pair_key = pair_keys[idx]
+                is_primary = (pair_key[0] == leg.origin_airport and pair_key[1] == leg.destination_airport)
+                msg = f"{'Primary' if is_primary else 'Alternate'} pair {pair_key[0]}->{pair_key[1]} failed: {result}"
+                if is_primary:
+                    logger.error(msg)
                 else:
-                    all_flights.extend(result)
+                    logger.warning(msg)
+                warnings.append(msg)
+            else:
+                all_flights.extend(result)
 
         # 4. Deduplicate flights (same flight_number + departure_time)
         seen = set()
@@ -368,6 +374,96 @@ class SearchOrchestrator:
         except (ValueError, TypeError):
             return None
 
+    async def _batch_search_pair(
+        self,
+        origin: str,
+        destination: str,
+        dates_info: list[tuple[date, bool, bool]],
+        cabin_class: str,
+        passengers: int,
+    ) -> list[dict]:
+        """Search all dates for a single route pair using one batch DB1B query.
+
+        Falls back to individual Amadeus queries for dates with no DB1B data.
+        """
+        all_dates = [d for d, _, _ in dates_info]
+        start_date = min(all_dates)
+        end_date = max(all_dates)
+
+        # Check cache for each date first
+        cached_flights: list[dict] = []
+        uncached_dates: list[tuple[date, bool, bool]] = []
+
+        for d, is_alt_ap, is_alt_dt in dates_info:
+            date_str = d.isoformat()
+            cached = await cache_service.get_flights(origin, destination, date_str, cabin_class)
+            if cached is not None:
+                for f in cached:
+                    f["is_alternate_airport"] = is_alt_ap
+                    f["is_alternate_date"] = is_alt_dt
+                cached_flights.extend(cached)
+            else:
+                uncached_dates.append((d, is_alt_ap, is_alt_dt))
+
+        if not uncached_dates:
+            return cached_flights
+
+        # Batch DB1B query for all uncached dates (one SQL query)
+        batch_results: dict[str, list[dict]] = {}
+        try:
+            from app.services.db1b_client import db1b_client
+            batch_results = await db1b_client.search_flights_date_range(
+                origin, destination,
+                min(d for d, _, _ in uncached_dates),
+                max(d for d, _, _ in uncached_dates),
+                cabin_class,
+            )
+        except Exception as e:
+            logger.warning(f"DB1B batch search failed for {origin}-{destination}: {e}")
+
+        flights: list[dict] = list(cached_flights)
+
+        # Process each uncached date: use DB1B result, or fall back to Amadeus
+        amadeus_fallback_coros = []
+        amadeus_fallback_info = []
+
+        for d, is_alt_ap, is_alt_dt in uncached_dates:
+            date_str = d.isoformat()
+            date_flights = batch_results.get(date_str, [])
+
+            if date_flights:
+                for f in date_flights:
+                    f["is_alternate_airport"] = is_alt_ap
+                    f["is_alternate_date"] = is_alt_dt
+                flights.extend(date_flights)
+                await cache_service.set_flights(origin, destination, date_str, cabin_class, date_flights)
+            else:
+                # Queue Amadeus fallback
+                amadeus_fallback_coros.append(
+                    amadeus_client.search_flight_offers(
+                        origin, destination, d, cabin_class, passengers
+                    )
+                )
+                amadeus_fallback_info.append((d, is_alt_ap, is_alt_dt))
+
+        # Execute Amadeus fallbacks in parallel (typically few or zero)
+        if amadeus_fallback_coros:
+            amadeus_results = await asyncio.gather(*amadeus_fallback_coros, return_exceptions=True)
+            for idx, result in enumerate(amadeus_results):
+                d, is_alt_ap, is_alt_dt = amadeus_fallback_info[idx]
+                date_str = d.isoformat()
+                if isinstance(result, Exception):
+                    logger.warning(f"Amadeus fallback failed for {origin}-{destination} on {d}: {result}")
+                    continue
+                for f in result:
+                    f["is_alternate_airport"] = is_alt_ap
+                    f["is_alternate_date"] = is_alt_dt
+                flights.extend(result)
+                if result:
+                    await cache_service.set_flights(origin, destination, date_str, cabin_class, result)
+
+        return flights
+
     async def _search_with_timeout(
         self,
         origin: str,
@@ -591,7 +687,7 @@ class SearchOrchestrator:
         primary_dest: str,
         preferred_date: date,
     ) -> dict:
-        """Group flights into cheaper_dates, alternate_airports, different_routing."""
+        """Group flights into cheaper_dates, same_airline_cheaper, alternate_airports, different_routing."""
         preferred_str = preferred_date.isoformat()
 
         cheaper_dates = []
@@ -611,7 +707,40 @@ class SearchOrchestrator:
             elif has_stops and not is_alt_airport and not is_alt_date:
                 different_routing.append(f)
 
+        # Same-airline cheaper date: for each airline, find flights on other
+        # dates that are cheaper than that airline's preferred-date price.
+        preferred_by_airline: dict[str, dict] = {}
+        for f in scored_flights:
+            dep_date = f.get("departure_time", "").split("T")[0] if f.get("departure_time") else ""
+            if dep_date != preferred_str:
+                continue
+            if f.get("is_alternate_airport"):
+                continue
+            airline = f.get("airline_code", "")
+            if airline not in preferred_by_airline or f["price"] < preferred_by_airline[airline]["price"]:
+                preferred_by_airline[airline] = f
+
+        same_airline_cheaper = []
+        for f in scored_flights:
+            dep_date = f.get("departure_time", "").split("T")[0] if f.get("departure_time") else ""
+            if dep_date == preferred_str:
+                continue
+            if f.get("is_alternate_airport"):
+                continue
+            airline = f.get("airline_code", "")
+            pref_flight = preferred_by_airline.get(airline)
+            if not pref_flight:
+                continue
+            savings = round(pref_flight["price"] - f["price"], 2)
+            if savings > 0:
+                f["savings_vs_preferred"] = savings
+                f["preferred_date_price"] = pref_flight["price"]
+                same_airline_cheaper.append(f)
+
+        same_airline_cheaper.sort(key=lambda x: x.get("savings_vs_preferred", 0), reverse=True)
+
         return {
+            "same_airline_cheaper": same_airline_cheaper[:10],
             "cheaper_dates": cheaper_dates[:10],
             "alternate_airports": alternate_airports[:10],
             "different_routing": different_routing[:10],
@@ -656,6 +785,7 @@ class SearchOrchestrator:
         total_results_count: int | None = None,
     ) -> SearchLog | None:
         """Persist search results to database."""
+        option_flight_pairs = []
         try:
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             prices = [f["price"] for f in flights] if flights else [0]
@@ -684,7 +814,7 @@ class SearchOrchestrator:
             db.add(search_log)
             await db.flush()
 
-            # Save flight options and map DB IDs back to flight dicts
+            # Save flight options in bulk and map DB IDs back
             for f in flights:
                 dep_time = self._parse_iso(f.get("departure_time", ""))
                 arr_time = self._parse_iso(f.get("arrival_time", ""))
@@ -713,8 +843,13 @@ class SearchOrchestrator:
                     raw_response=f.get("raw_response"),
                 )
                 db.add(option)
-                await db.flush()
-                # Map the persisted DB ID back to the flight dict
+                option_flight_pairs.append((option, f))
+
+            # Single flush for all options (instead of per-flight)
+            await db.flush()
+
+            # Map persisted DB IDs back to flight dicts
+            for option, f in option_flight_pairs:
                 f["id"] = str(option.id)
 
             await db.commit()
@@ -722,6 +857,9 @@ class SearchOrchestrator:
         except Exception as e:
             logger.error(f"Failed to save search log: {e}", exc_info=True)
             await db.rollback()
+            # Clear IDs mapped during flush so UUID fallback in search_leg() kicks in
+            for _option, f in option_flight_pairs:
+                f.pop("id", None)
             return None
 
 

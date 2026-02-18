@@ -45,6 +45,14 @@ class Settings(BaseSettings):
     # Price Intelligence
     price_intelligence_enabled: bool = True
 
+    # DB1B Historical Data (MVP primary flight data source)
+    db1b_enabled: bool = True
+    db1b_database_url: str = "postgresql://farewise:farewise@localhost:5432/farewise"
+    db1b_pool_min: int = 2
+    db1b_pool_max: int = 10
+    db1b_pool_timeout: int = 30
+    db1b_command_timeout: int = 15
+
     # Scheduler
     scheduler_enabled: bool = True
 

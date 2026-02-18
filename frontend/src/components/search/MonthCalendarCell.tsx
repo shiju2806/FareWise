@@ -1,3 +1,5 @@
+import { formatCompactPrice as fmtPrice } from "@/lib/currency";
+
 interface Props {
   day: number;
   dateStr: string;
@@ -10,15 +12,6 @@ interface Props {
   isLoading: boolean;
   quartile: "cheap" | "mid" | "expensive" | "none";
   onClick: (date: string) => void;
-}
-
-/** Format price compactly: $1.5k for >=1000, $843 for <1000 */
-function fmtPrice(price: number): string {
-  if (price >= 1000) {
-    const k = price / 1000;
-    return `$${k % 1 === 0 ? k.toFixed(0) : k.toFixed(1)}k`;
-  }
-  return `$${Math.round(price)}`;
 }
 
 export function MonthCalendarCell({
