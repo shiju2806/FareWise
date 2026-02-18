@@ -402,7 +402,7 @@ export function JustificationModal({
                 Shift Your Entire Trip
               </h4>
               <p className="text-[10px] text-blue-600 mt-0.5">
-                Same {analysis.trip_window_alternatives.original_trip_duration}-day trip, different dates, lower price
+                Same {analysis.trip_window_alternatives.original_trip_duration}-day trip, different dates
               </p>
             </div>
             {analysis.trip_window_alternatives.proposals.slice(0, 3).map((proposal) => (
@@ -419,8 +419,12 @@ export function JustificationModal({
                       ({proposal.trip_duration}d)
                     </span>
                     {proposal.same_airline && proposal.airline_name && (
-                      <span className="text-[9px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5">
-                        {proposal.airline_name}
+                      <span className={`text-[9px] rounded-full px-1.5 py-0.5 ${
+                        proposal.user_airline
+                          ? "bg-primary/10 text-primary font-medium"
+                          : "bg-blue-100 text-blue-700"
+                      }`}>
+                        {proposal.user_airline ? `✓ ${proposal.airline_name}` : proposal.airline_name}
                       </span>
                     )}
                   </div>
@@ -438,8 +442,13 @@ export function JustificationModal({
                 <div className="flex items-center gap-3 shrink-0">
                   <div className="text-right">
                     <div className="text-sm font-bold">{fmtPrice(proposal.total_price)}</div>
-                    <div className="text-[10px] font-semibold text-blue-700">
-                      Save {fmtPrice(proposal.savings)} ({proposal.savings_percent}%)
+                    <div className={`text-[10px] font-semibold ${
+                      proposal.savings >= 0 ? "text-blue-700" : "text-amber-600"
+                    }`}>
+                      {proposal.savings >= 0
+                        ? `Save ${fmtPrice(proposal.savings)} (${proposal.savings_percent}%)`
+                        : `${fmtPrice(Math.abs(proposal.savings))} more (${Math.abs(proposal.savings_percent)}%)`
+                      }
                     </div>
                   </div>
                   {onSwitchTripWindow && (

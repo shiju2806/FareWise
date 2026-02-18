@@ -142,6 +142,7 @@ export interface TripWindowProposal {
   savings_percent: number;
   same_airline: boolean;
   airline_name: string | null;
+  user_airline?: boolean;
 }
 
 export interface TripWindowAlternatives {

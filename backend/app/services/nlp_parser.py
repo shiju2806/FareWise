@@ -15,24 +15,25 @@ extract structured travel legs. Today's date is {today}.
 
 Rules:
 - Resolve relative dates ("next Tuesday", "this Friday") against today's date
-- For vague date expressions, pick SMART travel-friendly dates:
-  - "Mid [month]" -> use the Thursday or Friday closest to the 15th. Business travelers prefer departing Thu/Fri so they arrive with minimal missed workdays. Example: if Apr 15 is a Wednesday, use Thursday Apr 16 instead.
-  - "Early [month]" -> use the Thursday or Friday closest to the 3rd
-  - "End of [month]" / "Late [month]" -> use the Thursday or Friday closest to the 25th
-  - "Next week" -> Monday of next week
+- For vague date expressions, use the anchor date and WIDEN flexibility so the search covers a good range:
+  - "Mid [month]" -> preferred_date = the 15th, flexibility_days = 5 (search will cover 10th-20th)
+  - "Early [month]" -> preferred_date = the 3rd, flexibility_days = 4 (covers 1st-7th)
+  - "End of [month]" / "Late [month]" -> preferred_date = the 25th, flexibility_days = 4
+  - "Next week" -> preferred_date = Monday of next week, flexibility_days = 3
+  - When the user gives a SPECIFIC date ("April 15"), use flexibility_days = 3 (default)
 - Saturday/Sunday travel is fine — corporate travelers often fly on weekends to arrive for Monday meetings
-- The key principle: when dates are vague, optimize for the employee to minimize workdays lost to travel
-- For round trips with no explicit return date: default return 4-5 days after departure.
-  Examples: depart Wed -> return Mon (5 nights). Depart Mon -> return Fri (4 nights). Depart Thu -> return Tue (5 nights).
-  A typical business round trip is 4-5 nights. NEVER suggest a trip longer than 7 days unless the user explicitly asks.
+- For round trips with no explicit return date: default return 5 days after departure.
+  Examples: depart Wed -> return Mon (5 nights). Depart Mon -> return Sat (5 nights).
+  A typical business round trip is 5 nights. NEVER suggest a trip longer than 7 days unless the user explicitly asks.
 - Infer return legs if the trip implies returning home (e.g., "Toronto to NYC and back")
 - For multi-city trips, infer connecting legs
 - Default cabin class: economy
-- Default flexibility: 3 days
+- Default flexibility: 3 days (increase for vague dates as described above)
 - Default passengers: 1
 - Map city names to primary IATA airport codes using common knowledge
 - If a city has multiple airports, use the primary one but note alternatives
 - If any part is ambiguous, include it in interpretation_notes
+- In interpretation_notes, explain your date choice: "Mid April -> Apr 15 with ±5 day flexibility to find best fares"
 
 Respond ONLY with valid JSON, no markdown, no preamble:
 {{
@@ -149,12 +150,14 @@ Help users plan trips through brief conversation. Given the conversation history
 
 IMPORTANT — be decisive, not interrogative:
 - When the user gives enough info to act (origin, destination, rough timeframe), FILL IN sensible defaults and set trip_ready=true. Do NOT keep asking questions.
-- "Mid [month]" → use the Thursday or Friday closest to the 15th. Business travelers prefer departing Thu/Fri so they arrive with minimal missed workdays. Example: if Mar 15 is a Saturday, use Friday Mar 14 instead.
-- "Early [month]" → use the Thursday or Friday closest to the 3rd.
-- "End of month" / "Late [month]" → use the Thursday or Friday closest to the 25th.
-- "Next week" → Monday of next week.
+- "Mid [month]" → preferred_date = the 15th, flexibility_days = 5. The wider flexibility lets the search find the best fare window around the user's intent.
+- "Early [month]" → preferred_date = the 3rd, flexibility_days = 4.
+- "End of month" / "Late [month]" → preferred_date = the 25th, flexibility_days = 4.
+- "Next week" → Monday of next week, flexibility_days = 3.
+- When the user gives a SPECIFIC date ("March 20"), keep flexibility_days = 3.
 - "Business" → set cabin_class to business. If no class mentioned, default to economy.
-- "Round trip" or "and back" → add a return leg matching the requested duration. If user says "for a week" → 7 days. If no duration specified, default to 5 days. Examples: depart Apr 15 "for a week" → return Apr 22. Depart Apr 15 with no duration → return Apr 20. NEVER exceed the requested duration.
+- "Round trip" or "and back" → add a return leg matching the requested duration. If user says "for a week" → 7 days. If no duration specified, default to 5 nights. Examples: depart Apr 15 "for a week" → return Apr 22. Depart Apr 15 with no duration → return Apr 20. NEVER exceed the requested duration.
+- In your reply, when dates are vague, briefly note the flexibility: e.g., "I've set departure around mid-April with a ±5 day window to find the best fares."
 - When the user says "book", "let's go", "search", or "find flights" — proceed immediately with what you have. Use defaults for anything missing.
 - Only ask a question if you truly cannot infer the origin OR destination.
 
