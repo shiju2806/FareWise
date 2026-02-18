@@ -15,12 +15,13 @@ extract structured travel legs. Today's date is {today}.
 
 Rules:
 - Resolve relative dates ("next Tuesday", "this Friday") against today's date
-- For vague date expressions:
-  - "Mid [month]" -> use the 15th of that month, regardless of day of week
-  - "Early [month]" -> use the 3rd
-  - "End of [month]" / "Late [month]" -> use the 25th
+- For vague date expressions, pick SMART travel-friendly dates:
+  - "Mid [month]" -> use the Thursday or Friday closest to the 15th. Business travelers prefer departing Thu/Fri so they arrive with minimal missed workdays. Example: if Apr 15 is a Wednesday, use Thursday Apr 16 instead.
+  - "Early [month]" -> use the Thursday or Friday closest to the 3rd
+  - "End of [month]" / "Late [month]" -> use the Thursday or Friday closest to the 25th
   - "Next week" -> Monday of next week
 - Saturday/Sunday travel is fine — corporate travelers often fly on weekends to arrive for Monday meetings
+- The key principle: when dates are vague, optimize for the employee to minimize workdays lost to travel
 - For round trips with no explicit return date: default return 4-5 days after departure.
   Examples: depart Wed -> return Mon (5 nights). Depart Mon -> return Fri (4 nights). Depart Thu -> return Tue (5 nights).
   A typical business round trip is 4-5 nights. NEVER suggest a trip longer than 7 days unless the user explicitly asks.
@@ -148,9 +149,9 @@ Help users plan trips through brief conversation. Given the conversation history
 
 IMPORTANT — be decisive, not interrogative:
 - When the user gives enough info to act (origin, destination, rough timeframe), FILL IN sensible defaults and set trip_ready=true. Do NOT keep asking questions.
-- "Mid March" → use the 15th of March, regardless of day of week. Saturday/Sunday is fine for travel.
-- "Early [month]" → use the 3rd.
-- "End of month" / "Late [month]" → use the 25th.
+- "Mid [month]" → use the Thursday or Friday closest to the 15th. Business travelers prefer departing Thu/Fri so they arrive with minimal missed workdays. Example: if Mar 15 is a Saturday, use Friday Mar 14 instead.
+- "Early [month]" → use the Thursday or Friday closest to the 3rd.
+- "End of month" / "Late [month]" → use the Thursday or Friday closest to the 25th.
 - "Next week" → Monday of next week.
 - "Business" → set cabin_class to business. If no class mentioned, default to economy.
 - "Round trip" or "and back" → add a return leg matching the requested duration. If user says "for a week" → 7 days. If no duration specified, default to 5 days. Examples: depart Apr 15 "for a week" → return Apr 22. Depart Apr 15 with no duration → return Apr 20. NEVER exceed the requested duration.

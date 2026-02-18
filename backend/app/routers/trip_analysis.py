@@ -446,6 +446,25 @@ async def analyze_selections(
             "alternatives": filtered_alternatives,
         })
 
+    # Cross-leg consistency: ensure return-leg alternatives don't conflict
+    # with outbound-leg alternatives for the same airline
+    if len(legs_result) >= 2:
+        outbound_alt_dates: dict[str, str] = {}  # airline_name → latest alt date
+        for alt in legs_result[0].get("alternatives", []):
+            if alt.get("type") == "same_airline" and alt.get("airline") and alt.get("date"):
+                airline = alt["airline"]
+                if airline not in outbound_alt_dates or alt["date"] > outbound_alt_dates[airline]:
+                    outbound_alt_dates[airline] = alt["date"]
+        for leg_data in legs_result[1:]:
+            filtered = []
+            for alt in leg_data.get("alternatives", []):
+                if alt.get("type") == "same_airline" and alt.get("airline") and alt.get("date"):
+                    outbound_alt_date = outbound_alt_dates.get(alt["airline"])
+                    if outbound_alt_date and alt["date"] <= outbound_alt_date:
+                        continue  # return before or on outbound alt date — skip
+                filtered.append(alt)
+            leg_data["alternatives"] = filtered
+
     # Trip-level totals
     trip_savings_amount = round(total_selected - total_cheapest, 2)
     trip_savings_percent = (

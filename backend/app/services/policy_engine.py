@@ -9,7 +9,13 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.data.currency import convert_to_usd
+from app.data.currency import (
+    convert_from_usd,
+    convert_to_usd,
+    format_price,
+    get_currency_for_airport,
+    is_domestic_route,
+)
 from app.models.policy import Policy, Selection
 from app.models.search_log import FlightOption
 from app.models.trip import Trip, TripLeg
@@ -56,10 +62,21 @@ class MaxPriceChecker(PolicyChecker):
         threshold_currency = threshold.get("currency", "USD")
         conditions = policy.conditions or {}
 
-        # Check route_type condition
+        # Check route_type condition — skip if policy targets wrong route type
         route_type = conditions.get("route_type")
-        if route_type == "domestic":
-            pass
+        if route_type:
+            domestic = is_domestic_route(leg.origin_airport, leg.destination_airport)
+            if (route_type == "domestic" and not domestic) or (route_type == "international" and domestic):
+                return PolicyCheckResult(
+                    policy_id=str(policy.id),
+                    policy_name=policy.name,
+                    rule_type=policy.rule_type,
+                    status="pass",
+                    action=policy.action,
+                    details=f"Route is {'domestic' if domestic else 'international'}, policy targets {route_type} — skipped",
+                    severity=policy.severity,
+                    leg_id=str(leg.id),
+                )
 
         # Check cabin condition
         cabin_cond = conditions.get("cabin")
@@ -76,15 +93,19 @@ class MaxPriceChecker(PolicyChecker):
             )
 
         # Convert both to USD for comparison
-        from app.data.currency import convert_from_usd, format_price
-        flight_currency = getattr(flight, "currency", "CAD") or "CAD"
+        flight_currency = getattr(flight, "currency", None) or "USD"
+        # Display in the trip origin's local currency for consistency with frontend
+        display_currency = get_currency_for_airport(leg.origin_airport)
+
         price_usd = Decimal(str(convert_to_usd(float(flight.price), flight_currency)))
         limit_usd = Decimal(str(convert_to_usd(float(max_amount), threshold_currency)))
 
-        # Show limit in the flight's currency for consistency
-        limit_in_flight_currency = convert_from_usd(float(limit_usd), flight_currency)
-        price_display = format_price(float(flight.price), flight_currency)
-        limit_display = format_price(limit_in_flight_currency, flight_currency)
+        # Convert to display currency
+        price_local = convert_from_usd(float(price_usd), display_currency)
+        limit_local = convert_from_usd(float(limit_usd), display_currency)
+
+        price_display = format_price(price_local, display_currency)
+        limit_display = format_price(limit_local, display_currency)
 
         if price_usd <= limit_usd:
             return PolicyCheckResult(
@@ -100,8 +121,8 @@ class MaxPriceChecker(PolicyChecker):
         else:
             status = "block" if policy.action == "block" else "warn"
             over_usd = float(price_usd - limit_usd)
-            over_local = convert_from_usd(over_usd, flight_currency)
-            over_display = format_price(over_local, flight_currency)
+            over_local = convert_from_usd(over_usd, display_currency)
+            over_display = format_price(over_local, display_currency)
             return PolicyCheckResult(
                 policy_id=str(policy.id),
                 policy_name=policy.name,
@@ -338,8 +359,66 @@ CHECKER_MAP: dict[str, type[PolicyChecker]] = {
 }
 
 
+def _extract_overage_from_details(details: str) -> float:
+    """Extract the numeric overage amount from a details string like 'CA$3,496 exceeds limit CA$2,703 by CA$793'."""
+    import re
+    m = re.search(r"by\s+[^\d]*([\d,]+)", details)
+    if m:
+        return float(m.group(1).replace(",", ""))
+    return 0.0
+
+
 class PolicyEngine:
     """Evaluates all active policies against a trip's selected flights."""
+
+    @staticmethod
+    def _consolidate_per_leg_violations(evaluation: PolicyEvaluation, legs: list[TripLeg]) -> None:
+        """Merge per-leg max_price blocks/warnings into single trip-level notes.
+
+        Instead of showing "Policy X: CA$3,496 exceeds limit" once per leg,
+        produce a single "Policy X: 2 legs exceed fare limit (total overage: CA$2,858)".
+        Also consolidates the checks list so the Policy Checks section is clean.
+        """
+        from collections import defaultdict
+
+        display_currency = get_currency_for_airport(legs[0].origin_airport) if legs else "USD"
+
+        # Group non-pass max_price checks by policy_id
+        policy_groups: dict[str, list[PolicyCheckResult]] = defaultdict(list)
+        for c in evaluation.checks:
+            if c.rule_type == "max_price" and c.status in ("block", "warn"):
+                policy_groups[c.policy_id].append(c)
+
+        for policy_id, items in policy_groups.items():
+            if len(items) <= 1:
+                continue
+
+            total_overage = sum(_extract_overage_from_details(it.details) for it in items)
+            overage_display = format_price(total_overage, display_currency)
+            consolidated = PolicyCheckResult(
+                policy_id=policy_id,
+                policy_name=items[0].policy_name,
+                rule_type="max_price",
+                status=items[0].status,
+                action=items[0].action,
+                details=f"{len(items)} legs exceed fare limit (total overage: {overage_display})",
+                severity=items[0].severity,
+            )
+
+            # Replace individual items in checks, blocks, and warnings
+            for item in items:
+                if item in evaluation.checks:
+                    evaluation.checks.remove(item)
+                if item in evaluation.blocks:
+                    evaluation.blocks.remove(item)
+                if item in evaluation.warnings:
+                    evaluation.warnings.remove(item)
+
+            evaluation.checks.append(consolidated)
+            if consolidated.status == "block":
+                evaluation.blocks.append(consolidated)
+            elif consolidated.status == "warn":
+                evaluation.warnings.append(consolidated)
 
     async def evaluate_trip(
         self,
@@ -389,16 +468,18 @@ class PolicyEngine:
                 elif check_result.status == "warn":
                     evaluation.warnings.append(check_result)
 
+        # Consolidate per-leg max_price violations into single trip-level notes
+        self._consolidate_per_leg_violations(evaluation, legs)
+
         # Check approval_threshold at trip level (compare in USD, display in trip currency)
-        from app.data.currency import get_currency_for_airport, convert_from_usd, format_price
         trip_currency = get_currency_for_airport(legs[0].origin_airport) if legs else "USD"
         total_trip_local = convert_from_usd(float(total_selected_usd), trip_currency)
 
         for policy in policies:
             if policy.rule_type == "approval_threshold" and policy.is_active:
                 threshold_amount = Decimal(str(policy.threshold.get("amount", 0)))
-                threshold_currency = policy.threshold.get("currency", "USD")
-                limit_usd = Decimal(str(convert_to_usd(float(threshold_amount), threshold_currency)))
+                t_currency = policy.threshold.get("currency", "USD")
+                limit_usd = Decimal(str(convert_to_usd(float(threshold_amount), t_currency)))
                 limit_local = convert_from_usd(float(limit_usd), trip_currency)
                 total_display = format_price(total_trip_local, trip_currency)
                 limit_display = format_price(limit_local, trip_currency)

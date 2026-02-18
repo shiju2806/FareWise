@@ -52,6 +52,73 @@ EXCHANGE_RATES_TO_USD: dict[str, float] = {
     "TWD": 0.031,
 }
 
+# Airport → country code (ISO 3166-1 alpha-2)
+AIRPORT_COUNTRIES: dict[str, str] = {
+    # Canada
+    "YYZ": "CA", "YVR": "CA", "YUL": "CA", "YOW": "CA", "YHZ": "CA",
+    "YYC": "CA", "YEG": "CA", "YWG": "CA", "YHM": "CA", "YKF": "CA",
+    # United States
+    "JFK": "US", "LAX": "US", "ORD": "US", "ATL": "US", "DFW": "US",
+    "SFO": "US", "SEA": "US", "MIA": "US", "BOS": "US", "DEN": "US",
+    "IAH": "US", "EWR": "US", "LGA": "US", "MCO": "US", "PHL": "US",
+    "IAD": "US", "DCA": "US", "CLT": "US", "MSP": "US", "DTW": "US",
+    "BWI": "US", "SAN": "US", "TPA": "US", "PDX": "US", "SLC": "US",
+    "BNA": "US", "AUS": "US", "RDU": "US", "SMF": "US", "HNL": "US",
+    # United Kingdom
+    "LHR": "GB", "LGW": "GB", "STN": "GB", "MAN": "GB", "EDI": "GB",
+    "BHX": "GB", "GLA": "GB", "LTN": "GB", "BFS": "GB",
+    # France
+    "CDG": "FR", "ORY": "FR",
+    # Germany
+    "FRA": "DE", "MUC": "DE",
+    # Netherlands
+    "AMS": "NL",
+    # Spain
+    "MAD": "ES", "BCN": "ES",
+    # Italy
+    "FCO": "IT", "MXP": "IT",
+    # Ireland
+    "DUB": "IE",
+    # Portugal
+    "LIS": "PT",
+    # Austria
+    "VIE": "AT",
+    # Belgium
+    "BRU": "BE",
+    # Finland
+    "HEL": "FI",
+    # Denmark
+    "CPH": "DK",
+    # Norway
+    "OSL": "NO",
+    # Sweden
+    "ARN": "SE",
+    # Switzerland
+    "ZRH": "CH",
+    # Japan
+    "NRT": "JP", "HND": "JP", "KIX": "JP",
+    # Singapore
+    "SIN": "SG",
+    # Hong Kong
+    "HKG": "HK",
+    # Australia
+    "SYD": "AU", "MEL": "AU",
+    # India
+    "DEL": "IN", "BOM": "IN",
+    # South Korea
+    "ICN": "KR",
+    # Taiwan
+    "TPE": "TW",
+    # UAE
+    "DXB": "AE", "AUH": "AE",
+    # Qatar
+    "DOH": "QA",
+    # Turkey
+    "IST": "TR",
+    # Iceland
+    "KEF": "IS",
+}
+
 CURRENCY_SYMBOLS: dict[str, str] = {
     "USD": "$", "CAD": "CA$", "GBP": "\u00a3", "EUR": "\u20ac",
     "JPY": "\u00a5", "AUD": "A$", "SGD": "S$", "HKD": "HK$",
@@ -77,6 +144,15 @@ def convert_from_usd(amount: float, to_currency: str) -> float:
     if rate == 0:
         return amount
     return round(amount / rate, 2)
+
+
+def is_domestic_route(origin_iata: str, dest_iata: str) -> bool:
+    """Check if a route is domestic (same country). Unknown airports are treated as international."""
+    origin_country = AIRPORT_COUNTRIES.get(origin_iata)
+    dest_country = AIRPORT_COUNTRIES.get(dest_iata)
+    if not origin_country or not dest_country:
+        return False
+    return origin_country == dest_country
 
 
 def format_price(amount: float, currency: str = "USD") -> str:
