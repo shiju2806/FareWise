@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import type { TripLeg } from "@/types/trip";
 import { useTripStore } from "@/stores/tripStore";
 import { useSearchStore } from "@/stores/searchStore";
@@ -13,10 +13,20 @@ interface Props {
 
 const CABIN_OPTIONS = ["economy", "premium_economy", "business", "first"];
 
+/** Return the highest cabin allowed for this passenger count. */
+function policyAllowedCabin(preferred: string, pax: number): string {
+  if (pax >= 4) return "economy";
+  if (pax >= 2 && (preferred === "business" || preferred === "first"))
+    return "premium_economy";
+  return preferred;
+}
+
 export function LegCard({ leg, index, onRemove, editable = false }: Props) {
   const [cabinClass, setCabinClass] = useState(leg.cabin_class);
   const [passengers, setPassengers] = useState(leg.passengers);
   const [saving, setSaving] = useState(false);
+  // Remember the user's explicit cabin choice so we can restore it
+  const preferredCabin = useRef(leg.cabin_class);
   const patchLeg = useTripStore((s) => s.patchLeg);
   const searchLeg = useSearchStore((s) => s.searchLeg);
   const refreshLeg = useSearchStore((s) => s.refreshLeg);
@@ -24,6 +34,7 @@ export function LegCard({ leg, index, onRemove, editable = false }: Props) {
   async function handleCabinChange(value: string) {
     if (value === cabinClass) return;
     const prev = cabinClass;
+    preferredCabin.current = value; // explicit user choice
     setCabinClass(value);
     setSaving(true);
     try {
@@ -31,6 +42,7 @@ export function LegCard({ leg, index, onRemove, editable = false }: Props) {
       searchLeg(leg.id);
     } catch {
       setCabinClass(prev);
+      preferredCabin.current = prev;
     } finally {
       setSaving(false);
     }
@@ -42,23 +54,24 @@ export function LegCard({ leg, index, onRemove, editable = false }: Props) {
     setPassengers(value);
     setSaving(true);
     try {
-      // Determine if cabin needs to downgrade based on passenger policy
-      let newCabin = cabinClass;
-      if (value >= 4 && cabinClass !== "economy") {
-        newCabin = "economy";
-      } else if (value >= 2 && (cabinClass === "business" || cabinClass === "first")) {
-        newCabin = "premium_economy";
-      }
+      // Derive cabin from the user's preferred cabin + passenger policy
+      const newCabin = policyAllowedCabin(preferredCabin.current, value);
 
-      // Patch passengers (and cabin if policy requires downgrade)
       const patch: Record<string, unknown> = { passengers: value };
       if (newCabin !== cabinClass) {
         patch.cabin_class = newCabin;
         setCabinClass(newCabin);
-        useToastStore.getState().addToast(
-          "info",
-          `${value} passengers — cabin changed to ${newCabin.replace("_", " ")} per company policy.`
-        );
+        if (newCabin !== preferredCabin.current) {
+          useToastStore.getState().addToast(
+            "info",
+            `${value} passengers — cabin changed to ${newCabin.replace("_", " ")} per company policy.`
+          );
+        } else {
+          useToastStore.getState().addToast(
+            "success",
+            `Cabin restored to ${newCabin.replace("_", " ")}.`
+          );
+        }
       }
       await patchLeg(leg.id, patch);
 

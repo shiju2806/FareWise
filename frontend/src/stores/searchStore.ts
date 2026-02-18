@@ -86,6 +86,12 @@ export const useSearchStore = create<SearchState>()(persist((set, get) => ({
   refreshLeg: async (legId: string) => {
     // Silent re-search: updates results in-place without loading skeleton.
     // Used when passenger count changes so prices update without UI disruption.
+
+    // Cancel any in-flight loud search (it has stale params)
+    const prev = get()._abortController;
+    if (prev) prev.abort();
+    set({ loading: false, searchStartedAt: null, _abortController: null });
+
     try {
       const res = await apiClient.post(
         `/search/${legId}`,
