@@ -63,6 +63,15 @@ async def get_savings_report(
     return await analytics_service.get_savings_summary(db)
 
 
+@router.get("/savings-goal")
+async def get_savings_goal(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Company-wide quarterly savings goal — accessible to all users."""
+    return await analytics_service.get_savings_goal(db)
+
+
 @router.get("/my-stats")
 async def get_my_stats(
     db: AsyncSession = Depends(get_db),

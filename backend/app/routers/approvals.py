@@ -8,14 +8,23 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from datetime import date
+
 from app.database import get_db
 from app.dependencies import get_current_user
+from app.models.analytics import TravelerScore
 from app.models.policy import Approval, ApprovalHistory, SavingsReport, PolicyViolation
 from app.models.trip import Trip
 from app.models.user import User
+from app.services.analytics_service import compute_tier
 from app.services.approval_service import approval_service
 
 router = APIRouter()
+
+
+def _get_traveler_tier(score: TravelerScore | None) -> str:
+    """Get tier from a TravelerScore, defaulting to bronze."""
+    return compute_tier(score.score if score else 0)
 
 
 class SubmitRequest(BaseModel):
@@ -221,6 +230,16 @@ async def get_approval_detail(
     traveler_result = await db.execute(select(User).where(User.id == trip.traveler_id))
     traveler = traveler_result.scalar_one_or_none()
 
+    # Get traveler's current score for tier
+    period = f"{date.today().year}-{date.today().month:02d}"
+    ts_result = await db.execute(
+        select(TravelerScore).where(
+            TravelerScore.user_id == trip.traveler_id,
+            TravelerScore.period == period,
+        )
+    )
+    traveler_score = ts_result.scalar_one_or_none()
+
     approver_result = await db.execute(select(User).where(User.id == approval.approver_id))
     approver = approver_result.scalar_one_or_none()
 
@@ -290,6 +309,7 @@ async def get_approval_detail(
             "id": str(traveler.id) if traveler else None,
             "name": f"{traveler.first_name} {traveler.last_name}" if traveler else "Unknown",
             "department": traveler.department if traveler else None,
+            "tier": _get_traveler_tier(traveler_score),
         },
         "approver": {
             "id": str(approver.id) if approver else None,

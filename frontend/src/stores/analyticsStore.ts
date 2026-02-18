@@ -6,6 +6,7 @@ import type {
   LeaderboardData,
   MyStats,
   RouteAnalytics,
+  SavingsGoal,
   SavingsSummary,
 } from "@/types/analytics";
 
@@ -14,6 +15,7 @@ interface AnalyticsState {
   department: DepartmentAnalytics | null;
   route: RouteAnalytics | null;
   savingsSummary: SavingsSummary | null;
+  savingsGoal: SavingsGoal | null;
   myStats: MyStats | null;
   leaderboard: LeaderboardData | null;
   loading: boolean;
@@ -22,6 +24,7 @@ interface AnalyticsState {
   fetchDepartment: (dept: string) => Promise<void>;
   fetchRoute: (origin: string, dest: string) => Promise<void>;
   fetchSavingsSummary: () => Promise<void>;
+  fetchSavingsGoal: () => Promise<void>;
   fetchMyStats: () => Promise<void>;
   fetchLeaderboard: (department?: string) => Promise<void>;
 }
@@ -31,6 +34,7 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
   department: null,
   route: null,
   savingsSummary: null,
+  savingsGoal: null,
   myStats: null,
   leaderboard: null,
   loading: false,
@@ -72,6 +76,15 @@ export const useAnalyticsStore = create<AnalyticsState>((set) => ({
       set({ savingsSummary: res.data, loading: false });
     } catch {
       set({ loading: false });
+    }
+  },
+
+  fetchSavingsGoal: async () => {
+    try {
+      const res = await apiClient.get("/analytics/savings-goal");
+      set({ savingsGoal: res.data });
+    } catch {
+      /* ignore */
     }
   },
 

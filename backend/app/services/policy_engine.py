@@ -240,6 +240,52 @@ class MaxStopsChecker(PolicyChecker):
             )
 
 
+class PassengerCabinChecker(PolicyChecker):
+    """Enforce cabin class restrictions based on passenger count.
+
+    threshold format: {"1": ["economy","premium_economy","business","first"],
+                       "2": ["economy","premium_economy"],
+                       "4": ["economy"]}
+    Keys are passenger count thresholds; values are allowed cabins at that count.
+    """
+
+    def check(self, policy, leg, selection, flight) -> PolicyCheckResult:
+        allowed_map = policy.threshold or {}
+        pax = getattr(leg, "passengers", 1) or 1
+        cabin = (getattr(flight, "cabin_class", "economy") or "economy").lower()
+
+        # Find the highest threshold key <= passenger count
+        applicable_key = "1"
+        for key in sorted(allowed_map.keys(), key=lambda k: int(k)):
+            if pax >= int(key):
+                applicable_key = key
+
+        allowed_cabins = [c.lower() for c in allowed_map.get(applicable_key, [])]
+
+        if cabin in allowed_cabins:
+            return PolicyCheckResult(
+                policy_id=str(policy.id),
+                policy_name=policy.name,
+                rule_type="passenger_cabin",
+                status="pass",
+                action=policy.action,
+                details=f"{cabin} allowed for {pax} passenger(s)",
+                severity=policy.severity,
+                leg_id=str(leg.id),
+            )
+
+        return PolicyCheckResult(
+            policy_id=str(policy.id),
+            policy_name=policy.name,
+            rule_type="passenger_cabin",
+            status="warn" if policy.action != "block" else "block",
+            action=policy.action,
+            details=f"{cabin} not allowed for {pax} passenger(s). Allowed: {', '.join(allowed_cabins)}",
+            severity=policy.severity,
+            leg_id=str(leg.id),
+        )
+
+
 class ApprovalThresholdChecker(PolicyChecker):
     """Trip-level check: determines if trip qualifies for auto-approval."""
 
@@ -278,6 +324,7 @@ CHECKER_MAP: dict[str, type[PolicyChecker]] = {
     "cabin_restriction": CabinRestrictionChecker,
     "preferred_airline": PreferredAirlineChecker,
     "max_stops": MaxStopsChecker,
+    "passenger_cabin": PassengerCabinChecker,
     "approval_threshold": ApprovalThresholdChecker,
     "cabin_class_count": CabinClassCountChecker,
 }

@@ -43,6 +43,8 @@ export default function MyStats() {
 
       <ScoreCard
         score={myStats.current.score}
+        tier={myStats.current.tier || "bronze"}
+        streak={myStats.current.streak || 0}
         rankDepartment={myStats.current.rank_department}
         rankCompany={myStats.current.rank_company}
         totalTrips={myStats.current.total_trips}

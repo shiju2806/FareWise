@@ -29,7 +29,7 @@ interface ApprovalDetail {
     }>;
     total_estimated_cost: number | null;
   };
-  traveler: { id: string; name: string; department: string | null };
+  traveler: { id: string; name: string; department: string | null; tier?: string };
   approver: { id: string; name: string };
   savings_report: {
     id: string;
@@ -54,6 +54,13 @@ interface ApprovalDetail {
     created_at: string;
   }>;
 }
+
+const tierBadgeColors: Record<string, string> = {
+  bronze: "bg-amber-100 text-amber-800",
+  silver: "bg-gray-100 text-gray-700",
+  gold: "bg-yellow-100 text-yellow-800",
+  platinum: "bg-purple-100 text-purple-800",
+};
 
 const statusColors: Record<string, string> = {
   pass: "text-green-600",
@@ -158,6 +165,15 @@ export default function ApprovalDetailPage() {
           </h2>
           <p className="text-muted-foreground">
             {detail.traveler.name}
+            {detail.traveler.tier && (
+              <span
+                className={`ml-2 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                  tierBadgeColors[detail.traveler.tier] || tierBadgeColors.bronze
+                }`}
+              >
+                {detail.traveler.tier.charAt(0).toUpperCase() + detail.traveler.tier.slice(1)}
+              </span>
+            )}
             {detail.traveler.department &&
               ` · ${detail.traveler.department}`}
           </p>

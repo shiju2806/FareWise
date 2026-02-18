@@ -54,6 +54,7 @@ export interface LeaderboardEntry {
   name: string;
   department: string;
   score: number;
+  tier: string;
   trips: number;
   savings: number;
   compliance: number;
@@ -76,9 +77,19 @@ export interface BadgeDetail {
   earned?: boolean;
 }
 
+export interface SavingsGoal {
+  quarter: string;
+  total_savings: number;
+  target: number;
+  trip_count: number;
+  progress_pct: number;
+}
+
 export interface MyStats {
   current: {
     score: number;
+    tier: string;
+    streak: number;
     rank_department: number | null;
     rank_company: number | null;
     total_trips: number;

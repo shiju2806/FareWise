@@ -5,18 +5,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTripStore } from "@/stores/tripStore";
 import { useAuthStore } from "@/stores/authStore";
 import { useApprovalStore } from "@/stores/approvalStore";
+import { useAnalyticsStore } from "@/stores/analyticsStore";
+import { CompanySavingsGoal } from "@/components/gamification/CompanySavingsGoal";
 
 export default function Dashboard() {
   const { trips, fetchTrips } = useTripStore();
   const user = useAuthStore((s) => s.user);
   const { counts, fetchApprovals } = useApprovalStore();
+  const { savingsGoal, fetchSavingsGoal } = useAnalyticsStore();
 
   useEffect(() => {
     fetchTrips();
+    fetchSavingsGoal();
     if (user?.role === "manager" || user?.role === "admin") {
       fetchApprovals();
     }
-  }, [fetchTrips, fetchApprovals, user]);
+  }, [fetchTrips, fetchApprovals, fetchSavingsGoal, user]);
 
   const draftCount = trips.filter((t) => t.status === "draft").length;
   const searchingCount = trips.filter((t) => t.status === "searching").length;
@@ -80,6 +84,9 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Company savings goal */}
+      {savingsGoal && <CompanySavingsGoal goal={savingsGoal} />}
 
       {/* Manager approval card */}
       {isManager && counts.pending > 0 && (

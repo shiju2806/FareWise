@@ -1,7 +1,16 @@
 import { Card, CardContent } from "@/components/ui/card";
 
+const tierColors: Record<string, string> = {
+  bronze: "bg-amber-100 text-amber-800",
+  silver: "bg-gray-100 text-gray-700",
+  gold: "bg-yellow-100 text-yellow-800",
+  platinum: "bg-purple-100 text-purple-800",
+};
+
 interface Props {
   score: number;
+  tier: string;
+  streak: number;
   rankDepartment: number | null;
   rankCompany: number | null;
   totalTrips: number;
@@ -11,6 +20,8 @@ interface Props {
 
 export function ScoreCard({
   score,
+  tier,
+  streak,
   rankDepartment,
   rankCompany,
   totalTrips,
@@ -60,41 +71,59 @@ export function ScoreCard({
           </div>
 
           {/* Stats grid */}
-          <div className="flex-1 grid grid-cols-2 gap-3">
-            <div>
-              <p className="text-xs text-muted-foreground">Dept Rank</p>
-              <p className="text-lg font-bold">
-                {rankDepartment ? `#${rankDepartment}` : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Company Rank</p>
-              <p className="text-lg font-bold">
-                {rankCompany ? `#${rankCompany}` : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Trips</p>
-              <p className="text-lg font-bold">{totalTrips}</p>
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Savings</p>
-              <p className="text-lg font-bold text-green-600">
-                ${totalSavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              </p>
-            </div>
-            <div className="col-span-2">
-              <p className="text-xs text-muted-foreground">Compliance</p>
-              <div className="flex items-center gap-2 mt-1">
-                <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-green-500 rounded-full"
-                    style={{ width: `${complianceRate * 100}%` }}
-                  />
-                </div>
-                <span className="text-sm font-medium">
-                  {(complianceRate * 100).toFixed(0)}%
+          <div className="flex-1 space-y-3">
+            {/* Tier + streak row */}
+            <div className="flex items-center gap-2">
+              <span
+                className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                  tierColors[tier] || tierColors.bronze
+                }`}
+              >
+                {tier.charAt(0).toUpperCase() + tier.slice(1)}
+              </span>
+              {streak > 0 && (
+                <span className="text-xs text-amber-600 font-medium">
+                  {streak} compliant trip{streak > 1 ? "s" : ""} in a row
                 </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Dept Rank</p>
+                <p className="text-lg font-bold">
+                  {rankDepartment ? `#${rankDepartment}` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Company Rank</p>
+                <p className="text-lg font-bold">
+                  {rankCompany ? `#${rankCompany}` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Trips</p>
+                <p className="text-lg font-bold">{totalTrips}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Savings</p>
+                <p className="text-lg font-bold text-green-600">
+                  ${totalSavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </p>
+              </div>
+              <div className="col-span-2">
+                <p className="text-xs text-muted-foreground">Compliance</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 rounded-full"
+                      style={{ width: `${complianceRate * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-sm font-medium">
+                    {(complianceRate * 100).toFixed(0)}%
+                  </span>
+                </div>
               </div>
             </div>
           </div>

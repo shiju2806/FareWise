@@ -95,6 +95,19 @@ SEED_POLICIES = [
         "action": "info",
         "severity": 1,
     },
+    {
+        "name": "Passenger Cabin Policy",
+        "description": "Groups of 2+ fly premium economy or below; groups of 4+ fly economy only",
+        "rule_type": "passenger_cabin",
+        "conditions": {},
+        "threshold": {
+            "1": ["economy", "premium_economy", "business", "first"],
+            "2": ["economy", "premium_economy"],
+            "4": ["economy"],
+        },
+        "action": "warn",
+        "severity": 6,
+    },
 ]
 
 

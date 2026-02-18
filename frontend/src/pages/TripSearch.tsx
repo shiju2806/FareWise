@@ -16,6 +16,7 @@ import { LegCard } from "@/components/trip/LegCard";
 import { formatPrice } from "@/lib/currency";
 import { SearchAssistant } from "@/components/search/SearchAssistant";
 import { InlineReviewPanel, type EvalResult } from "@/components/search/InlineReviewPanel";
+import { useToastStore } from "@/stores/toastStore";
 import type { FlightOption } from "@/types/flight";
 import apiClient from "@/api/client";
 
@@ -255,6 +256,28 @@ export default function TripSearch() {
         const evalRes = await apiClient.post(`/trips/${tripId}/evaluate`);
         setEvalResult(evalRes.data);
         setShowReviewPanel(true);
+
+        // Savings toast — feedback after all legs confirmed
+        if (evalRes.data?.savings_report) {
+          const sr = evalRes.data.savings_report;
+          const diff = sr.cheapest_total > 0 ? sr.selected_total - sr.cheapest_total : 0;
+          if (diff <= 0) {
+            useToastStore.getState().addToast(
+              "success",
+              "Great choice! Your selections match the cheapest available options."
+            );
+          } else if (diff < 200) {
+            useToastStore.getState().addToast(
+              "success",
+              `Selections confirmed. Only ${formatPrice(diff, sr.currency || "USD")} above cheapest — good balance of cost and convenience.`
+            );
+          } else {
+            useToastStore.getState().addToast(
+              "info",
+              `Selections confirmed. ${formatPrice(diff, sr.currency || "USD")} above cheapest combination — consider reviewing for savings.`
+            );
+          }
+        }
       } catch {
         // If eval fails, still show confirmed state
         setShowReviewPanel(false);

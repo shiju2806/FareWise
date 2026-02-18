@@ -51,6 +51,8 @@ export default function MyProfile() {
             <div className="space-y-6 pt-4">
               <ScoreCard
                 score={myStats.current.score}
+                tier={myStats.current.tier || "bronze"}
+                streak={myStats.current.streak || 0}
                 rankDepartment={myStats.current.rank_department}
                 rankCompany={myStats.current.rank_company}
                 totalTrips={myStats.current.total_trips}

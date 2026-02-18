@@ -32,6 +32,17 @@ BADGE_DEFINITIONS = {
 }
 
 
+def compute_tier(score: int) -> str:
+    """Map score to traveler tier."""
+    if score >= 750:
+        return "platinum"
+    if score >= 500:
+        return "gold"
+    if score >= 250:
+        return "silver"
+    return "bronze"
+
+
 class AnalyticsService:
     """Pre-computes analytics snapshots and traveler scores."""
 
@@ -449,6 +460,28 @@ class AnalyticsService:
 
         return badges
 
+    async def _compute_streak(self, db: AsyncSession, user_id) -> int:
+        """Count consecutive compliant trips (most recent first)."""
+        result = await db.execute(
+            select(SavingsReport)
+            .join(Trip, Trip.id == SavingsReport.trip_id)
+            .where(
+                and_(
+                    Trip.traveler_id == user_id,
+                    Trip.status.in_(["approved", "submitted"]),
+                )
+            )
+            .order_by(Trip.updated_at.desc())
+        )
+        reports = result.scalars().all()
+        streak = 0
+        for r in reports:
+            if r.policy_status == "compliant":
+                streak += 1
+            else:
+                break
+        return streak
+
     async def _compute_ranks(self, db: AsyncSession, period: str) -> None:
         """Compute department and company ranks for the given period."""
         # All scores for this period
@@ -692,9 +725,14 @@ class AnalyticsService:
             if b in BADGE_DEFINITIONS
         ]
 
+        score_val = current.score if current else 0
+        streak = await self._compute_streak(db, user_id)
+
         return {
             "current": {
-                "score": current.score if current else 0,
+                "score": score_val,
+                "tier": compute_tier(score_val),
+                "streak": streak,
                 "rank_department": current.rank_in_department if current else None,
                 "rank_company": current.rank_in_company if current else None,
                 "total_trips": current.total_trips if current else 0,
@@ -732,6 +770,7 @@ class AnalyticsService:
                 "name": f"{fname} {lname}",
                 "department": dept or "Unassigned",
                 "score": ts.score,
+                "tier": compute_tier(ts.score),
                 "trips": ts.total_trips,
                 "savings": float(ts.total_savings),
                 "compliance": float(ts.policy_compliance_rate),
@@ -768,6 +807,44 @@ class AnalyticsService:
             "total_most_expensive": float(row[3] or 0),
             "total_savings": float(row[4] or 0),
             "avg_savings": float(row[5] or 0),
+        }
+
+    async def get_savings_goal(self, db: AsyncSession) -> dict:
+        """Get company-wide savings progress for current quarter."""
+        now = date.today()
+        quarter_month = ((now.month - 1) // 3) * 3 + 1
+        quarter_start = date(now.year, quarter_month, 1)
+        # Next quarter start
+        if quarter_month + 3 > 12:
+            quarter_end = date(now.year + 1, 1, 1)
+        else:
+            quarter_end = date(now.year, quarter_month + 3, 1)
+        quarter_label = f"Q{(now.month - 1) // 3 + 1} {now.year}"
+
+        result = await db.execute(
+            select(
+                func.coalesce(func.sum(SavingsReport.savings_vs_expensive), 0),
+                func.count(SavingsReport.id),
+            )
+            .join(Trip, Trip.id == SavingsReport.trip_id)
+            .where(
+                and_(
+                    Trip.status.in_(["approved", "submitted"]),
+                    Trip.updated_at >= quarter_start,
+                    Trip.updated_at < quarter_end,
+                )
+            )
+        )
+        total_savings, trip_count = result.one()
+
+        target = 50000  # $50k USD per quarter
+        savings_float = float(total_savings)
+        return {
+            "quarter": quarter_label,
+            "total_savings": savings_float,
+            "target": target,
+            "trip_count": trip_count,
+            "progress_pct": min(100, round(savings_float / target * 100, 1)) if target > 0 else 0,
         }
 
     async def export_analytics_csv(self, db: AsyncSession) -> list[dict]:

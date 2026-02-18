@@ -56,7 +56,7 @@ interface InlineReviewPanelProps {
   tripId: string;
   evalResult: EvalResult;
   selectedFlights: Record<string, SelectedFlight>;
-  legs: Array<{ id: string; origin_airport: string; destination_airport: string }>;
+  legs: Array<{ id: string; origin_airport: string; destination_airport: string; passengers: number }>;
   onSubmitSuccess: () => void;
   onCancel: () => void;
 }
@@ -84,10 +84,13 @@ export function InlineReviewPanel({
   onCancel,
 }: InlineReviewPanelProps) {
   const [notes, setNotes] = useState("");
+  const [multiTravelerNote, setMultiTravelerNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [violationAcks, setViolationAcks] = useState<Record<string, boolean>>({});
   const [violationNotes, setViolationNotes] = useState<Record<string, string>>({});
+
+  const hasMultiPax = legs.some((l) => l.passengers > 1);
 
   const sr = evalResult.savings_report;
 
@@ -104,6 +107,7 @@ export function InlineReviewPanel({
   );
 
   async function handleSubmit() {
+    if (hasMultiPax && !multiTravelerNote.trim()) return;
     setSubmitting(true);
     try {
       const justifications: Record<string, string> = {};
@@ -113,8 +117,12 @@ export function InlineReviewPanel({
         }
       }
 
+      const fullNotes = hasMultiPax
+        ? `[Multi-traveler: ${multiTravelerNote.trim()}]\n${notes}`.trim()
+        : notes || undefined;
+
       await apiClient.post(`/trips/${tripId}/submit`, {
-        traveler_notes: notes || undefined,
+        traveler_notes: fullNotes || undefined,
         violation_justifications:
           Object.keys(justifications).length > 0 ? justifications : undefined,
       });
@@ -257,6 +265,28 @@ export function InlineReviewPanel({
         </div>
       )}
 
+      {/* Multi-traveler justification */}
+      {hasMultiPax && (
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-amber-700">
+            Multi-traveler justification (required)
+          </label>
+          <p className="text-[10px] text-muted-foreground">
+            {legs
+              .filter((l) => l.passengers > 1)
+              .map((l) => `${l.origin_airport} → ${l.destination_airport}: ${l.passengers} pax`)
+              .join("; ")}
+          </p>
+          <textarea
+            className="w-full border border-amber-200 rounded-md px-2.5 py-1.5 text-xs bg-background resize-none"
+            placeholder="Explain why multiple passengers are on this booking..."
+            value={multiTravelerNote}
+            onChange={(e) => setMultiTravelerNote(e.target.value)}
+            rows={2}
+          />
+        </div>
+      )}
+
       {/* Notes */}
       <textarea
         className="w-full border rounded-md px-2.5 py-1.5 text-xs bg-background resize-none"
@@ -276,7 +306,8 @@ export function InlineReviewPanel({
           className="text-xs"
           disabled={
             submitting ||
-            (allViolations.length > 0 && !allViolationsAcked)
+            (allViolations.length > 0 && !allViolationsAcked) ||
+            (hasMultiPax && !multiTravelerNote.trim())
           }
           onClick={handleSubmit}
         >
