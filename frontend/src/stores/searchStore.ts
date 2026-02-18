@@ -13,8 +13,14 @@ interface SearchState {
   searchStartedAt: number | null;
   _abortController: AbortController | null;
 
+  // Background prefetch state
+  prefetching: Record<string, boolean>;
+  _prefetchControllers: Record<string, AbortController>;
+
   searchLeg: (legId: string) => Promise<void>;
+  refreshLeg: (legId: string) => Promise<void>;
   cancelSearch: () => void;
+  prefetchLeg: (legId: string) => Promise<void>;
   rescoreWithSlider: (legId: string, position: number) => Promise<void>;
   setSliderValue: (v: number) => void;
   clearResults: () => void;
@@ -29,11 +35,27 @@ export const useSearchStore = create<SearchState>()(persist((set, get) => ({
   error: null,
   searchStartedAt: null,
   _abortController: null,
+  prefetching: {},
+  _prefetchControllers: {},
 
   searchLeg: async (legId: string) => {
-    // Cancel any in-flight search
+    // Cancel any in-flight main search
     const prev = get()._abortController;
     if (prev) prev.abort();
+
+    // Cancel any in-flight prefetch for THIS specific leg (avoid duplicate work)
+    const prefetchCtrl = get()._prefetchControllers[legId];
+    if (prefetchCtrl) {
+      prefetchCtrl.abort();
+      set((state) => {
+        const nextControllers = { ...state._prefetchControllers };
+        delete nextControllers[legId];
+        return {
+          prefetching: { ...state.prefetching, [legId]: false },
+          _prefetchControllers: nextControllers,
+        };
+      });
+    }
 
     const controller = new AbortController();
     set({ loading: true, error: null, searchStartedAt: Date.now(), _abortController: controller });
@@ -61,10 +83,67 @@ export const useSearchStore = create<SearchState>()(persist((set, get) => ({
     }
   },
 
+  refreshLeg: async (legId: string) => {
+    // Silent re-search: updates results in-place without loading skeleton.
+    // Used when passenger count changes so prices update without UI disruption.
+    try {
+      const res = await apiClient.post(
+        `/search/${legId}`,
+        { include_nearby_airports: true },
+        { timeout: 120000 },
+      );
+      set((state) => ({
+        results: { ...state.results, [legId]: res.data as SearchResult },
+      }));
+    } catch {
+      // Silent failure — existing results remain visible
+    }
+  },
+
   cancelSearch: () => {
     const ctrl = get()._abortController;
     if (ctrl) ctrl.abort();
     set({ loading: false, error: null, searchStartedAt: null, _abortController: null });
+  },
+
+  prefetchLeg: async (legId: string) => {
+    // Skip if results already exist or already prefetching this leg
+    if (get().results[legId] || get().prefetching[legId]) return;
+
+    const controller = new AbortController();
+    set((state) => ({
+      prefetching: { ...state.prefetching, [legId]: true },
+      _prefetchControllers: { ...state._prefetchControllers, [legId]: controller },
+    }));
+
+    try {
+      const res = await apiClient.post(
+        `/search/${legId}`,
+        { include_nearby_airports: true },
+        { timeout: 120000, signal: controller.signal },
+      );
+      set((state) => {
+        const nextControllers = { ...state._prefetchControllers };
+        delete nextControllers[legId];
+        return {
+          results: { ...state.results, [legId]: res.data as SearchResult },
+          prefetching: { ...state.prefetching, [legId]: false },
+          _prefetchControllers: nextControllers,
+        };
+      });
+    } catch (err: unknown) {
+      if (!axios.isCancel(err)) {
+        console.warn(`Prefetch for leg ${legId} failed:`, err);
+      }
+      set((state) => {
+        const nextControllers = { ...state._prefetchControllers };
+        delete nextControllers[legId];
+        return {
+          prefetching: { ...state.prefetching, [legId]: false },
+          _prefetchControllers: nextControllers,
+        };
+      });
+    }
   },
 
   rescoreWithSlider: async (legId: string, position: number) => {

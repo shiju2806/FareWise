@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { TripLeg } from "@/types/trip";
 import { useTripStore } from "@/stores/tripStore";
 import { useSearchStore } from "@/stores/searchStore";
+import { useToastStore } from "@/stores/toastStore";
 
 interface Props {
   leg: TripLeg;
@@ -18,6 +19,7 @@ export function LegCard({ leg, index, onRemove, editable = false }: Props) {
   const [saving, setSaving] = useState(false);
   const patchLeg = useTripStore((s) => s.patchLeg);
   const searchLeg = useSearchStore((s) => s.searchLeg);
+  const refreshLeg = useSearchStore((s) => s.refreshLeg);
 
   async function handleCabinChange(value: string) {
     if (value === cabinClass) return;
@@ -41,7 +43,20 @@ export function LegCard({ leg, index, onRemove, editable = false }: Props) {
     setSaving(true);
     try {
       await patchLeg(leg.id, { passengers: value });
-      searchLeg(leg.id);
+      // Show policy feedback based on passenger count
+      if (value >= 4) {
+        useToastStore.getState().addToast(
+          "info",
+          `${value} passengers — company policy requires economy class for groups of 4+.`
+        );
+      } else if (value >= 2) {
+        useToastStore.getState().addToast(
+          "info",
+          `${value} passengers — company policy limits cabin to premium economy or below for groups of 2+.`
+        );
+      }
+      // Silent refresh: prices update in background without loading skeleton
+      refreshLeg(leg.id);
     } catch {
       setPassengers(prev);
     } finally {
