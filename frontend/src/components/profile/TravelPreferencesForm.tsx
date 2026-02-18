@@ -13,6 +13,10 @@ interface Preferences {
   seat_preference: string | null;
   preferred_alliances: string[];
   prefer_same_tier: boolean;
+  preferred_currency: string | null;
+  card_name: string | null;
+  card_last4: string | null;
+  card_type: string | null;
 }
 
 const CABIN_OPTIONS = [
@@ -43,6 +47,23 @@ const ALLIANCE_OPTIONS = [
   { value: "skyteam", label: "SkyTeam", airlines: "Delta, Air France, KLM, Korean Air..." },
 ];
 
+const CURRENCY_OPTIONS = [
+  { value: "CAD", label: "CAD — Canadian Dollar" },
+  { value: "USD", label: "USD — US Dollar" },
+  { value: "GBP", label: "GBP — British Pound" },
+  { value: "EUR", label: "EUR — Euro" },
+  { value: "AUD", label: "AUD — Australian Dollar" },
+  { value: "JPY", label: "JPY — Japanese Yen" },
+  { value: "SGD", label: "SGD — Singapore Dollar" },
+];
+
+const CARD_TYPE_OPTIONS = [
+  { value: "visa", label: "Visa" },
+  { value: "mastercard", label: "Mastercard" },
+  { value: "amex", label: "American Express" },
+  { value: "corporate", label: "Corporate Card" },
+];
+
 export function TravelPreferencesForm() {
   const [prefs, setPrefs] = useState<Preferences>({
     excluded_airlines: [],
@@ -53,6 +74,10 @@ export function TravelPreferencesForm() {
     seat_preference: null,
     preferred_alliances: [],
     prefer_same_tier: false,
+    preferred_currency: null,
+    card_name: null,
+    card_last4: null,
+    card_type: null,
   });
   const [airlineInput, setAirlineInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -326,6 +351,100 @@ export function TravelPreferencesForm() {
               onCheckedChange={(checked) =>
                 setPrefs((p) => ({ ...p, prefer_same_tier: checked }))
               }
+            />
+          </div>
+
+          {/* Preferred Currency */}
+          <div>
+            <label className="text-sm font-medium">Preferred Currency</label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Display prices in this currency across the app.
+            </p>
+            <select
+              value={prefs.preferred_currency || ""}
+              onChange={(e) =>
+                setPrefs((p) => ({
+                  ...p,
+                  preferred_currency: e.target.value || null,
+                }))
+              }
+              className="w-64 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            >
+              <option value="">Auto-detect from route</option>
+              {CURRENCY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Payment Card */}
+      <Card>
+        <CardContent className="pt-6 space-y-6">
+          <h3 className="text-sm font-semibold">Payment Card</h3>
+          <p className="text-xs text-muted-foreground -mt-4">
+            Card details for booking. Only the last 4 digits are stored.
+          </p>
+
+          {/* Card Type */}
+          <div>
+            <label className="text-sm font-medium">Card Type</label>
+            <div className="flex gap-3 mt-2">
+              {CARD_TYPE_OPTIONS.map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-center gap-2 rounded-md border px-3 py-2 text-sm cursor-pointer transition-colors ${
+                    prefs.card_type === opt.value
+                      ? "border-primary bg-primary/5 text-primary font-medium"
+                      : "border-border text-muted-foreground hover:bg-muted/50"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="card_type"
+                    value={opt.value}
+                    checked={prefs.card_type === opt.value}
+                    onChange={(e) =>
+                      setPrefs((p) => ({ ...p, card_type: e.target.value }))
+                    }
+                    className="sr-only"
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Cardholder Name */}
+          <div>
+            <label className="text-sm font-medium">Cardholder Name</label>
+            <input
+              type="text"
+              value={prefs.card_name || ""}
+              onChange={(e) =>
+                setPrefs((p) => ({ ...p, card_name: e.target.value || null }))
+              }
+              placeholder="As it appears on the card"
+              className="mt-1 w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+          </div>
+
+          {/* Last 4 Digits */}
+          <div>
+            <label className="text-sm font-medium">Last 4 Digits</label>
+            <input
+              type="text"
+              value={prefs.card_last4 || ""}
+              onChange={(e) => {
+                const val = e.target.value.replace(/\D/g, "").slice(0, 4);
+                setPrefs((p) => ({ ...p, card_last4: val || null }));
+              }}
+              placeholder="1234"
+              maxLength={4}
+              className="mt-1 w-24 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
           </div>
         </CardContent>

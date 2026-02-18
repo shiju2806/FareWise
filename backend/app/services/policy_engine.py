@@ -76,9 +76,15 @@ class MaxPriceChecker(PolicyChecker):
             )
 
         # Convert both to USD for comparison
+        from app.data.currency import convert_from_usd, format_price
         flight_currency = getattr(flight, "currency", "CAD") or "CAD"
         price_usd = Decimal(str(convert_to_usd(float(flight.price), flight_currency)))
         limit_usd = Decimal(str(convert_to_usd(float(max_amount), threshold_currency)))
+
+        # Show limit in the flight's currency for consistency
+        limit_in_flight_currency = convert_from_usd(float(limit_usd), flight_currency)
+        price_display = format_price(float(flight.price), flight_currency)
+        limit_display = format_price(limit_in_flight_currency, flight_currency)
 
         if price_usd <= limit_usd:
             return PolicyCheckResult(
@@ -87,20 +93,22 @@ class MaxPriceChecker(PolicyChecker):
                 rule_type=policy.rule_type,
                 status="pass",
                 action=policy.action,
-                details=f"{flight_currency} {flight.price:.0f} (~${price_usd:.0f} USD) within limit ${limit_usd:.0f} USD",
+                details=f"{price_display} within limit {limit_display}",
                 severity=policy.severity,
                 leg_id=str(leg.id),
             )
         else:
             status = "block" if policy.action == "block" else "warn"
-            over = price_usd - limit_usd
+            over_usd = float(price_usd - limit_usd)
+            over_local = convert_from_usd(over_usd, flight_currency)
+            over_display = format_price(over_local, flight_currency)
             return PolicyCheckResult(
                 policy_id=str(policy.id),
                 policy_name=policy.name,
                 rule_type=policy.rule_type,
                 status=status,
                 action=policy.action,
-                details=f"{flight_currency} {flight.price:.0f} (~${price_usd:.0f} USD) exceeds limit ${limit_usd:.0f} USD by ${over:.0f}",
+                details=f"{price_display} exceeds limit {limit_display} by {over_display}",
                 severity=policy.severity,
                 leg_id=str(leg.id),
             )
@@ -381,12 +389,19 @@ class PolicyEngine:
                 elif check_result.status == "warn":
                     evaluation.warnings.append(check_result)
 
-        # Check approval_threshold at trip level (compare in USD)
+        # Check approval_threshold at trip level (compare in USD, display in trip currency)
+        from app.data.currency import get_currency_for_airport, convert_from_usd, format_price
+        trip_currency = get_currency_for_airport(legs[0].origin_airport) if legs else "USD"
+        total_trip_local = convert_from_usd(float(total_selected_usd), trip_currency)
+
         for policy in policies:
             if policy.rule_type == "approval_threshold" and policy.is_active:
                 threshold_amount = Decimal(str(policy.threshold.get("amount", 0)))
                 threshold_currency = policy.threshold.get("currency", "USD")
                 limit_usd = Decimal(str(convert_to_usd(float(threshold_amount), threshold_currency)))
+                limit_local = convert_from_usd(float(limit_usd), trip_currency)
+                total_display = format_price(total_trip_local, trip_currency)
+                limit_display = format_price(limit_local, trip_currency)
                 if total_selected_usd <= limit_usd:
                     evaluation.checks.append(PolicyCheckResult(
                         policy_id=str(policy.id),
@@ -394,7 +409,7 @@ class PolicyEngine:
                         rule_type="approval_threshold",
                         status="pass",
                         action="info",
-                        details=f"Total ~${total_selected_usd:.0f} USD qualifies for auto-approval (limit: ${limit_usd:.0f} USD)",
+                        details=f"Total {total_display} qualifies for auto-approval (limit: {limit_display})",
                         severity=policy.severity,
                     ))
                 else:
@@ -404,7 +419,7 @@ class PolicyEngine:
                         rule_type="approval_threshold",
                         status="info",
                         action="info",
-                        details=f"Total ~${total_selected_usd:.0f} USD requires manager approval (limit: ${limit_usd:.0f} USD)",
+                        details=f"Total {total_display} requires manager approval (limit: {limit_display})",
                         severity=policy.severity,
                     ))
 

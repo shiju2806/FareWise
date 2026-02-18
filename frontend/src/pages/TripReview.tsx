@@ -70,7 +70,6 @@ export default function TripReview() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [violationAcks, setViolationAcks] = useState<Record<string, boolean>>({});
-  const [violationNotes, setViolationNotes] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (tripId) {
@@ -94,16 +93,17 @@ export default function TripReview() {
     if (!tripId) return;
     setSubmitting(true);
     try {
-      // Build violation justifications from blocks + acknowledged warnings
+      // Build violation justifications — single acknowledgment covers all
       const justifications: Record<string, string> = {};
+      const ackNote = notes || "Acknowledged";
       for (const b of evalResult?.blocks || []) {
         if (b.policy_id && violationAcks[b.policy_id]) {
-          justifications[b.policy_id] = violationNotes[b.policy_id] || "Acknowledged";
+          justifications[b.policy_id] = ackNote;
         }
       }
       for (const w of evalResult?.warnings || []) {
         if (w.policy_id && w.requires_justification && violationAcks[w.policy_id]) {
-          justifications[w.policy_id] = violationNotes[w.policy_id] || "Acknowledged";
+          justifications[w.policy_id] = ackNote;
         }
       }
 
@@ -400,39 +400,42 @@ export default function TripReview() {
               Policy Notes
             </h4>
             {allViolations.map((v, i) => (
-              <div key={i} className="rounded-md border border-blue-200 bg-blue-50/50 p-3 space-y-2">
+              <div key={i} className="rounded-md border border-blue-200 bg-blue-50/50 p-3">
                 <p className="text-sm text-blue-800">
                   <span className="font-medium">{v.policy_name}:</span> {v.message}
                 </p>
-                {v.policy_id && (
-                  <div className="flex items-start gap-2">
-                    <input
-                      type="checkbox"
-                      id={`ack-${v.policy_id}`}
-                      checked={violationAcks[v.policy_id] || false}
-                      onChange={(e) =>
-                        setViolationAcks((prev) => ({ ...prev, [v.policy_id!]: e.target.checked }))
-                      }
-                      className="mt-0.5"
-                    />
-                    <label htmlFor={`ack-${v.policy_id}`} className="text-xs text-blue-700">
-                      I acknowledge this note
-                    </label>
-                  </div>
-                )}
-                {v.policy_id && violationAcks[v.policy_id] && (
-                  <input
-                    type="text"
-                    value={violationNotes[v.policy_id] || ""}
-                    onChange={(e) =>
-                      setViolationNotes((prev) => ({ ...prev, [v.policy_id!]: e.target.value }))
-                    }
-                    placeholder="Brief context (optional)..."
-                    className="w-full rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300/50"
-                  />
-                )}
               </div>
             ))}
+            {/* Single acknowledgment for all policy notes */}
+            <div className="rounded-md border border-blue-300 bg-blue-50 p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  id="ack-all"
+                  checked={allViolationsAcked}
+                  onChange={(e) => {
+                    const acks: Record<string, boolean> = {};
+                    for (const v of allViolations) {
+                      if (v.policy_id) acks[v.policy_id] = e.target.checked;
+                    }
+                    setViolationAcks(acks);
+                  }}
+                  className="mt-0.5"
+                />
+                <label htmlFor="ack-all" className="text-sm text-blue-800 font-medium">
+                  I acknowledge {allViolations.length === 1 ? "this policy note" : `all ${allViolations.length} policy notes`}
+                </label>
+              </div>
+              {allViolationsAcked && (
+                <input
+                  type="text"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Brief context for your approver (optional)..."
+                  className="w-full rounded-md border border-blue-200 bg-white px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300/50"
+                />
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

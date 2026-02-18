@@ -71,6 +71,14 @@ def convert_to_usd(amount: float, from_currency: str) -> float:
     return round(amount * rate, 2)
 
 
+def convert_from_usd(amount: float, to_currency: str) -> float:
+    """Convert a USD amount to another currency using static exchange rates."""
+    rate = EXCHANGE_RATES_TO_USD.get(to_currency, 1.0)
+    if rate == 0:
+        return amount
+    return round(amount / rate, 2)
+
+
 def format_price(amount: float, currency: str = "USD") -> str:
     """Format a price with currency symbol for display."""
     symbol = CURRENCY_SYMBOLS.get(currency, currency + " ")
