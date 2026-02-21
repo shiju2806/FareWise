@@ -24,6 +24,9 @@ export default function TripReview() {
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [violationAcks, setViolationAcks] = useState<Record<string, boolean>>({});
+  const [expandedProposals, setExpandedProposals] = useState(false);
+  const [expandedSameDay, setExpandedSameDay] = useState(false);
+  const [expandedDiffMonth, setExpandedDiffMonth] = useState(false);
 
   useEffect(() => {
     if (!tripId) return;
@@ -184,7 +187,7 @@ export default function TripReview() {
       {/* 2-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
         {/* LEFT COLUMN — Your Selection */}
-        <div className={`space-y-4 ${hasAlternatives || analysisLoading ? "lg:col-span-3" : "lg:col-span-5"}`}>
+        <div className={`space-y-4 ${hasAlternatives || analysisLoading ? "lg:col-span-3 lg:sticky lg:top-20 lg:self-start" : "lg:col-span-5"}`}>
           {/* Trip Info */}
           {currentTrip && (
             <Card>
@@ -513,9 +516,17 @@ export default function TripReview() {
                       Same {tripWindow.original_trip_duration}-day trip, different dates
                     </p>
                   </div>
-                  {tripWindow.proposals.map((proposal) => (
-                    <TripWindowCard key={`${proposal.outbound_date}-${proposal.return_date}`} proposal={proposal} />
+                  {(expandedProposals ? tripWindow.proposals : tripWindow.proposals.slice(0, 3)).map((proposal, idx) => (
+                    <TripWindowCard key={`${proposal.outbound_date}-${proposal.return_date}`} proposal={proposal} isTopPick={idx === 0} />
                   ))}
+                  {tripWindow.proposals.length > 3 && (
+                    <button
+                      onClick={() => setExpandedProposals(!expandedProposals)}
+                      className="w-full text-xs text-blue-600 hover:text-blue-800 font-medium py-1.5 rounded-md hover:bg-blue-50 transition-colors"
+                    >
+                      {expandedProposals ? "Show less" : `Show ${tripWindow.proposals.length - 3} more options`}
+                    </button>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -529,37 +540,70 @@ export default function TripReview() {
                   </h4>
                   {analysis.legs.map((leg) => {
                     if (!leg.alternatives.length || !leg.selected) return null;
+                    const visibleAlts = expandedSameDay ? leg.alternatives : leg.alternatives.slice(0, 2);
+                    const selectedPrice = leg.selected?.price || 1;
                     return (
                       <div key={leg.leg_id} className="space-y-1.5">
                         <p className="text-xs font-medium text-muted-foreground">
                           Leg {leg.sequence}: {leg.route}
                         </p>
-                        {leg.alternatives.map((alt) => (
-                          <div
-                            key={alt.flight_option_id}
-                            className="flex items-center justify-between rounded-md border border-border bg-muted/20 px-3 py-2"
-                          >
-                            <div>
-                              <span className="text-sm font-medium">{alt.airline}</span>
-                              <span className="text-xs text-muted-foreground ml-2">
-                                {alt.stops === 0 ? "Nonstop" : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
-                              </span>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-sm font-bold text-emerald-700">
-                                {formatPrice(alt.price)}
-                              </span>
-                              {alt.savings > 0 && (
-                                <span className="text-[10px] text-emerald-600 ml-1">
-                                  ({formatPrice(alt.savings)} less)
+                        {visibleAlts.map((alt, altIdx) => {
+                          const savingsPct = selectedPrice > 0 ? (alt.savings / selectedPrice) * 100 : 0;
+                          const isTopPick = altIdx === 0;
+                          return (
+                            <div
+                              key={alt.flight_option_id}
+                              className={`flex items-center justify-between rounded-md border px-3 py-2 ${
+                                isTopPick ? "border-emerald-200 bg-emerald-50/30" : "border-border bg-muted/20"
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                {isTopPick && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 bg-emerald-600 text-white font-semibold">
+                                    Top pick
+                                  </span>
+                                )}
+                                <span className="text-sm font-medium">{alt.airline}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {alt.stops === 0 ? "Nonstop" : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
                                 </span>
-                              )}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                {savingsPct >= 20 && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 font-medium bg-emerald-100 text-emerald-700">Great deal</span>
+                                )}
+                                {savingsPct >= 10 && savingsPct < 20 && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 font-medium bg-amber-100 text-amber-700">Good savings</span>
+                                )}
+                                <span className="text-sm font-bold text-emerald-700">
+                                  {formatPrice(alt.price)}
+                                </span>
+                                {alt.savings > 0 && (
+                                  <span className="text-[10px] text-emerald-600">
+                                    ({formatPrice(alt.savings)} less)
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     );
                   })}
+                  {(() => {
+                    const hiddenCount = analysis.legs.reduce(
+                      (sum, leg) => sum + Math.max(0, leg.alternatives.length - 2), 0
+                    );
+                    if (hiddenCount <= 0) return null;
+                    return (
+                      <button
+                        onClick={() => setExpandedSameDay(!expandedSameDay)}
+                        className="w-full text-xs text-muted-foreground hover:text-foreground font-medium py-1.5 rounded-md hover:bg-muted/50 transition-colors"
+                      >
+                        {expandedSameDay ? "Show less" : `Show ${hiddenCount} more alternative${hiddenCount > 1 ? "s" : ""}`}
+                      </button>
+                    );
+                  })()}
                 </CardContent>
               </Card>
             )}
@@ -574,9 +618,17 @@ export default function TripReview() {
                   <p className="text-[10px] text-purple-600">
                     Same trip, significantly different dates
                   </p>
-                  {tripWindow.different_month.map((proposal) => (
-                    <TripWindowCard key={`dm-${proposal.outbound_date}-${proposal.return_date}`} proposal={proposal} />
+                  {(expandedDiffMonth ? tripWindow.different_month : tripWindow.different_month.slice(0, 3)).map((proposal, idx) => (
+                    <TripWindowCard key={`dm-${proposal.outbound_date}-${proposal.return_date}`} proposal={proposal} isTopPick={idx === 0} />
                   ))}
+                  {tripWindow.different_month.length > 3 && (
+                    <button
+                      onClick={() => setExpandedDiffMonth(!expandedDiffMonth)}
+                      className="w-full text-xs text-purple-600 hover:text-purple-800 font-medium py-1.5 rounded-md hover:bg-purple-50 transition-colors"
+                    >
+                      {expandedDiffMonth ? "Show less" : `Show ${tripWindow.different_month.length - 3} more options`}
+                    </button>
+                  )}
                 </CardContent>
               </Card>
             )}
