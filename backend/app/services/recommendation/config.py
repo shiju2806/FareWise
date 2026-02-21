@@ -33,6 +33,7 @@ class CabinDowngradeThresholds:
 class AlternativeThresholds:
     """Minimum savings to show an alternative per layer."""
     layer1_min_savings: float = 50.0     # same-day swaps
+    layer1_routing_min_savings: float = 100.0  # same airline, different routing
     layer2_min_savings: float = 100.0    # date shifts
     layer3_min_savings: float = 200.0    # different month
     layer4_min_savings: float = 200.0    # cabin/routing trade-offs
@@ -61,6 +62,7 @@ class SearchRanges:
 class AlternativeLimits:
     """Maximum alternatives per layer."""
     layer1_max: int = 3    # same-day swaps
+    layer1_routing_max: int = 2  # same-airline routing alternatives
     layer2_max: int = 4    # date shifts
     layer3_max: int = 4    # different month / trip-window
     layer4_max: int = 2    # cabin/routing
@@ -107,6 +109,31 @@ class LLMParams:
 
 
 @dataclass(frozen=True)
+class AirlinePreferenceScores:
+    """Graduated preference scores by airline relationship."""
+    user_airline: float = 1.0        # selected/loyalty airline
+    same_alliance: float = 0.8      # same alliance partner
+    other_full_service: float = 0.5  # full-service, different alliance
+    mid_tier: float = 0.3           # regional/leisure carriers
+    low_cost: float = 0.15          # ULCCs
+
+
+@dataclass(frozen=True)
+class CurationGuarantees:
+    """Slots reserved during curation for diversity."""
+    same_alliance_slots: int = 1     # reserve 1 slot for alliance partner
+
+
+@dataclass(frozen=True)
+class RedEyeConfig:
+    """Red-eye detection and penalty settings."""
+    start_hour: int = 23         # 11pm — departures at or after this are red-eye
+    end_hour: int = 6            # 6am — departures before this are red-eye
+    penalty_economy: float = 0.7     # disruption multiplier for economy/premium_economy
+    penalty_business: float = 0.4    # disruption multiplier for business/first
+
+
+@dataclass(frozen=True)
 class RecommendationConfig:
     """Top-level config aggregating all sub-configs."""
     policy_budgets: PolicyBudgets = field(default_factory=PolicyBudgets)
@@ -118,6 +145,9 @@ class RecommendationConfig:
     limits: AlternativeLimits = field(default_factory=AlternativeLimits)
     trade_offs: TradeOffWeights = field(default_factory=TradeOffWeights)
     llm: LLMParams = field(default_factory=LLMParams)
+    airline_preferences: AirlinePreferenceScores = field(default_factory=AirlinePreferenceScores)
+    curation: CurationGuarantees = field(default_factory=CurationGuarantees)
+    red_eye: RedEyeConfig = field(default_factory=RedEyeConfig)
 
 
 # Singleton — import this everywhere

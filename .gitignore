@@ -22,5 +22,8 @@ backend/.env
 .DS_Store
 Thumbs.db
 
+# Logs
+backend/logs/
+
 # Docker
 pgdata/

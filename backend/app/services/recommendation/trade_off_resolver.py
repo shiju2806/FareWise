@@ -302,6 +302,14 @@ class TradeOffResolver:
         disruption_map = {"low": 1.0, "medium": 0.6, "high": 0.2}
         disruption_score = disruption_map.get(alt.disruption_level, 0.5)
 
+        # Red-eye penalty: reduce disruption score for late-night departures
+        if _is_red_eye(alt.departure_time):
+            cabin = alt.cabin_class or "economy"
+            if cabin in ("business", "first"):
+                disruption_score *= cfg.red_eye.penalty_business
+            else:
+                disruption_score *= cfg.red_eye.penalty_economy
+
         # --- Sustainability dimension ---
         sustainability_score = _stops_to_sustainability(alt.stops)
 
@@ -370,6 +378,37 @@ class TradeOffResolver:
                 curated.append(sa)
                 used.add(sa.alternative.flight_option_id)
                 break
+
+        # Guarantee: same-alliance partner (if available and not already included)
+        if cfg.curation.same_alliance_slots > 0:
+            from app.services.recommendation.airline_tiers import same_alliance as _same_alliance
+
+            # Use user's airline codes as the reference for alliance matching
+            user_codes = {
+                sa.alternative.airline_code
+                for sa in curated
+                if sa.alternative.is_user_airline
+            }
+            if not user_codes and curated:
+                user_codes = {curated[0].alternative.airline_code}
+
+            alliance_count = 0
+            for sa in scored:
+                if alliance_count >= cfg.curation.same_alliance_slots:
+                    break
+                if len(curated) >= limits.total_max:
+                    break
+                if sa.alternative.flight_option_id in used:
+                    continue
+                # Skip if this airline is already the user's airline
+                if sa.alternative.airline_code in user_codes:
+                    continue
+                for ref_code in user_codes:
+                    if _same_alliance(sa.alternative.airline_code, ref_code):
+                        curated.append(sa)
+                        used.add(sa.alternative.flight_option_id)
+                        alliance_count += 1
+                        break
 
         # Fill remaining slots — prefer diverse airlines first
         seen_airlines = {sa.alternative.airline_code for sa in curated}
@@ -475,6 +514,21 @@ class TradeOffResolver:
         disruption_map = {"low": 1.0, "medium": 0.6, "high": 0.2}
         disruption_score = disruption_map.get(proposal.disruption_level, 0.5)
 
+        # Red-eye penalty for trip-window proposals (check both legs)
+        red_eye_out = _is_red_eye(proposal.outbound_flight.departure_time)
+        red_eye_ret = _is_red_eye(proposal.return_flight.departure_time)
+        if red_eye_out or red_eye_ret:
+            cabin = context.legs[0].cabin_class if context.legs else "economy"
+            penalty = (
+                cfg.red_eye.penalty_business
+                if cabin in ("business", "first")
+                else cfg.red_eye.penalty_economy
+            )
+            if red_eye_out and red_eye_ret:
+                disruption_score *= penalty * penalty
+            else:
+                disruption_score *= penalty
+
         # --- Sustainability ---
         avg_stops = (proposal.outbound_flight.stops + proposal.return_flight.stops) / 2.0
         sustainability_score = _stops_to_sustainability(avg_stops)
@@ -556,6 +610,33 @@ class TradeOffResolver:
                 used.add(id(sp))
                 break
 
+        # Slot 3: Same-alliance partner (if available)
+        if cfg.curation.same_alliance_slots > 0:
+            from app.services.recommendation.airline_tiers import same_alliance as _same_alliance
+
+            user_codes = {
+                sp.proposal.outbound_flight.airline_code
+                for sp in curated
+                if sp.proposal.is_user_airline
+            }
+            alliance_count = 0
+            for sp in scored:
+                if alliance_count >= cfg.curation.same_alliance_slots:
+                    break
+                if len(curated) >= max_proposals:
+                    break
+                if id(sp) in used:
+                    continue
+                out_code = sp.proposal.outbound_flight.airline_code
+                if out_code in user_codes:
+                    continue
+                for ref_code in user_codes:
+                    if _same_alliance(out_code, ref_code):
+                        curated.append(sp)
+                        used.add(id(sp))
+                        alliance_count += 1
+                        break
+
         # Remaining slots: diverse airlines, by score
         seen_airlines = {
             sp.proposal.outbound_flight.airline_code for sp in curated
@@ -611,21 +692,35 @@ class TradeOffResolver:
         airline_code: str,
         pref: "_PreferenceContext",
     ) -> float:
-        """Compute preference score for an airline.
+        """Compute graduated preference score for an airline.
 
-        1.0 = user's selected airline or loyalty program airline
-        0.7 = in a preferred alliance
-        0.0 = no preference
+        Scores (from AirlinePreferenceScores config):
+        1.0  = user's selected/loyalty airline
+        0.8  = same alliance partner (e.g. United for an Air Canada traveler)
+        0.5  = full-service carrier, different alliance
+        0.3  = mid-tier carrier (regional/leisure)
+        0.15 = low-cost/ULCC
         """
-        if airline_code in pref.selected_airlines:
-            return 1.0
-        if airline_code in pref.loyalty_airlines:
-            return 1.0
-        # Alliance check — simplified: would need airline → alliance mapping
-        # For now, treat preferred_alliances as airline codes too
-        if airline_code in pref.preferred_alliances:
-            return 0.7
-        return 0.0
+        from app.services.recommendation.airline_tiers import get_tier, same_alliance
+
+        scores = cfg.airline_preferences
+
+        # 1. User's selected or loyalty airline
+        if airline_code in pref.selected_airlines or airline_code in pref.loyalty_airlines:
+            return scores.user_airline
+
+        # 2. Same alliance as any selected airline
+        for sel_code in pref.selected_airlines:
+            if same_alliance(airline_code, sel_code):
+                return scores.same_alliance
+
+        # 3. Tier-based scoring
+        tier = get_tier(airline_code)
+        if tier == "full_service":
+            return scores.other_full_service
+        if tier == "mid_tier":
+            return scores.mid_tier
+        return scores.low_cost
 
     def _check_policy_budget(
         self,
@@ -695,6 +790,20 @@ def _stops_to_sustainability(stops: float) -> float:
     if stops <= 1:
         return 0.5
     return 0.2
+
+
+def _is_red_eye(departure_time: str) -> bool:
+    """Check if departure time falls in the red-eye window (config-driven).
+
+    Red-eye = departure between start_hour (e.g. 23:00) and end_hour (e.g. 06:00).
+    """
+    if not departure_time or len(departure_time) < 16:
+        return False
+    try:
+        hour = int(departure_time[11:13])
+        return hour >= cfg.red_eye.start_hour or hour < cfg.red_eye.end_hour
+    except (ValueError, IndexError):
+        return False
 
 
 # Singleton

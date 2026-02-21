@@ -464,6 +464,10 @@ Respond ONLY with valid JSON:
         if alt.alt_type == "nearby_airport":
             return f"Save ${savings:.0f} via {alt.origin_airport}, same date"
 
+        if alt.alt_type == "same_airline_routing":
+            stop_label = f"{alt.stops} stop" if alt.stops == 1 else f"{alt.stops} stops"
+            return f"Save ${savings:.0f} on {alt.airline_name} with {stop_label}"
+
         if alt.alt_type == "same_airline_date_shift":
             # Include hotel impact if available
             if alt.net_savings:

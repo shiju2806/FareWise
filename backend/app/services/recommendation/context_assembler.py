@@ -262,7 +262,8 @@ class ContextAssembler:
                 select(FlightOption).where(FlightOption.search_log_id == search_log.id)
             )
             all_opts = opts_result.scalars().all()
-            leg_ctx.all_options = [self._flight_to_data(opt) for opt in all_opts]
+            source = search_log.api_provider or "unknown"
+            leg_ctx.all_options = [self._flight_to_data(opt, source) for opt in all_opts]
 
         # Load selected flight (from override or DB)
         selected_id = (selected_flights or {}).get(str(leg.id))
@@ -309,7 +310,7 @@ class ContextAssembler:
         return events
 
     @staticmethod
-    def _flight_to_data(opt: FlightOption) -> FlightData:
+    def _flight_to_data(opt: FlightOption, source: str = "unknown") -> FlightData:
         """Convert a DB FlightOption to a FlightData dataclass."""
         return FlightData(
             id=str(opt.id),
@@ -329,7 +330,7 @@ class ContextAssembler:
             seats_remaining=opt.seats_remaining,
             is_alternate_airport=bool(opt.is_alternate_airport),
             is_alternate_date=bool(opt.is_alternate_date),
-            source=opt.source or "unknown",
+            source=source,
         )
 
     async def load_trip_window_options(

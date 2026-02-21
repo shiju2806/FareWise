@@ -213,6 +213,7 @@ async def analyze_selections(
     cost driver analysis → trade-off scoring → LLM reasoning → audience formatting.
     Returns ReviewAnalysis-compatible output for the traveler UI.
     """
+    logger.info(f"analyze-selections called: trip_id={trip_id}, selected_flights={req.selected_flights}")
     from app.services.recommendation.context_assembler import context_assembler
     from app.services.recommendation.flight_alternatives import flight_alternatives_generator
     from app.services.recommendation.cost_driver_analyzer import cost_driver_analyzer
@@ -220,28 +221,32 @@ async def analyze_selections(
     from app.services.recommendation.advisor import travel_advisor
     from app.services.recommendation.audience_adapter import audience_adapter
 
-    # 1. Assemble context (DB reads: trip, legs, selections, hotel rates)
-    context = await context_assembler.assemble(
-        db, str(trip_id), user, req.selected_flights,
-    )
+    try:
+        # 1. Assemble context (DB reads: trip, legs, selections, hotel rates)
+        context = await context_assembler.assemble(
+            db, str(trip_id), user, req.selected_flights,
+        )
 
-    # 2. Load broad date range for trip-window proposals (DB1B + fallback)
-    await context_assembler.load_trip_window_options(db, context)
+        # 2. Load broad date range for trip-window proposals (DB1B + fallback)
+        await context_assembler.load_trip_window_options(db, context)
 
-    # 3. Generate alternatives (Layer 1-4, trip-window, cabin downgrade)
-    raw = flight_alternatives_generator.generate(context)
+        # 3. Generate alternatives (Layer 1-4, trip-window, cabin downgrade)
+        raw = flight_alternatives_generator.generate(context)
 
-    # 4. Analyze cost drivers
-    cost_drivers = cost_driver_analyzer.analyze(context)
+        # 4. Analyze cost drivers
+        cost_drivers = cost_driver_analyzer.analyze(context)
 
-    # 5. Score, rank, curate
-    resolved = trade_off_resolver.resolve(raw, context)
+        # 5. Score, rank, curate
+        resolved = trade_off_resolver.resolve(raw, context)
 
-    # 6. LLM reasoning + narrative (with fallback)
-    output = await travel_advisor.advise(resolved, context, cost_drivers)
+        # 6. LLM reasoning + narrative (with fallback)
+        output = await travel_advisor.advise(resolved, context, cost_drivers)
 
-    # 7. Format for traveler view
-    return audience_adapter.for_traveler(output, context)
+        # 7. Format for traveler view
+        return audience_adapter.for_traveler(output, context)
+    except Exception as e:
+        logger.exception(f"analyze-selections FAILED for trip {trip_id}: {e}")
+        raise
 
 
 class CheaperMonthRequest(BaseModel):

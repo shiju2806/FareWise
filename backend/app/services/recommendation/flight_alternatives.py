@@ -38,7 +38,7 @@ cfg = recommendation_config
 class Alternative:
     """A single flight alternative with disruption metadata."""
 
-    alt_type: str              # "same_date" | "nearby_airport" | "same_airline_date_shift" | "cabin_downgrade"
+    alt_type: str              # "same_date" | "same_airline_routing" | "nearby_airport" | "same_airline_date_shift" | "cabin_downgrade"
     layer: int                 # 1-4
     disruption_level: str      # "low" | "medium" | "high"
     what_changes: list[str]    # e.g. ["airline"], ["date"], ["cabin", "airline"]
@@ -322,8 +322,13 @@ class FlightAlternativesGenerator:
 
         alternatives: list[Alternative] = []
 
-        # --- Layer 1: Same-date swaps (low disruption) ---
+        # --- Layer 1a: Same-date swaps (low disruption) ---
         alternatives.extend(self._layer1_same_date(
+            selected, sel_date, sel_price, allowed, leg,
+        ))
+
+        # --- Layer 1b: Same-airline cheaper routing (low disruption) ---
+        alternatives.extend(self._layer1_same_airline_routing(
             selected, sel_date, sel_price, allowed, leg,
         ))
 
@@ -431,6 +436,74 @@ class FlightAlternativesGenerator:
                     savings_amount=round(savings, 2),
                     savings_percent=round(savings / sel_price * 100, 1) if sel_price > 0 else 0,
                 ))
+
+        return alternatives
+
+    def _layer1_same_airline_routing(
+        self,
+        selected: FlightData,
+        sel_date: str,
+        sel_price: float,
+        options: list[FlightData],
+        leg: LegContext,
+    ) -> list[Alternative]:
+        """Layer 1b: Same airline, same date, cheaper routing — more stops (low disruption).
+
+        Catches the common case where Air Canada nonstop is $3,496 but
+        Air Canada 1-stop is $2,139 — same loyalty, cheaper price.
+        """
+        min_savings = cfg.alternatives.layer1_routing_min_savings
+
+        routing_options = [
+            o for o in options
+            if o.airline_code == selected.airline_code
+            and _extract_date(o.departure_time) == sel_date
+            and not o.is_alternate_airport
+            and o.price < sel_price
+            and (sel_price - o.price) >= min_savings
+            and o.stops > selected.stops
+            and o.id != selected.id
+        ]
+
+        if not routing_options:
+            return []
+
+        # Group by stop count, take cheapest per stop count
+        by_stops: dict[int, FlightData] = {}
+        for o in routing_options:
+            if o.stops not in by_stops or o.price < by_stops[o.stops].price:
+                by_stops[o.stops] = o
+
+        sorted_opts = sorted(by_stops.values(), key=lambda o: o.price)[
+            :cfg.limits.layer1_routing_max
+        ]
+
+        alternatives: list[Alternative] = []
+        for o in sorted_opts:
+            savings = sel_price - o.price
+            stop_label = f"{o.stops} stop" if o.stops == 1 else f"{o.stops} stops"
+            alternatives.append(Alternative(
+                alt_type="same_airline_routing",
+                layer=1,
+                disruption_level="low",
+                what_changes=["routing"],
+                flight_option_id=o.id,
+                label=f"{o.airline_name} with {stop_label}",
+                airline_code=o.airline_code,
+                airline_name=o.airline_name,
+                origin_airport=o.origin_airport,
+                destination_airport=o.destination_airport,
+                departure_time=o.departure_time,
+                arrival_time=o.arrival_time,
+                date=sel_date,
+                price=o.price,
+                stops=o.stops,
+                duration_minutes=o.duration_minutes,
+                cabin_class=o.cabin_class,
+                savings_amount=round(savings, 2),
+                savings_percent=round(savings / sel_price * 100, 1) if sel_price > 0 else 0,
+                is_user_airline=True,
+            ))
 
         return alternatives
 

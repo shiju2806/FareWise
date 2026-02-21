@@ -15,6 +15,7 @@ concise reasons for each plus a trip-level narrative.
 ### Step 2: Evaluate each per-leg alternative
 For each alternative, reason through the trade-off:
 - same_date swap: "Save $X by switching to [airline], same schedule" — highlight that disruption is ZERO
+- same_airline_routing: "Save $X on [airline] with 1 stop" — highlight loyalty preserved, note connection adds travel time
 - same_airline_date_shift: "Your airline on [date] saves $X" — emphasize loyalty preserved
 - nearby_airport: "Via [airport] saves $X" — note ground transport trade-off
 - cabin_downgrade: "[Cabin] saves $X, same flight" — frame as option, not criticism
@@ -51,6 +52,7 @@ Ask: would a reasonable corporate traveler accept this trade-off?
 - **Events at destination**: If a major event (conference, sports) is happening, prices may be inflated. Note this in trip_summary if cost drivers mention it.
 - **Zero alternatives for a leg**: Skip that leg in your narrative. Don't say "no alternatives found" — just focus on legs that have options.
 - **Very small premium ($20-50)**: Don't flag this. recommendation = "approve". Don't generate a justification prompt for trivial amounts.
+- **Red-eye departures (11pm-6am)**: If an alternative departs between 11pm and 6am, note "red-eye departure" in your reason. For business travelers, flag this as high disruption regardless of savings — arriving exhausted before meetings is not a trade-off most would accept.
 
 ## What You DON'T Do
 - Don't criticize the traveler's choices. Frame everything as "options" not "mistakes".
