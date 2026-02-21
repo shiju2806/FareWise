@@ -14,10 +14,10 @@ class Selection(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     trip_leg_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("trip_legs.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("trip_legs.id", ondelete="CASCADE"), nullable=False
     )
     flight_option_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("flight_options.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("flight_options.id", ondelete="CASCADE"), nullable=False
     )
     justification_note: Mapped[str | None] = mapped_column(Text)
     slider_position: Mapped[Decimal | None] = mapped_column(Numeric(3, 2))
@@ -119,7 +119,7 @@ class PolicyViolation(Base):
         UUID(as_uuid=True), ForeignKey("trips.id", ondelete="CASCADE"), nullable=False
     )
     trip_leg_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("trip_legs.id")
+        UUID(as_uuid=True), ForeignKey("trip_legs.id", ondelete="CASCADE")
     )
     policy_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("policies.id"), nullable=False

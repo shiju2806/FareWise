@@ -3,7 +3,8 @@
 import asyncio
 import logging
 import uuid
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -22,14 +23,27 @@ from app.services.scoring_engine import Weights, slider_to_weights
 from app.services.search_orchestrator import search_orchestrator
 
 
+class SyntheticFlightData(BaseModel):
+    """Optional flight data for DB1B-sourced synthetic flights that don't exist in the DB yet."""
+    airline_code: str
+    airline_name: str
+    origin_airport: str
+    destination_airport: str
+    departure_time: str
+    arrival_time: str
+    duration_minutes: int = 0
+    stops: int = 0
+    price: float
+    currency: str = "USD"
+    cabin_class: str | None = None
+
+
 class SelectionRequest(BaseModel):
     flight_option_id: str
     slider_position: float | None = None
     justification_note: str | None = None
+    synthetic_flight: SyntheticFlightData | None = None
 
-
-class AnalyzeSelectionRequest(BaseModel):
-    flight_option_id: str
 
 logger = logging.getLogger(__name__)
 
@@ -200,11 +214,51 @@ async def select_flight(
     """Save a flight selection for a trip leg."""
     leg = await _get_user_leg(trip_leg_id, db, user)
 
-    # Verify the flight option exists
-    result = await db.execute(
-        select(FlightOption).where(FlightOption.id == uuid.UUID(req.flight_option_id))
-    )
-    flight_option = result.scalar_one_or_none()
+    flight_option = None
+
+    # Handle synthetic DB1B flights that don't exist in the DB yet
+    if req.flight_option_id.startswith("db1b-") and req.synthetic_flight:
+        sf = req.synthetic_flight
+        # Create a search log for this DB1B-sourced selection
+        search_log = SearchLog(
+            trip_leg_id=leg.id,
+            api_provider="db1b_historical",
+            search_params={"source": "trip_window_alternative", "original_id": req.flight_option_id},
+            results_count=1,
+            cheapest_price=Decimal(str(round(sf.price, 2))),
+            cached=False,
+            is_synthetic=True,
+        )
+        db.add(search_log)
+        await db.flush()  # get search_log.id
+
+        dep_time = datetime.fromisoformat(sf.departure_time)
+        arr_time = datetime.fromisoformat(sf.arrival_time)
+        flight_option = FlightOption(
+            search_log_id=search_log.id,
+            airline_code=sf.airline_code,
+            airline_name=sf.airline_name,
+            flight_numbers=sf.airline_code,
+            origin_airport=sf.origin_airport,
+            destination_airport=sf.destination_airport,
+            departure_time=dep_time,
+            arrival_time=arr_time,
+            duration_minutes=sf.duration_minutes,
+            stops=sf.stops,
+            price=Decimal(str(round(sf.price, 2))),
+            currency=sf.currency,
+            cabin_class=sf.cabin_class,
+            is_alternate_date=True,
+        )
+        db.add(flight_option)
+        await db.flush()
+    else:
+        # Standard flow: look up existing flight option
+        result = await db.execute(
+            select(FlightOption).where(FlightOption.id == uuid.UUID(req.flight_option_id))
+        )
+        flight_option = result.scalar_one_or_none()
+
     if not flight_option:
         raise HTTPException(status_code=404, detail="Flight option not found")
 
@@ -215,8 +269,11 @@ async def select_flight(
     for old in existing.scalars().all():
         await db.delete(old)
 
+    # Update leg preferred_date to match the selected flight's actual departure
+    if flight_option.departure_time:
+        leg.preferred_date = flight_option.departure_time.date()
+
     # Create new selection
-    from decimal import Decimal
     selection = Selection(
         trip_leg_id=leg.id,
         flight_option_id=flight_option.id,
@@ -235,129 +292,6 @@ async def select_flight(
         "price": float(flight_option.price),
         "justification_note": selection.justification_note,
         "selected_at": selection.selected_at.isoformat() if selection.selected_at else None,
-    }
-
-
-@router.post("/{trip_leg_id}/analyze-selection")
-async def analyze_selection(
-    trip_leg_id: uuid.UUID,
-    req: AnalyzeSelectionRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Analyze a flight selection against alternatives to determine if justification is needed.
-
-    Compares the selected flight against:
-    - Cheapest on same date (different airline)
-    - Cheapest across all dates
-    - Cheapest on different date, same airline
-    Returns savings analysis and LLM-generated justification prompt if threshold exceeded.
-    """
-    from app.services.justification_service import justification_service
-    from app.services.selection_analysis_service import analyze_leg_selection
-
-    leg = await _get_user_leg(trip_leg_id, db, user)
-
-    # Get user's excluded airlines and full preferences
-    excluded_airlines: set[str] = set()
-    user_preferences: dict | None = None
-    if user.travel_preferences and isinstance(user.travel_preferences, dict):
-        user_preferences = user.travel_preferences
-        excluded_airlines = set(user_preferences.get("excluded_airlines", []))
-
-    analysis = await analyze_leg_selection(
-        db=db,
-        leg_id=leg.id,
-        flight_option_id=uuid.UUID(req.flight_option_id),
-        excluded_airlines=excluded_airlines,
-        user_preferences=user_preferences,
-    )
-
-    if not analysis:
-        return {"justification_required": False, "reason": "no_search_data"}
-
-    justification_required = analysis.savings_amount >= 100 or analysis.savings_percent >= 10
-
-    selected_date = (
-        analysis.selected.departure_time.date().isoformat()
-        if analysis.selected.departure_time
-        else ""
-    )
-    selected_price = float(analysis.selected.price)
-
-    # Generate LLM justification prompt if needed
-    justification_prompt = None
-    if justification_required:
-        route = f"{leg.origin_airport} → {leg.destination_airport}"
-        selected_info = {
-            "airline": analysis.selected.airline_name,
-            "date": selected_date,
-            "price": selected_price,
-            "stops": analysis.selected.stops,
-            "duration_minutes": analysis.selected.duration_minutes,
-        }
-        same_date_info = (
-            {
-                "airline": analysis.cheapest_same_date.airline_name,
-                "price": float(analysis.cheapest_same_date.price),
-                "savings": round(selected_price - float(analysis.cheapest_same_date.price), 2),
-            }
-            if analysis.cheapest_same_date
-            else None
-        )
-        same_airline_info = (
-            {
-                "date": (
-                    analysis.cheapest_same_airline.departure_time.date().isoformat()
-                    if analysis.cheapest_same_airline.departure_time
-                    else ""
-                ),
-                "price": float(analysis.cheapest_same_airline.price),
-                "savings": round(selected_price - float(analysis.cheapest_same_airline.price), 2),
-            }
-            if analysis.cheapest_same_airline
-            else None
-        )
-        cheapest_any_date_info = next(
-            (a for a in analysis.alternatives if a["type"] == "any_date"), None
-        )
-        overall_info = {
-            "airline": analysis.overall_cheapest.airline_name,
-            "date": (
-                analysis.overall_cheapest.departure_time.date().isoformat()
-                if analysis.overall_cheapest.departure_time
-                else ""
-            ),
-            "price": float(analysis.overall_cheapest.price),
-        }
-
-        justification_prompt = await justification_service.generate_prompt(
-            selected_flight=selected_info,
-            cheapest_same_date=same_date_info,
-            cheapest_any_date=cheapest_any_date_info,
-            cheapest_same_airline=same_airline_info,
-            overall_cheapest=overall_info,
-            savings_amount=analysis.savings_amount,
-            savings_percent=analysis.savings_percent,
-            route=route,
-        )
-
-    return {
-        "justification_required": justification_required,
-        "selected": {
-            "airline": analysis.selected.airline_name,
-            "date": selected_date,
-            "price": selected_price,
-            "stops": analysis.selected.stops,
-            "duration_minutes": analysis.selected.duration_minutes,
-            "flight_option_id": str(analysis.selected.id),
-        },
-        "savings": {
-            "amount": analysis.savings_amount,
-            "percent": analysis.savings_percent,
-        },
-        "alternatives": analysis.alternatives,
-        "justification_prompt": justification_prompt,
     }
 
 
@@ -701,10 +635,13 @@ async def get_price_trend(
                 "results_count": log.results_count,
             })
 
-    # Also search for the same route across other trip legs (broader history)
+    # Also search for the same route across this user's other trip legs (broader history)
     result = await db.execute(
         select(SearchLog)
+        .join(TripLeg, SearchLog.trip_leg_id == TripLeg.id)
+        .join(Trip, TripLeg.trip_id == Trip.id)
         .where(
+            Trip.traveler_id == user.id,
             SearchLog.search_params["origin"].astext == leg.origin_airport,
             SearchLog.search_params["destination"].astext == leg.destination_airport,
             SearchLog.trip_leg_id != leg.id,

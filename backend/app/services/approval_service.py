@@ -63,6 +63,13 @@ class ApprovalService:
             db, trip, selections, flights, legs, user.role
         )
 
+        return await self._build_savings_report(db, trip, user, legs, selections, flights, evaluation)
+
+    async def _build_savings_report(
+        self, db: AsyncSession, trip: Trip, user: User,
+        legs: list, selections: list, flights: dict, evaluation,
+    ) -> dict:
+        """Build savings report from an already-computed policy evaluation."""
         # Calculate totals
         selected_total = Decimal("0")
         cheapest_total = Decimal("0")
@@ -80,8 +87,12 @@ class ApprovalService:
             selected_total += flight.price
 
             # Get cheapest and most expensive for this leg's search
+            # Skip synthetic logs (created when selecting trip-window alternatives)
             search_result = await db.execute(
-                select(SearchLog).where(SearchLog.trip_leg_id == leg.id).order_by(SearchLog.searched_at.desc()).limit(1)
+                select(SearchLog).where(
+                    SearchLog.trip_leg_id == leg.id,
+                    SearchLog.is_synthetic == False,
+                ).order_by(SearchLog.searched_at.desc()).limit(1)
             )
             latest_search = search_result.scalar_one_or_none()
             leg_cheapest = flight.price
@@ -286,11 +297,16 @@ class ApprovalService:
                 )
                 db.add(violation)
 
-        # 5-6. Generate savings narrative and create report
-        eval_data = await self.evaluate_trip(db, trip, user)
+        # 5-6. Generate savings report — reuse the policy evaluation from step 2
+        #       instead of calling self.evaluate_trip again (which would duplicate
+        #       all DB queries and the LLM narrative generation)
+        eval_data = await self._build_savings_report(db, trip, user, legs, selections, flights, evaluation)
         report_data = eval_data["savings_report"]
 
         if report_data:
+            # Pull analysis snapshot from trip (saved at confirmation time)
+            snapshot = trip.analysis_snapshot or {}
+
             savings_report = SavingsReport(
                 trip_id=trip.id,
                 selected_total=Decimal(str(report_data["selected_total"])),
@@ -305,6 +321,8 @@ class ApprovalService:
                 slider_positions=report_data.get("slider_positions"),
                 # Detail snapshots for manager approval view
                 per_leg_summary=report_data.get("per_leg_summary"),
+                alternatives_snapshot=snapshot.get("legs"),
+                trip_window_snapshot=snapshot.get("trip_window_alternatives"),
             )
             db.add(savings_report)
 
@@ -341,7 +359,10 @@ class ApprovalService:
         trip.status = "submitted"
         trip.submitted_at = datetime.now(timezone.utc)
         if report_data:
-            trip.total_estimated_cost = Decimal(str(report_data["selected_total"]))
+            total = Decimal(str(report_data["selected_total"]))
+            if report_data.get("hotel_selected_total"):
+                total += Decimal(str(report_data["hotel_selected_total"]))
+            trip.total_estimated_cost = total
 
         await db.commit()
 
@@ -517,7 +538,26 @@ class ApprovalService:
             select(User).where(User.role == "admin", User.is_active == True)
         )
         admin = result.scalar_one_or_none()
-        return admin
+        if admin:
+            return admin
+
+        # 4. MVP fallback — auto-create a system admin so submissions always work
+        # TODO: Remove before production — use proper admin seeding instead
+        from passlib.context import CryptContext
+        pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        system_admin = User(
+            email="system-admin@farewise.com",
+            password_hash=pwd.hash("farewise-admin"),
+            first_name="System",
+            last_name="Admin",
+            role="admin",
+            department="IT",
+            is_active=True,
+        )
+        db.add(system_admin)
+        await db.flush()
+        logger.info("Auto-created system admin for approval flow (MVP fallback)")
+        return system_admin
 
 
 approval_service = ApprovalService()

@@ -60,6 +60,23 @@ async def evaluate_trip(
         raise HTTPException(status_code=404, detail="Trip not found")
 
     eval_result = await approval_service.evaluate_trip(db, trip, user)
+
+    # Include selected flight IDs so the review page can fetch alternatives
+    from app.models.policy import Selection
+    sel_result = await db.execute(
+        select(Selection).where(
+            Selection.trip_leg_id.in_([l.id for l in trip.legs])
+        )
+    )
+    selections = sel_result.scalars().all()
+    eval_result["selected_flights"] = {
+        str(s.trip_leg_id): str(s.flight_option_id) for s in selections
+    }
+
+    # Include persisted analysis snapshot if available
+    if trip.analysis_snapshot:
+        eval_result["analysis_snapshot"] = trip.analysis_snapshot
+
     return eval_result
 
 
@@ -113,6 +130,9 @@ async def list_approvals(
     query = (
         select(Approval)
         .where(Approval.approver_id == user.id)
+        .options(
+            selectinload(Approval.trip).selectinload(Trip.legs),
+        )
         .order_by(Approval.created_at.desc())
     )
 
@@ -122,9 +142,9 @@ async def list_approvals(
     query = query.offset((page - 1) * limit).limit(limit)
 
     result = await db.execute(query)
-    approvals = result.scalars().all()
+    approvals = result.scalars().unique().all()
 
-    # Get counts
+    # Get counts (single query)
     counts_result = await db.execute(
         select(Approval.status, func.count(Approval.id))
         .where(Approval.approver_id == user.id)
@@ -133,30 +153,47 @@ async def list_approvals(
     counts_raw = counts_result.all()
     counts = {row[0]: row[1] for row in counts_raw}
 
-    # Build response with trip details
+    # Batch-load related data to avoid N+1 queries
+    trip_ids = [a.trip_id for a in approvals]
+    traveler_ids = list({a.trip.traveler_id for a in approvals if a.trip})
+
+    # Batch: travelers
+    traveler_map = {}
+    if traveler_ids:
+        trav_result = await db.execute(select(User).where(User.id.in_(traveler_ids)))
+        traveler_map = {u.id: u for u in trav_result.scalars().all()}
+
+    # Batch: savings reports
+    sr_map = {}
+    if trip_ids:
+        sr_result = await db.execute(
+            select(SavingsReport).where(SavingsReport.trip_id.in_(trip_ids))
+        )
+        for sr in sr_result.scalars().all():
+            # Keep latest per trip
+            if sr.trip_id not in sr_map or (sr.generated_at and sr.generated_at > sr_map[sr.trip_id].generated_at):
+                sr_map[sr.trip_id] = sr
+
+    # Batch: violation counts
+    violation_counts = {}
+    if trip_ids:
+        viol_result = await db.execute(
+            select(PolicyViolation.trip_id, func.count(PolicyViolation.id))
+            .where(PolicyViolation.trip_id.in_(trip_ids))
+            .group_by(PolicyViolation.trip_id)
+        )
+        violation_counts = {row[0]: row[1] for row in viol_result.all()}
+
+    # Build response
     approval_list = []
     for a in approvals:
-        trip_result = await db.execute(
-            select(Trip).where(Trip.id == a.trip_id).options(selectinload(Trip.legs))
-        )
-        trip = trip_result.scalar_one_or_none()
+        trip = a.trip
         if not trip:
             continue
 
-        traveler_result = await db.execute(select(User).where(User.id == trip.traveler_id))
-        traveler = traveler_result.scalar_one_or_none()
-
-        # Get savings report
-        sr_result = await db.execute(
-            select(SavingsReport).where(SavingsReport.trip_id == trip.id).order_by(SavingsReport.generated_at.desc())
-        )
-        sr = sr_result.scalar_one_or_none()
-
-        # Count warnings/violations
-        violations_result = await db.execute(
-            select(func.count(PolicyViolation.id)).where(PolicyViolation.trip_id == trip.id)
-        )
-        violations_count = violations_result.scalar() or 0
+        traveler = traveler_map.get(trip.traveler_id)
+        sr = sr_map.get(trip.id)
+        violations_count = violation_counts.get(trip.id, 0)
 
         # Calculate travel dates
         dates = [l.preferred_date for l in trip.legs] if trip.legs else []
@@ -185,7 +222,7 @@ async def list_approvals(
                 "premium_vs_cheapest": float(sr.premium_vs_cheapest) if sr else None,
                 "narrative": sr.narrative if sr else None,
             } if sr else None,
-            "warnings_count": sr.policy_checks.count("warn") if sr and isinstance(sr.policy_checks, list) else 0,
+            "warnings_count": sum(1 for c in (sr.policy_checks or []) if isinstance(c, dict) and c.get("status") == "warn") if sr else 0,
             "violations_count": violations_count,
             "status": a.status,
             "created_at": a.created_at.isoformat() if a.created_at else None,
@@ -253,11 +290,16 @@ async def get_approval_detail(
     )
     history = history_result.scalars().all()
 
-    # Build history with actor names
+    # Batch-load actor names for history entries
+    actor_ids = list({h.actor_id for h in history})
+    actor_map = {}
+    if actor_ids:
+        actor_result = await db.execute(select(User).where(User.id.in_(actor_ids)))
+        actor_map = {u.id: u for u in actor_result.scalars().all()}
+
     history_list = []
     for h in history:
-        actor_result = await db.execute(select(User).where(User.id == h.actor_id))
-        actor = actor_result.scalar_one_or_none()
+        actor = actor_map.get(h.actor_id)
         history_list.append({
             "id": str(h.id),
             "action": h.action,

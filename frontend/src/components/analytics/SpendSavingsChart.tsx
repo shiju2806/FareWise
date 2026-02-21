@@ -46,7 +46,7 @@ export function SpendSavingsChart({ data }: Props) {
                 tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
               />
               <Tooltip
-                formatter={(value: number) => [`$${value.toLocaleString()}`, "Spend"]}
+                formatter={(value: number | undefined) => [`$${(value ?? 0).toLocaleString()}`, "Spend"]}
                 labelFormatter={(label) => `Week of ${label}`}
               />
               <Area

@@ -3,46 +3,11 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import apiClient from "@/api/client";
 import { formatPrice } from "@/lib/currency";
+import { statusIcons, statusColors } from "@/lib/policy";
+import type { EvalResult } from "@/types/evaluation";
 
-interface PolicyCheck {
-  policy_name: string;
-  status: string;
-  details: string;
-}
-
-interface Warning {
-  policy_name: string;
-  message: string;
-  policy_id?: string;
-  requires_justification?: boolean;
-}
-
-interface Block {
-  policy_name: string;
-  message: string;
-  policy_id: string;
-}
-
-interface LegSummary {
-  leg_id: string;
-  route: string;
-  selected_price: number;
-  cheapest_price: number;
-}
-
-export interface EvalResult {
-  savings_report: {
-    selected_total: number;
-    cheapest_total: number;
-    policy_status: string;
-    policy_checks: PolicyCheck[];
-    per_leg_summary: LegSummary[];
-    narrative: string;
-  } | null;
-  warnings: Warning[];
-  blocks: Block[];
-  error?: string;
-}
+// Re-export for consumers that imported from here
+export type { EvalResult };
 
 interface SelectedFlight {
   id: string;
@@ -60,20 +25,6 @@ interface InlineReviewPanelProps {
   onSubmitSuccess: () => void;
   onCancel: () => void;
 }
-
-const statusIcons: Record<string, string> = {
-  pass: "\u2713",
-  warn: "\u26A0",
-  block: "\u2715",
-  info: "\u2139",
-};
-
-const statusColors: Record<string, string> = {
-  pass: "text-green-600",
-  warn: "text-amber-600",
-  block: "text-red-600",
-  info: "text-blue-600",
-};
 
 export function InlineReviewPanel({
   tripId,
@@ -179,7 +130,7 @@ export function InlineReviewPanel({
               </span>
               {flight ? (
                 <span className="font-medium">
-                  {flight.airline_name} · {formatPrice(flight.price, flight.currency)}
+                  {flight.airline_name} · {formatPrice(flight.price)}
                 </span>
               ) : (
                 <span className="text-muted-foreground italic">No selection</span>
@@ -201,7 +152,7 @@ export function InlineReviewPanel({
       {sr && sr.policy_checks.length > 0 && (
         <div className="space-y-0.5">
           {sr.policy_checks
-            .filter((c) => c.status !== "info" || c.status === "pass")
+            .filter((c) => c.status !== "info")
             .slice(0, 5)
             .map((check, i) => (
               <div key={i} className="flex items-center gap-2 text-xs">

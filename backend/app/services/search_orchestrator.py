@@ -183,7 +183,8 @@ class SearchOrchestrator:
         )
 
         # 9. Include ALL flights in response (no filtering by date/airport)
-        all_options = scored_flights[:100]
+        # Need enough to cover all airline×date combos for the price matrix
+        all_options = scored_flights[:500]
 
         recommendation = None
         if scored_flights:
@@ -384,12 +385,9 @@ class SearchOrchestrator:
     ) -> list[dict]:
         """Search all dates for a single route pair using one batch DB1B query.
 
-        Falls back to individual Amadeus queries for dates with no DB1B data.
+        Falls back to individual Amadeus queries ONLY for the primary pair
+        (not alternate airports) when DB1B has no data.
         """
-        all_dates = [d for d, _, _ in dates_info]
-        start_date = min(all_dates)
-        end_date = max(all_dates)
-
         # Check cache for each date first
         cached_flights: list[dict] = []
         uncached_dates: list[tuple[date, bool, bool]] = []

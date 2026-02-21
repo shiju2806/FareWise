@@ -5,6 +5,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import apiClient from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
 import { formatPrice } from "@/lib/currency";
+import { statusIcons, statusColors } from "@/lib/policy";
+import { TripWindowCard } from "@/components/trip/TripWindowCard";
+import { CostSpectrumBar } from "@/components/trip/CostSpectrumBar";
+import type { TripWindowProposal } from "@/types/search";
 
 interface ApprovalDetail {
   id: string;
@@ -55,9 +59,35 @@ interface ApprovalDetail {
       selected_airline: string;
       justification_note: string | null;
     }> | null;
-    alternatives_snapshot?: unknown[] | null;
-    trip_window_snapshot?: unknown | null;
-    cheaper_months_snapshot?: unknown[] | null;
+    alternatives_snapshot?: Array<{
+      leg_id: string;
+      sequence: number;
+      route: string;
+      selected: {
+        airline: string;
+        date: string;
+        price: number;
+        stops: number;
+        flight_option_id: string;
+      } | null;
+      savings: { amount: number; percent: number };
+      alternatives: Array<{
+        type: string;
+        label: string;
+        airline: string;
+        date: string;
+        price: number;
+        savings: number;
+        stops: number;
+        flight_option_id: string;
+      }>;
+    }> | null;
+    trip_window_snapshot?: {
+      original_trip_duration: number;
+      original_total_price: number;
+      proposals: TripWindowProposal[];
+      different_month?: TripWindowProposal[];
+    } | null;
   } | null;
   history: Array<{
     id: string;
@@ -75,19 +105,6 @@ const tierBadgeColors: Record<string, string> = {
   platinum: "bg-purple-100 text-purple-800",
 };
 
-const statusColors: Record<string, string> = {
-  pass: "text-green-600",
-  warn: "text-amber-600",
-  block: "text-red-600",
-  info: "text-blue-600",
-};
-
-const statusIcons: Record<string, string> = {
-  pass: "✓",
-  warn: "⚠",
-  block: "✕",
-  info: "ℹ",
-};
 
 export default function ApprovalDetailPage() {
   const { approvalId } = useParams<{ approvalId: string }>();
@@ -235,45 +252,12 @@ export default function ApprovalDetailPage() {
             </div>
 
             {/* Cost Comparison Bar */}
-            <div className="relative h-6 bg-muted rounded-full overflow-visible">
-              {/* Green zone: 0 → cheapest */}
-              <div
-                className="absolute h-full bg-green-200 rounded-l-full"
-                style={{
-                  width: `${
-                    (sr.cheapest_total / sr.most_expensive_total) * 100
-                  }%`,
-                }}
-              />
-              {/* Amber zone: cheapest → selected (premium over cheapest) */}
-              {sr.selected_total > sr.cheapest_total && (
-                <div
-                  className="absolute h-full bg-amber-200"
-                  style={{
-                    left: `${
-                      (sr.cheapest_total / sr.most_expensive_total) * 100
-                    }%`,
-                    width: `${
-                      ((sr.selected_total - sr.cheapest_total) / sr.most_expensive_total) * 100
-                    }%`,
-                  }}
-                />
-              )}
-              {/* Selected price indicator */}
-              <div
-                className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-5 h-5 rounded-full bg-primary border-2 border-white shadow-md z-10"
-                style={{
-                  left: `${
-                    (sr.selected_total / sr.most_expensive_total) * 100
-                  }%`,
-                }}
-              />
-            </div>
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Cheapest: {formatPrice(sr.cheapest_total, sr.currency || "USD")}</span>
-              <span className="font-medium text-foreground">Selected: {formatPrice(sr.selected_total, sr.currency || "USD")}</span>
-              <span>Most Expensive: {formatPrice(sr.most_expensive_total, sr.currency || "USD")}</span>
-            </div>
+            <CostSpectrumBar
+              cheapest={sr.cheapest_total}
+              selected={sr.selected_total}
+              mostExpensive={sr.most_expensive_total}
+              currency={sr.currency || "USD"}
+            />
 
             {/* Narrative */}
             <div className="bg-muted/50 rounded-lg p-4">
@@ -366,6 +350,89 @@ export default function ApprovalDetailPage() {
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Alternatives Shown to Traveler */}
+      {sr?.alternatives_snapshot && sr.alternatives_snapshot.length > 0 && sr.alternatives_snapshot.some(l => l.alternatives.length > 0) && (
+        <Card>
+          <CardContent className="pt-6">
+            <h4 className="text-sm font-semibold mb-3">Same-Day Alternatives Shown</h4>
+            <div className="space-y-4">
+              {sr.alternatives_snapshot.map((leg, i) => {
+                if (!leg.alternatives.length) return null;
+                return (
+                  <div key={leg.leg_id || i} className="space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {leg.route}
+                      {leg.selected && (
+                        <span className="ml-2">
+                          — Selected: {leg.selected.airline} {formatPrice(leg.selected.price)}
+                        </span>
+                      )}
+                    </p>
+                    {leg.alternatives.map((alt, j) => (
+                      <div
+                        key={alt.flight_option_id || j}
+                        className="flex items-center justify-between rounded-md border border-border bg-muted/20 px-3 py-2"
+                      >
+                        <div>
+                          <span className="text-sm font-medium">{alt.airline}</span>
+                          <span className="text-xs text-muted-foreground ml-2">
+                            {alt.stops === 0 ? "Nonstop" : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
+                          </span>
+                          <span className="text-xs text-muted-foreground ml-2">{alt.label}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-sm font-bold text-emerald-700">
+                            {formatPrice(alt.price)}
+                          </span>
+                          {alt.savings > 0 && (
+                            <span className="text-[10px] text-emerald-600 ml-1">
+                              ({formatPrice(alt.savings)} less)
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Trip-Window Date Shift Options */}
+      {sr?.trip_window_snapshot?.proposals && sr.trip_window_snapshot.proposals.length > 0 && (
+        <Card className="border-blue-200">
+          <CardContent className="pt-6 space-y-3">
+            <div>
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                Date Shift Options Shown
+              </h4>
+              <p className="text-[10px] text-blue-600 mt-0.5">
+                Same {sr.trip_window_snapshot.original_trip_duration}-day trip, different dates
+              </p>
+            </div>
+            {sr.trip_window_snapshot.proposals.map((p, i) => (
+              <TripWindowCard key={i} proposal={p} />
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Different Month Options */}
+      {sr?.trip_window_snapshot?.different_month && sr.trip_window_snapshot.different_month.length > 0 && (
+        <Card className="border-purple-200">
+          <CardContent className="pt-6 space-y-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-purple-700">
+              Different Month Options Shown
+            </h4>
+            {sr.trip_window_snapshot.different_month.map((p, i) => (
+              <TripWindowCard key={i} proposal={p} />
+            ))}
           </CardContent>
         </Card>
       )}

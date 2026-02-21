@@ -23,7 +23,6 @@ export default function Dashboard() {
   }, [fetchTrips, fetchApprovals, fetchSavingsGoal, user]);
 
   const draftCount = trips.filter((t) => t.status === "draft").length;
-  const searchingCount = trips.filter((t) => t.status === "searching").length;
   const submittedCount = trips.filter((t) => t.status === "submitted").length;
   const approvedCount = trips.filter((t) => t.status === "approved").length;
   const totalTrips = trips.length;

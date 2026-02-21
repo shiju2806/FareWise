@@ -4,9 +4,7 @@ import json
 import logging
 from decimal import Decimal
 
-import anthropic
-
-from app.config import settings
+from app.services.llm_client import llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +31,6 @@ Respond with ONLY the narrative text, no JSON, no preamble."""
 class NarrativeGenerator:
     """Generates human-readable savings narratives using Claude API."""
 
-    def __init__(self):
-        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-
     async def generate(
         self,
         traveler_name: str,
@@ -57,14 +52,12 @@ class NarrativeGenerator:
         )
 
         try:
-            message = await self.client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+            return await llm_client.complete(
+                system=SYSTEM_PROMPT,
+                user=prompt,
                 max_tokens=500,
                 temperature=0.3,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
             )
-            return message.content[0].text.strip()
         except Exception as e:
             logger.error(f"Claude API failed for narrative generation: {e}")
             return self._fallback_narrative(

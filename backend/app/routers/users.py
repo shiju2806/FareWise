@@ -19,6 +19,10 @@ class TravelPreferencesRequest(BaseModel):
     seat_preference: str | None = None  # window | aisle | no_preference
     preferred_alliances: list[str] = []  # ["star_alliance", "oneworld", "skyteam"]
     prefer_same_tier: bool = False  # suggest similar-quality airlines in alternatives
+    preferred_currency: str | None = None  # CAD, USD, GBP, EUR, etc.
+    card_name: str | None = None
+    card_last4: str | None = None
+    card_type: str | None = None  # visa, mastercard, amex, corporate
 
 
 @router.get("/me", response_model=UserResponse)
@@ -39,6 +43,10 @@ async def get_travel_preferences(user: User = Depends(get_current_user)):
         "seat_preference": prefs.get("seat_preference"),
         "preferred_alliances": prefs.get("preferred_alliances", []),
         "prefer_same_tier": prefs.get("prefer_same_tier", False),
+        "preferred_currency": prefs.get("preferred_currency"),
+        "card_name": prefs.get("card_name"),
+        "card_last4": prefs.get("card_last4"),
+        "card_type": prefs.get("card_type"),
     }
 
 
@@ -62,6 +70,14 @@ async def update_travel_preferences(
         prefs["seat_preference"] = req.seat_preference
     prefs["preferred_alliances"] = req.preferred_alliances
     prefs["prefer_same_tier"] = req.prefer_same_tier
+    if req.preferred_currency is not None:
+        prefs["preferred_currency"] = req.preferred_currency
+    if req.card_name is not None:
+        prefs["card_name"] = req.card_name
+    if req.card_last4 is not None:
+        prefs["card_last4"] = req.card_last4
+    if req.card_type is not None:
+        prefs["card_type"] = req.card_type
     user.travel_preferences = prefs
     await db.commit()
     return {
@@ -73,9 +89,10 @@ async def update_travel_preferences(
         "seat_preference": prefs.get("seat_preference"),
         "preferred_alliances": prefs.get("preferred_alliances", []),
         "prefer_same_tier": prefs.get("prefer_same_tier", False),
+        "preferred_currency": prefs.get("preferred_currency"),
+        "card_name": prefs.get("card_name"),
+        "card_last4": prefs.get("card_last4"),
+        "card_type": prefs.get("card_type"),
     }
 
 
-@router.get("/me/frequent-routes")
-async def get_frequent_routes(user: User = Depends(get_current_user)):
-    return {"routes": []}

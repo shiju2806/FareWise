@@ -155,7 +155,7 @@ export function AirlineDateMatrix({
         <table className="text-[11px] w-full border-collapse">
           <thead>
             <tr className="bg-muted/50">
-              <th className="sticky left-0 z-10 bg-muted/50 text-left px-2 py-1.5 font-semibold min-w-[120px] border-r border-border">
+              <th className="sticky left-0 z-10 bg-muted text-left px-2 py-1.5 font-semibold min-w-[120px] border-r border-border">
                 Airline
               </th>
               {dates.map((d) => {
@@ -181,10 +181,10 @@ export function AirlineDateMatrix({
           </thead>
           <tbody>
             {airlines.map((airline) => {
-              const isRowCheapest = (d: string, price: number) =>
+              const isRowCheapest = (_d: string, price: number) =>
                 price === airline.minPrice;
-              const isColCheapest = (d: string, price: number) =>
-                cheapestByDate.get(d) === price && !airline.excluded;
+              const isColCheapest = (_d: string, price: number) =>
+                cheapestByDate.get(_d) === price && !airline.excluded;
 
               const isActive = activeAirlines?.has(airline.name);
 
@@ -198,9 +198,9 @@ export function AirlineDateMatrix({
                   <td
                     className={`sticky left-0 z-10 px-2 py-1.5 border-r border-border ${
                       airline.excluded
-                        ? "bg-muted/20 line-through"
+                        ? "bg-muted line-through"
                         : isActive
-                        ? "bg-primary/10"
+                        ? "bg-blue-50"
                         : "bg-card"
                     }`}
                   >

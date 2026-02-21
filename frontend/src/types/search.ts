@@ -129,12 +129,17 @@ export interface TripWindowFlight {
   airline_code: string;
   price: number;
   stops: number;
+  departure_time?: string;
+  arrival_time?: string;
+  duration_minutes?: number;
 }
 
 export interface TripWindowProposal {
   outbound_date: string;
   return_date: string;
   trip_duration: number;
+  /** How many days longer/shorter than original (+1, -2, etc.) */
+  duration_change?: number;
   outbound_flight: TripWindowFlight;
   return_flight: TripWindowFlight;
   total_price: number;
@@ -143,10 +148,14 @@ export interface TripWindowProposal {
   same_airline: boolean;
   airline_name: string | null;
   user_airline?: boolean;
+  /** LLM-generated reason why this proposal is worth considering */
+  reason?: string;
 }
 
 export interface TripWindowAlternatives {
   original_trip_duration: number;
   original_total_price: number;
   proposals: TripWindowProposal[];
+  /** LLM-categorized proposals for significantly shifted dates (different month) */
+  different_month?: TripWindowProposal[];
 }

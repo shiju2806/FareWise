@@ -15,11 +15,15 @@ export function AppShell() {
   useKeyboardShortcuts(() => setShowShortcuts((v) => !v));
 
   const navItems = [
+    { label: "Dashboard", path: "/", primary: false, roles: null },
     { label: "Trips", path: "/trips", primary: true, roles: null },
+    { label: "Group Trips", path: "/group-trips", primary: false, roles: null },
     { label: "Price Watches", path: "/price-watches", primary: false, roles: null },
+    { label: "My Stats", path: "/my-stats", primary: false, roles: null },
     { label: "My Profile", path: "/profile", primary: false, roles: null },
     { label: "Approvals", path: "/approvals", primary: false, roles: ["manager", "admin"] },
     { label: "Analytics", path: "/analytics", primary: false, roles: ["manager", "admin"] },
+    { label: "Leaderboard", path: "/leaderboard", primary: false, roles: ["manager", "admin"] },
     { label: "Policies", path: "/policies", primary: false, roles: ["admin"] },
   ];
 
@@ -37,8 +41,10 @@ export function AppShell() {
         </div>
         <nav className="flex-1 px-3 space-y-1">
           {visibleItems.map((item) => {
-            const isActive = location.pathname === item.path
-              || location.pathname.startsWith(item.path + "/");
+            const isActive = item.path === "/"
+              ? location.pathname === "/"
+              : location.pathname === item.path
+                || location.pathname.startsWith(item.path + "/");
             return (
               <Link
                 key={item.path}

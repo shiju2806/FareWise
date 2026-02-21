@@ -22,6 +22,7 @@ class SearchLog(Base):
     cheapest_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     most_expensive_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     cached: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     response_time_ms: Mapped[int | None] = mapped_column(Integer)
     # Phase C addition
     events_during_travel: Mapped[dict | None] = mapped_column(JSONB, default=list)

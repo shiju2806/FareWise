@@ -107,6 +107,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Scheduler failed to start: {e}")
 
+    # Auto-seed users/policies if DB is empty (dev/MVP convenience)
+    try:
+        from app.seed import seed
+        await seed()
+    except Exception as e:
+        logger.warning(f"Auto-seed skipped: {e}")
+
     # Create DB1B asyncpg pool for historical fare data
     db1b_pool = None
     if settings.db1b_enabled:
@@ -149,6 +156,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
+    allow_origin_regex=r"https://.*\.ngrok-free\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -177,3 +185,22 @@ app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "service": "farewise"}
+
+
+# Serve built frontend (for ngrok / production)
+import os
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+_frontend_dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+if _frontend_dist.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_frontend_dist / "assets")), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the SPA index.html for all non-API routes."""
+        file_path = _frontend_dist / full_path
+        if file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(_frontend_dist / "index.html"))

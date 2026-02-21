@@ -1,12 +1,10 @@
-"""NLP parser service — uses Claude API to parse natural language trip descriptions."""
+"""NLP parser service — uses LLM (OpenAI primary, Anthropic fallback) to parse natural language trip descriptions."""
 
 import json
 import logging
 from datetime import date, timedelta
 
-import anthropic
-
-from app.config import settings
+from app.services.llm_client import llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +19,15 @@ Rules:
   - "End of [month]" / "Late [month]" -> preferred_date = the 25th, flexibility_days = 4
   - "Next week" -> preferred_date = Monday of next week, flexibility_days = 3
   - When the user gives a SPECIFIC date ("April 15"), use flexibility_days = 3 (default)
-- Saturday/Sunday travel is fine — corporate travelers often fly on weekends to arrive for Monday meetings
-- For round trips with no explicit return date: default return 5 days after departure.
-  Examples: depart Wed -> return Mon (5 nights). Depart Mon -> return Sat (5 nights).
-  A typical business round trip is 5 nights. NEVER suggest a trip longer than 7 days unless the user explicitly asks.
+- This is a CORPORATE travel tool — all trips are business trips regardless of cabin class.
+- CORPORATE DATE LOGIC (applies to ALL cabin classes):
+  - When dates are vague ("mid April", "early March"), shift the preferred_date to the nearest Sunday ON or BEFORE the anchor date, so the traveler arrives Monday for start of the business week.
+    Example: "mid April" anchor = Apr 15 (Wed) → shift to Sunday Apr 12. "Early March" anchor = Mar 3 (Tue) → shift to Sunday Mar 1.
+  - For round trips with no explicit return: default to 5 WORKING DAYS (Mon–Fri), returning Saturday.
+    If departing Sunday → return the following Saturday (6 calendar nights). If departing Monday → return Saturday (5 calendar nights).
+    Examples: depart Sun Apr 12 → return Sat Apr 18. Depart Mon Mar 2 → return Sat Mar 7.
+    A typical corporate round trip covers one working week. NEVER suggest a trip longer than 7 days unless the user explicitly asks.
+  - When the user gives a SPECIFIC date ("April 15"), respect it as-is (don't shift to Sunday).
 - Infer return legs if the trip implies returning home (e.g., "Toronto to NYC and back")
 - For multi-city trips, infer connecting legs
 - Default cabin class: economy
@@ -33,7 +36,18 @@ Rules:
 - Map city names to primary IATA airport codes using common knowledge
 - If a city has multiple airports, use the primary one but note alternatives
 - If any part is ambiguous, include it in interpretation_notes
-- In interpretation_notes, explain your date choice: "Mid April -> Apr 15 with ±5 day flexibility to find best fares"
+- In interpretation_notes, explain your date choice: "Mid April -> shifted to Sun Apr 12 (arrive Mon), return Sat Apr 18 (5 working days), ±5 day flexibility"
+
+Edge cases:
+- MULTI-AIRPORT CITIES: Use the primary airport, note alternatives in interpretation_notes.
+  Toronto → YYZ (note: YTZ Billy Bishop for short-haul). London → LHR (note: LGW, STN, LCY).
+  New York → JFK for international, EWR for domestic. Paris → CDG (note: ORY).
+  Washington → DCA for domestic, IAD for international. Chicago → ORD (note: MDW).
+- "leave Monday, return Friday" = 4 calendar nights (Mon depart, Fri return). Count the days literally.
+- "meeting on [date]" → set preferred_date to the day BEFORE (arrive evening before), return the day AFTER the meeting.
+- "day trip" or "same day return" → create outbound and return legs on the same date.
+- Multi-city (e.g., "Toronto to NYC then Boston then home") → create legs 1→2, 2→3, 3→1.
+- If city is ambiguous (e.g., "Portland" could be PDX or PWM), use the more common one (PDX) and note the ambiguity in interpretation_notes.
 
 Respond ONLY with valid JSON, no markdown, no preamble:
 {{
@@ -58,9 +72,6 @@ Respond ONLY with valid JSON, no markdown, no preamble:
 class NLPParser:
     """Parses natural language trip descriptions into structured trip data."""
 
-    def __init__(self):
-        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-
     async def parse(self, text: str, max_retries: int = 2) -> dict:
         """
         Parse a natural language trip description.
@@ -74,19 +85,10 @@ class NLPParser:
         raw = ""
         for attempt in range(max_retries + 1):
             try:
-                message = await self.client.messages.create(
-                    model="claude-sonnet-4-5-20250929",
-                    max_tokens=1000,
-                    temperature=0,
-                    system=system,
-                    messages=[{"role": "user", "content": text}],
-                )
-
-                raw = message.content[0].text.strip()
+                raw = await llm_client.complete(system=system, user=text, max_tokens=1000, temperature=0, json_mode=True)
                 # Strip markdown code fences if present
                 if raw.startswith("```"):
                     lines = raw.split("\n")
-                    # Remove first line (```json) and last line (```)
                     lines = [l for l in lines if not l.strip().startswith("```")]
                     raw = "\n".join(lines).strip()
                 parsed = json.loads(raw)
@@ -105,12 +107,8 @@ class NLPParser:
                 logger.warning(f"NLP parse attempt {attempt + 1}: invalid JSON response: {e}\nRaw: {raw[:500]}")
                 if attempt == max_retries:
                     return self._fallback_response(text)
-            except anthropic.APIError as e:
-                logger.error(f"NLP parse attempt {attempt + 1}: Anthropic API error: {e}")
-                if attempt == max_retries:
-                    return self._fallback_response(text)
             except Exception as e:
-                logger.error(f"NLP parse attempt {attempt + 1}: unexpected error: {e}")
+                logger.error(f"NLP parse attempt {attempt + 1}: OpenAI API error: {e}")
                 if attempt == max_retries:
                     return self._fallback_response(text)
 
@@ -150,16 +148,33 @@ Help users plan trips through brief conversation. Given the conversation history
 
 IMPORTANT — be decisive, not interrogative:
 - When the user gives enough info to act (origin, destination, rough timeframe), FILL IN sensible defaults and set trip_ready=true. Do NOT keep asking questions.
-- "Mid [month]" → preferred_date = the 15th, flexibility_days = 5. The wider flexibility lets the search find the best fare window around the user's intent.
-- "Early [month]" → preferred_date = the 3rd, flexibility_days = 4.
-- "End of month" / "Late [month]" → preferred_date = the 25th, flexibility_days = 4.
-- "Next week" → Monday of next week, flexibility_days = 3.
-- When the user gives a SPECIFIC date ("March 20"), keep flexibility_days = 3.
+- This is a CORPORATE travel tool — all trips are business trips regardless of cabin class.
+- Vague date anchors:
+  - "Mid [month]" → anchor = the 15th, flexibility_days = 5.
+  - "Early [month]" → anchor = the 3rd, flexibility_days = 4.
+  - "End of month" / "Late [month]" → anchor = the 25th, flexibility_days = 4.
+  - "Next week" → anchor = Monday of next week, flexibility_days = 3.
+  - When the user gives a SPECIFIC date ("March 20"), use that date as-is (don't shift), flexibility_days = 3.
 - "Business" → set cabin_class to business. If no class mentioned, default to economy.
-- "Round trip" or "and back" → add a return leg matching the requested duration. If user says "for a week" → 7 days. If no duration specified, default to 5 nights. Examples: depart Apr 15 "for a week" → return Apr 22. Depart Apr 15 with no duration → return Apr 20. NEVER exceed the requested duration.
+- CORPORATE DATE LOGIC (applies to ALL cabin classes since this is a corporate tool):
+  - When dates are vague ("mid April", "early March"), shift the preferred_date to the nearest Sunday ON or BEFORE the anchor date, so the traveler arrives Monday for start of the business week.
+    Example: "mid April" anchor = Apr 15 (Wed) → shift to Sunday Apr 12. "Early March" anchor = Mar 3 (Tue) → shift to Sunday Mar 1.
+  - For round trips with no explicit return: default to 5 WORKING DAYS (Mon–Fri), returning Saturday.
+    If departing Sunday → return the following Saturday (6 calendar nights). If departing Monday → return Saturday (5 calendar nights).
+    Examples: depart Sun Apr 12 → return Sat Apr 18. Depart Mon Mar 2 → return Sat Mar 7.
+    A typical corporate round trip covers one working week. NEVER exceed 7 days unless the user explicitly asks.
+  - In your reply, note this logic: "I've set departure to Sunday Apr 12 so you arrive Monday, with return Saturday Apr 18 after a full work week."
+- "Round trip" or "and back" → add a return leg matching the requested duration. If user says "for a week" → 7 days. NEVER exceed the requested duration.
 - In your reply, when dates are vague, briefly note the flexibility: e.g., "I've set departure around mid-April with a ±5 day window to find the best fares."
 - When the user says "book", "let's go", "search", or "find flights" — proceed immediately with what you have. Use defaults for anything missing.
 - Only ask a question if you truly cannot infer the origin OR destination.
+
+Edge cases:
+- "meeting on [date]" → set preferred_date to the day BEFORE (arrive evening before), return the day AFTER the meeting. Mention this in your reply: "I've set arrival for the evening before your meeting."
+- "day trip" or "same day return" → create two legs on the same date. Note: flexibility_days = 0 for day trips.
+- Multi-city (e.g., "Toronto to NYC then Boston then home") → create legs 1→2, 2→3, 3→1. Set appropriate dates with 2-3 days per city.
+- MULTI-AIRPORT CITIES: Use the primary airport. Toronto → YYZ, London → LHR, New York → JFK (international) or EWR (domestic), Paris → CDG, Washington → DCA (domestic) or IAD (international).
+- Ambiguous cities (e.g., "Portland") → use the more common one (PDX) and ask: "I'm assuming Portland, Oregon (PDX) — did you mean Portland, Maine?"
 
 Required fields before a trip is ready:
 - At least one leg with: origin_city, destination_city, preferred_date
@@ -193,9 +208,6 @@ Respond ONLY with valid JSON, no markdown:
 class NLPChatParser:
     """Multi-turn conversational trip planning parser."""
 
-    def __init__(self):
-        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-
     async def chat(
         self,
         message: str,
@@ -212,19 +224,11 @@ class NLPChatParser:
         if partial_trip:
             system += f"\n\nCurrent partial trip data:\n{json.dumps(partial_trip, indent=2)}"
 
-        messages = list(conversation_history or [])
-        messages.append({"role": "user", "content": message})
+        msgs = list(conversation_history or [])
+        msgs.append({"role": "user", "content": message})
 
         try:
-            response = await self.client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=1000,
-                temperature=0,
-                system=system,
-                messages=messages,
-            )
-
-            raw = response.content[0].text.strip()
+            raw = await llm_client.complete(system=system, user="", messages=msgs, max_tokens=1000, temperature=0, json_mode=True)
             if raw.startswith("```"):
                 lines = raw.split("\n")
                 lines = [l for l in lines if not l.strip().startswith("```")]
@@ -242,21 +246,21 @@ class NLPChatParser:
             if "missing_fields" not in parsed:
                 parsed["missing_fields"] = []
 
-            # Snap dates to business days
+            # Snap dates
             pt = parsed.get("partial_trip")
             if pt and isinstance(pt, dict):
                 for leg in pt.get("legs", []):
-                    raw = leg.get("preferred_date")
-                    if raw:
+                    raw_date = leg.get("preferred_date")
+                    if raw_date:
                         try:
-                            d = date.fromisoformat(raw)
+                            d = date.fromisoformat(raw_date)
                             leg["preferred_date"] = d.isoformat()
                         except (ValueError, TypeError):
                             pass
 
             return parsed
 
-        except (json.JSONDecodeError, anthropic.APIError) as e:
+        except json.JSONDecodeError as e:
             logger.warning(f"Chat parse error: {e}")
             return {
                 "reply": "I understand. Could you tell me where you'd like to travel, when, and from where?",

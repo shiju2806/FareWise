@@ -24,6 +24,19 @@ const POLICY_BUDGET: Record<string, number> = {
 
 const fmtPrice = (n: number, currency?: string) => formatPrice(n, currency || "USD");
 
+function fmtDuration(minutes: number): string {
+  if (!minutes) return "";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}h${m > 0 ? ` ${m}m` : ""}`;
+}
+
+function fmtTime(isoStr: string): string {
+  if (!isoStr) return "";
+  const d = new Date(isoStr);
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+}
+
 interface LegComparison {
   legId: string;
   selected: FlightOption | null;
@@ -149,7 +162,10 @@ export function TripCostBar({ tripId, legs, selectedFlights, results, activeLegI
                   <div className="flex items-baseline gap-2">
                     <span className="text-sm font-bold">{fmtPrice(c.selected.price, c.selected.currency)}</span>
                     <span className="text-[10px] text-muted-foreground">
-                      {c.selected.airline_name} &middot; {c.selected.stops === 0 ? "Nonstop" : `${c.selected.stops} stop`}
+                      {c.selected.airline_name}
+                      {c.selected.departure_time && <> &middot; {fmtTime(c.selected.departure_time)}</>}
+                      {c.selected.duration_minutes > 0 && <> &middot; {fmtDuration(c.selected.duration_minutes)}</>}
+                      {" "}&middot; {c.selected.stops === 0 ? "Nonstop" : `${c.selected.stops} stop`}
                     </span>
                   </div>
                   {c.cheapestOverall && c.selected.price > c.cheapestOverall.price + 10 && (

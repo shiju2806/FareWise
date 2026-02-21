@@ -1,19 +1,14 @@
-"""Trip Intelligence Service — LLM-powered trip-level cost analysis and optimization.
+"""Trip Intelligence Service — LLM-powered trip-level cost analysis.
 
 Provides:
 - Trip-level cost analysis across all legs (vs cheapest, vs policy, vs stops/routing)
-- Round-trip date optimization (cross-reference outbound × return prices)
-- LLM-generated trip-level justification prompts
 - Smart cost comparison summaries
 """
 
 import json
 import logging
-from datetime import date
 
-import anthropic
-
-from app.config import settings
+from app.services.llm_client import llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -60,50 +55,8 @@ Guidelines:
 Respond with ONLY the JSON, no markdown, no preamble."""
 
 
-DATE_OPTIMIZER_SYSTEM_PROMPT = """You are a corporate travel date optimization advisor. Given outbound and return flight prices across multiple dates, identify the best date combinations and explain why.
-
-Your response MUST be valid JSON with this exact structure:
-{
-    "best_combo": {
-        "outbound_date": "YYYY-MM-DD",
-        "return_date": "YYYY-MM-DD",
-        "total_price": 0,
-        "savings_vs_preferred": 0,
-        "reason": "Why this combo is best (1 sentence)"
-    },
-    "top_combos": [
-        {
-            "outbound_date": "YYYY-MM-DD",
-            "return_date": "YYYY-MM-DD",
-            "total_price": 0,
-            "outbound_airline": "Airline",
-            "return_airline": "Airline",
-            "outbound_stops": 0,
-            "return_stops": 0,
-            "trip_days": 0,
-            "reason": "Brief reason"
-        }
-    ],
-    "date_insight": "1-2 sentence insight about date patterns (e.g., midweek is cheaper, avoid weekends)",
-    "flexibility_advice": "Specific advice about date flexibility and potential savings"
-}
-
-Guidelines:
-- Rank combos by total round-trip price (cheapest first)
-- Provide up to 5 combos
-- Consider trip duration (don't suggest 1-day or 30-day trips for typical business travel)
-- Note if midweek vs weekend makes a difference
-- Identify if nonstop options are available at competitive prices
-- Use CAD currency throughout
-
-Respond with ONLY the JSON, no markdown, no preamble."""
-
-
 class TripIntelligenceService:
     """LLM-powered trip-level cost analysis and optimization."""
-
-    def __init__(self):
-        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     async def analyze_trip(
         self,
@@ -111,30 +64,19 @@ class TripIntelligenceService:
         selected_flights: list[dict],
         all_options_per_leg: list[list[dict]],
     ) -> dict:
-        """Analyze entire trip cost vs alternatives, policy, and routing options.
-
-        Args:
-            legs: List of leg info dicts (origin, destination, cabin_class, preferred_date)
-            selected_flights: List of selected flight dicts per leg
-            all_options_per_leg: List of all flight option lists per leg
-
-        Returns:
-            LLM-generated trip analysis with recommendations
-        """
+        """Analyze entire trip cost vs alternatives, policy, and routing options."""
         prompt = self._build_trip_analysis_prompt(
             legs, selected_flights, all_options_per_leg
         )
 
         try:
-            message = await self.client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+            raw_text = await llm_client.complete(
+                system=TRIP_ANALYSIS_SYSTEM_PROMPT,
+                user=prompt,
                 max_tokens=1000,
                 temperature=0.2,
-                system=TRIP_ANALYSIS_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
+                json_mode=True,
             )
-
-            raw_text = message.content[0].text.strip()
             if raw_text.startswith("```"):
                 raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
                 if raw_text.endswith("```"):
@@ -157,60 +99,6 @@ class TripIntelligenceService:
         except Exception as e:
             logger.error(f"Trip analysis LLM failed: {e}")
             return self._fallback_trip_analysis(legs, selected_flights, all_options_per_leg)
-
-    async def optimize_dates(
-        self,
-        outbound_leg: dict,
-        return_leg: dict,
-        outbound_options: list[dict],
-        return_options: list[dict],
-        preferred_outbound: str,
-        preferred_return: str,
-    ) -> dict:
-        """Cross-reference outbound × return prices for optimal date combinations.
-
-        Args:
-            outbound_leg: Outbound leg info
-            return_leg: Return leg info
-            outbound_options: All outbound flight options
-            return_options: All return flight options
-            preferred_outbound: Preferred outbound date
-            preferred_return: Preferred return date
-
-        Returns:
-            LLM-generated date optimization with top combos
-        """
-        prompt = self._build_date_optimizer_prompt(
-            outbound_leg, return_leg, outbound_options, return_options,
-            preferred_outbound, preferred_return,
-        )
-
-        try:
-            message = await self.client.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=1000,
-                temperature=0.2,
-                system=DATE_OPTIMIZER_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            raw_text = message.content[0].text.strip()
-            if raw_text.startswith("```"):
-                raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
-                if raw_text.endswith("```"):
-                    raw_text = raw_text[:-3]
-                raw_text = raw_text.strip()
-
-            result = json.loads(raw_text)
-            result["source"] = "llm"
-            return result
-
-        except Exception as e:
-            logger.error(f"Date optimizer LLM failed: {e}")
-            return self._fallback_date_optimization(
-                outbound_options, return_options,
-                preferred_outbound, preferred_return,
-            )
 
     def get_cost_summary(
         self,
@@ -367,104 +255,6 @@ class TripIntelligenceService:
 
         return "\n".join(sections)
 
-    def _build_date_optimizer_prompt(
-        self,
-        outbound_leg: dict,
-        return_leg: dict,
-        outbound_options: list[dict],
-        return_options: list[dict],
-        preferred_outbound: str,
-        preferred_return: str,
-    ) -> str:
-        sections = [
-            f"Route: {outbound_leg.get('origin_airport', '?')} → {outbound_leg.get('destination_airport', '?')} (round trip)",
-            f"Preferred outbound: {preferred_outbound}",
-            f"Preferred return: {preferred_return}",
-            f"Cabin: {outbound_leg.get('cabin_class', 'economy')}",
-            "",
-            "=== OUTBOUND CHEAPEST BY DATE ===",
-        ]
-
-        # Group outbound by date
-        out_by_date: dict[str, dict] = {}
-        for f in outbound_options:
-            d = f.get("departure_time", "")[:10]
-            if not d:
-                continue
-            if d not in out_by_date or f["price"] < out_by_date[d]["price"]:
-                out_by_date[d] = {
-                    "date": d,
-                    "price": f["price"],
-                    "airline": f.get("airline_name", "?"),
-                    "stops": f.get("stops", 0),
-                }
-
-        for d in sorted(out_by_date.keys()):
-            info = out_by_date[d]
-            marker = " ← preferred" if d == preferred_outbound else ""
-            sections.append(f"  {d}: ${info['price']:.0f} ({info['airline']}, {info['stops']} stops){marker}")
-
-        sections.append("")
-        sections.append("=== RETURN CHEAPEST BY DATE ===")
-
-        ret_by_date: dict[str, dict] = {}
-        for f in return_options:
-            d = f.get("departure_time", "")[:10]
-            if not d:
-                continue
-            if d not in ret_by_date or f["price"] < ret_by_date[d]["price"]:
-                ret_by_date[d] = {
-                    "date": d,
-                    "price": f["price"],
-                    "airline": f.get("airline_name", "?"),
-                    "stops": f.get("stops", 0),
-                }
-
-        for d in sorted(ret_by_date.keys()):
-            info = ret_by_date[d]
-            marker = " ← preferred" if d == preferred_return else ""
-            sections.append(f"  {d}: ${info['price']:.0f} ({info['airline']}, {info['stops']} stops){marker}")
-
-        # Cross-reference top combos
-        sections.extend(["", "=== TOP DATE COMBINATIONS (by total round-trip price) ==="])
-        combos = []
-        for od, oi in out_by_date.items():
-            for rd, ri in ret_by_date.items():
-                if rd > od:
-                    combos.append({
-                        "out": od,
-                        "ret": rd,
-                        "total": oi["price"] + ri["price"],
-                        "out_airline": oi["airline"],
-                        "ret_airline": ri["airline"],
-                        "out_stops": oi["stops"],
-                        "ret_stops": ri["stops"],
-                    })
-
-        combos.sort(key=lambda c: c["total"])
-        for c in combos[:10]:
-            days = (date.fromisoformat(c["ret"]) - date.fromisoformat(c["out"])).days
-            sections.append(
-                f"  {c['out']} → {c['ret']} ({days}d): "
-                f"${c['total']:.0f} = ${combos[0]['total'] + c['total'] - combos[0]['total']:.0f} "
-                f"(out: {c['out_airline']} {c['out_stops']}stop, ret: {c['ret_airline']} {c['ret_stops']}stop)"
-            )
-
-        # Preferred combo price
-        pref_out = out_by_date.get(preferred_outbound)
-        pref_ret = ret_by_date.get(preferred_return)
-        if pref_out and pref_ret:
-            pref_total = pref_out["price"] + pref_ret["price"]
-            best_total = combos[0]["total"] if combos else pref_total
-            sections.extend([
-                "",
-                f"Preferred dates total: ${pref_total:.0f} CAD",
-                f"Cheapest combo total: ${best_total:.0f} CAD",
-                f"Potential savings: ${pref_total - best_total:.0f} CAD",
-            ])
-
-        return "\n".join(sections)
-
     def _fallback_trip_analysis(
         self,
         legs: list[dict],
@@ -517,285 +307,6 @@ class TripIntelligenceService:
             "alternatives_summary": f"Cheapest combination across all legs: ${total_cheapest:.0f} CAD (saves ${savings:.0f})" if savings > 50 else "Current selections are near-optimal",
             "justification_prompt": f"Your trip total of ${total_selected:.0f} CAD is ${policy_diff:.0f} over the ${total_policy:.0f} policy budget. Could you briefly explain your flight choices?" if policy_diff > 0 else None,
             "source": "fallback",
-        }
-
-    def _fallback_date_optimization(
-        self,
-        outbound_options: list[dict],
-        return_options: list[dict],
-        preferred_outbound: str,
-        preferred_return: str,
-    ) -> dict:
-        """Rule-based date optimization fallback."""
-        out_by_date: dict[str, dict] = {}
-        for f in outbound_options:
-            d = f.get("departure_time", "")[:10]
-            if d and (d not in out_by_date or f["price"] < out_by_date[d]["price"]):
-                out_by_date[d] = f
-
-        ret_by_date: dict[str, dict] = {}
-        for f in return_options:
-            d = f.get("departure_time", "")[:10]
-            if d and (d not in ret_by_date or f["price"] < ret_by_date[d]["price"]):
-                ret_by_date[d] = f
-
-        combos = []
-        for od, of in out_by_date.items():
-            for rd, rf in ret_by_date.items():
-                if rd > od:
-                    days = (date.fromisoformat(rd) - date.fromisoformat(od)).days
-                    if 1 <= days <= 21:
-                        combos.append({
-                            "outbound_date": od,
-                            "return_date": rd,
-                            "total_price": round(of["price"] + rf["price"], 2),
-                            "outbound_airline": of.get("airline_name", "?"),
-                            "return_airline": rf.get("airline_name", "?"),
-                            "outbound_stops": of.get("stops", 0),
-                            "return_stops": rf.get("stops", 0),
-                            "trip_days": days,
-                            "reason": "",
-                        })
-
-        combos.sort(key=lambda c: c["total_price"])
-        top = combos[:5]
-
-        pref_out = out_by_date.get(preferred_outbound)
-        pref_ret = ret_by_date.get(preferred_return)
-        pref_total = (pref_out["price"] + pref_ret["price"]) if pref_out and pref_ret else 0
-
-        best = top[0] if top else None
-
-        return {
-            "best_combo": {
-                "outbound_date": best["outbound_date"] if best else preferred_outbound,
-                "return_date": best["return_date"] if best else preferred_return,
-                "total_price": best["total_price"] if best else 0,
-                "savings_vs_preferred": round(pref_total - best["total_price"], 2) if best and pref_total else 0,
-                "reason": "Cheapest date combination found",
-            } if best else None,
-            "top_combos": top,
-            "date_insight": "Prices vary by date. Midweek departures are often cheaper.",
-            "flexibility_advice": f"Flexible dates could save up to ${round(pref_total - top[0]['total_price'], 2)} CAD" if top and pref_total > top[0]["total_price"] else "Your preferred dates are already well-priced",
-            "source": "fallback",
-        }
-
-
-    def compute_trip_window_alternatives(
-        self,
-        outbound_options: list[dict],
-        return_options: list[dict],
-        preferred_outbound: str,
-        preferred_return: str,
-        max_proposals: int = 5,
-        selected_airline_codes: list[str] | None = None,
-    ) -> dict:
-        """Compute trip-window alternatives that preserve trip duration.
-
-        For each candidate outbound date, pairs with (outbound + trip_duration)
-        for return. Scores PAIRS by total cost. Pure computation — no LLM call.
-
-        If selected_airline_codes is provided, ensures at least one proposal
-        uses the traveler's selected airline(s).
-        """
-        if not preferred_outbound or not preferred_return:
-            return {"original_trip_duration": 0, "original_total_price": 0, "proposals": []}
-
-        pref_out = date.fromisoformat(preferred_outbound)
-        pref_ret = date.fromisoformat(preferred_return)
-        trip_duration = (pref_ret - pref_out).days
-
-        if trip_duration <= 0:
-            return {"original_trip_duration": 0, "original_total_price": 0, "proposals": []}
-
-        # Build cheapest flight per date for each leg
-        out_by_date: dict[str, dict] = {}
-        for f in outbound_options:
-            d = f.get("departure_time", "")[:10]
-            if d and (d not in out_by_date or f["price"] < out_by_date[d]["price"]):
-                out_by_date[d] = f
-
-        ret_by_date: dict[str, dict] = {}
-        for f in return_options:
-            d = f.get("departure_time", "")[:10]
-            if d and (d not in ret_by_date or f["price"] < ret_by_date[d]["price"]):
-                ret_by_date[d] = f
-
-        # Build per-airline cheapest by date
-        out_by_airline_date: dict[tuple[str, str], dict] = {}
-        for f in outbound_options:
-            d = f.get("departure_time", "")[:10]
-            airline = f.get("airline_code", "")
-            key = (airline, d)
-            if d and (key not in out_by_airline_date or f["price"] < out_by_airline_date[key]["price"]):
-                out_by_airline_date[key] = f
-
-        ret_by_airline_date: dict[tuple[str, str], dict] = {}
-        for f in return_options:
-            d = f.get("departure_time", "")[:10]
-            airline = f.get("airline_code", "")
-            key = (airline, d)
-            if d and (key not in ret_by_airline_date or f["price"] < ret_by_airline_date[key]["price"]):
-                ret_by_airline_date[key] = f
-
-        # Original trip cost (cheapest on preferred dates)
-        orig_out_price = out_by_date.get(preferred_outbound, {}).get("price", 0)
-        orig_ret_price = ret_by_date.get(preferred_return, {}).get("price", 0)
-        original_total = orig_out_price + orig_ret_price
-
-        # Also compute the user's actual selected airline cost on preferred dates
-        selected_codes = set(selected_airline_codes or [])
-        selected_original_total = 0.0
-        if selected_codes:
-            for code in selected_codes:
-                out_f = out_by_airline_date.get((code, preferred_outbound))
-                ret_f = ret_by_airline_date.get((code, preferred_return))
-                if out_f and ret_f:
-                    selected_original_total = out_f["price"] + ret_f["price"]
-                    break
-        if selected_original_total == 0:
-            selected_original_total = original_total
-
-        proposals = []
-        from datetime import timedelta as td
-
-        def _make_proposal(out_flight: dict, ret_flight: dict, out_date_str: str, ret_date_str: str, user_airline: bool = False) -> dict | None:
-            total = out_flight["price"] + ret_flight["price"]
-            # For user's airline proposals, compute savings vs their airline's original price
-            ref_total = selected_original_total if user_airline else original_total
-            savings = ref_total - total
-            return {
-                "outbound_date": out_date_str,
-                "return_date": ret_date_str,
-                "trip_duration": trip_duration,
-                "outbound_flight": {
-                    "airline_name": out_flight.get("airline_name", ""),
-                    "airline_code": out_flight.get("airline_code", ""),
-                    "price": out_flight["price"],
-                    "stops": out_flight.get("stops", 0),
-                },
-                "return_flight": {
-                    "airline_name": ret_flight.get("airline_name", ""),
-                    "airline_code": ret_flight.get("airline_code", ""),
-                    "price": ret_flight["price"],
-                    "stops": ret_flight.get("stops", 0),
-                },
-                "total_price": round(total, 2),
-                "savings": round(savings, 2),
-                "savings_percent": round((savings / ref_total) * 100, 1) if ref_total > 0 else 0,
-                "same_airline": out_flight.get("airline_code") == ret_flight.get("airline_code"),
-                "airline_name": out_flight.get("airline_name") if out_flight.get("airline_code") == ret_flight.get("airline_code") else None,
-                "user_airline": user_airline,
-            }
-
-        # === Pass 1: Cheapest overall per date ===
-        for out_date_str, out_flight in out_by_date.items():
-            out_date = date.fromisoformat(out_date_str)
-            ret_date = out_date + td(days=trip_duration)
-            ret_date_str = ret_date.isoformat()
-            if out_date_str == preferred_outbound and ret_date_str == preferred_return:
-                continue
-            ret_flight = ret_by_date.get(ret_date_str)
-            if not ret_flight:
-                continue
-            p = _make_proposal(out_flight, ret_flight, out_date_str, ret_date_str)
-            if p and p["savings"] > 0:
-                proposals.append(p)
-
-        # === Pass 2: User's selected airline on shifted dates ===
-        # These are high-value: "your airline, same trip duration, different dates"
-        # Include even if savings <= 0 (up to 10% premium) since users value their airline
-        for code in selected_codes:
-            for (airline, out_date_str), out_flight in out_by_airline_date.items():
-                if airline != code:
-                    continue
-                out_date = date.fromisoformat(out_date_str)
-                ret_date = out_date + td(days=trip_duration)
-                ret_date_str = ret_date.isoformat()
-                if out_date_str == preferred_outbound and ret_date_str == preferred_return:
-                    continue
-                ret_flight = ret_by_airline_date.get((code, ret_date_str))
-                if not ret_flight:
-                    continue
-                p = _make_proposal(out_flight, ret_flight, out_date_str, ret_date_str, user_airline=True)
-                if p and p["savings_percent"] >= -10:  # allow up to 10% premium
-                    proposals.append(p)
-
-        # === Pass 3: Same-airline proposals (any airline, both legs match) ===
-        for (airline, out_date_str), out_flight in out_by_airline_date.items():
-            if airline in selected_codes:
-                continue  # already handled in pass 2
-            out_date = date.fromisoformat(out_date_str)
-            ret_date = out_date + td(days=trip_duration)
-            ret_date_str = ret_date.isoformat()
-            if out_date_str == preferred_outbound and ret_date_str == preferred_return:
-                continue
-            ret_flight = ret_by_airline_date.get((airline, ret_date_str))
-            if not ret_flight:
-                continue
-            p = _make_proposal(out_flight, ret_flight, out_date_str, ret_date_str)
-            if p and p["savings"] > 0:
-                proposals.append(p)
-
-        # Deduplicate: keep best savings per (outDate, retDate, airlinePair)
-        unique: dict[tuple, dict] = {}
-        for p in proposals:
-            out_code = p["outbound_flight"]["airline_code"]
-            ret_code = p["return_flight"]["airline_code"]
-            key = (p["outbound_date"], p["return_date"], out_code, ret_code)
-            if key not in unique or p["savings"] > unique[key]["savings"]:
-                unique[key] = p
-
-        all_sorted = sorted(unique.values(), key=lambda p: p["savings"], reverse=True)
-
-        # === Selection strategy: 1 user's airline + 1 cheapest + fill diverse ===
-        final: list[dict] = []
-        used = set()
-
-        # Slot 1: Best proposal with user's selected airline
-        for p in all_sorted:
-            if p.get("user_airline"):
-                final.append(p)
-                used.add(id(p))
-                break
-
-        # Slot 2: Overall cheapest (different from slot 1)
-        for p in all_sorted:
-            if id(p) not in used:
-                final.append(p)
-                used.add(id(p))
-                break
-
-        # Slots 3-N: Fill with diverse airline pairs
-        def _airline_pair(p: dict) -> tuple[str, str]:
-            return (p["outbound_flight"]["airline_code"], p["return_flight"]["airline_code"])
-
-        seen_pairs = {_airline_pair(p) for p in final}
-        for p in all_sorted:
-            if len(final) >= max_proposals:
-                break
-            if id(p) in used:
-                continue
-            pair = _airline_pair(p)
-            if pair not in seen_pairs:
-                final.append(p)
-                used.add(id(p))
-                seen_pairs.add(pair)
-
-        # Fill remaining with best savings
-        for p in all_sorted:
-            if len(final) >= max_proposals:
-                break
-            if id(p) not in used:
-                final.append(p)
-                used.add(id(p))
-
-        sorted_proposals = sorted(final, key=lambda p: p["savings"], reverse=True)
-
-        return {
-            "original_trip_duration": trip_duration,
-            "original_total_price": round(original_total, 2),
-            "proposals": sorted_proposals[:max_proposals],
         }
 
 

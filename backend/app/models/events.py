@@ -84,10 +84,10 @@ class HotelSelection(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     trip_leg_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("trip_legs.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("trip_legs.id", ondelete="CASCADE"), nullable=False
     )
     hotel_option_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("hotel_options.id"), nullable=False
+        UUID(as_uuid=True), ForeignKey("hotel_options.id", ondelete="CASCADE"), nullable=False
     )
     check_in: Mapped[date] = mapped_column(Date, nullable=False)
     check_out: Mapped[date] = mapped_column(Date, nullable=False)

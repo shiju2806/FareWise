@@ -128,6 +128,17 @@ export default function TripHistory() {
                     <Link to={`/trips/${trip.id}/review`}>
                       <Button size="sm">Review & Submit</Button>
                     </Link>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        if (confirm("Delete this trip?")) {
+                          deleteTrip(trip.id);
+                        }
+                      }}
+                    >
+                      Delete
+                    </Button>
                   </>
                 )}
                 {trip.status === "submitted" && (
@@ -159,7 +170,22 @@ export default function TripHistory() {
               </div>
             </div>
 
-            {trip.legs.length > 0 && <LegList legs={trip.legs} />}
+            {trip.legs.length > 0 && (trip.status === "draft" || trip.status === "searching") && (
+              <LegList legs={trip.legs} />
+            )}
+            {trip.legs.length > 0 && trip.status !== "draft" && trip.status !== "searching" && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                {trip.legs.map((leg, i) => (
+                  <span key={leg.id || i} className="flex items-center gap-1.5">
+                    {i === 0 && <span className="font-medium text-foreground">{leg.origin_airport}</span>}
+                    <span>&rarr;</span>
+                    <span className="font-medium text-foreground">{leg.destination_airport}</span>
+                    <span className="text-muted-foreground">{leg.preferred_date}</span>
+                    {i < trip.legs.length - 1 && <span className="text-border mx-1">|</span>}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>

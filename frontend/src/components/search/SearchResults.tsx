@@ -20,6 +20,7 @@ interface Props {
   onSliderChange: (value: number) => void;
   onDateSelect: (date: string) => void;
   onFlightSelect?: (flight: FlightOption) => void;
+  selectedFlightId?: string;
   excludedAirlines?: string[];
   dateEvents?: Record<string, DateEvent[]>;
   allEvents?: EventData[];
@@ -35,6 +36,7 @@ export function SearchResults({
   onSliderChange,
   onDateSelect,
   onFlightSelect,
+  selectedFlightId,
   excludedAirlines = [],
   dateEvents = {},
   allEvents = [],
@@ -64,17 +66,22 @@ export function SearchResults({
   const matrixKey = `${legId}:${matrixYear}-${String(matrixMonth).padStart(2, "0")}`;
   const externalMatrixData = matrixData[matrixKey] ?? undefined;
 
+  // Fetch matrix data on initial mount
+  useEffect(() => {
+    fetchMonthMatrix(legId, matrixYear, matrixMonth);
+  }, [legId, matrixYear, matrixMonth, fetchMonthMatrix]);
+
   const handleMonthChange = useCallback(
     (year: number, month: number) => {
       setMatrixYear(year);
       setMatrixMonth(month);
-      fetchMonthMatrix(legId, year, month);
     },
-    [legId, fetchMonthMatrix]
+    []
   );
 
   function handleDateSelect(date: string) {
-    const newDate = date === selectedDate ? null : date;
+    // If clicking the already-selected date, deselect (unless it's the preferred date — keep it)
+    const newDate = date === selectedDate && date !== result.leg.preferred_date ? null : date;
     setSelectedDate(newDate);
     onDateSelect(date);
   }
@@ -96,13 +103,11 @@ export function SearchResults({
 
   function toggleAirline(name: string) {
     setAirlineFilter((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) {
-        next.delete(name);
-      } else {
-        next.add(name);
+      // Single-select: clicking same airline deselects, clicking different switches
+      if (prev.has(name)) {
+        return new Set();
       }
-      return next;
+      return new Set([name]);
     });
   }
 
@@ -223,6 +228,8 @@ export function SearchResults({
           selectedDate={selectedDate}
           onDateSelect={handleDateSelect}
           onMonthChange={handleMonthChange}
+          activeAirline={airlineFilter.size === 1 ? Array.from(airlineFilter)[0] : null}
+          allOptions={result.all_options}
         />
       </div>
 
@@ -387,6 +394,7 @@ export function SearchResults({
               key={flight.id || i}
               flight={flight}
               isRecommended={flight.id === recommendedId}
+              isSelected={flight.id === selectedFlightId}
               reason={flight.id === recommendedId ? result.recommendation?.reason : undefined}
               onSelect={onFlightSelect}
               priceQuartiles={priceQuartiles}

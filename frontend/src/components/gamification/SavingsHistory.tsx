@@ -48,7 +48,7 @@ export function SavingsHistory({ history }: Props) {
                 tickFormatter={(v) => `$${v}`}
               />
               <Tooltip
-                formatter={(value: number) => [`$${value.toLocaleString()}`, "Savings"]}
+                formatter={(value: number | undefined) => [`$${(value ?? 0).toLocaleString()}`, "Savings"]}
               />
               <Bar dataKey="savings" fill="hsl(142, 71%, 45%)" radius={[4, 4, 0, 0]} />
             </BarChart>

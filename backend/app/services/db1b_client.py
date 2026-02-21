@@ -42,6 +42,16 @@ CARRIER_NAMES = {
     "WS": "WestJet",
 }
 
+# Airport code → city name (for route resolution via alternate airports)
+AIRPORT_CITY = {
+    "YYZ": "Toronto", "YTZ": "Toronto",
+    "LHR": "London", "LGW": "London", "STN": "London", "LTN": "London", "LCY": "London",
+    "BDA": "Bermuda",
+    "SNA": "Newport Beach", "LAX": "Newport Beach",
+    "SYD": "Sydney",
+    "SIN": "Singapore",
+}
+
 # Common connecting hub airports by region
 HUB_AIRPORTS = {
     "US_EAST": ["JFK", "EWR", "IAD", "BOS", "PHL", "CLT", "ATL", "MIA"],
@@ -248,7 +258,9 @@ class DB1BClient:
     async def _find_route(self, conn, origin: str, dest: str) -> dict | None:
         """Find route_market matching an origin-destination pair.
 
-        Tries both directions since routes are bidirectional.
+        First tries exact primary_origin/primary_dest match (both directions).
+        Falls back to city-based matching so alternate airports (e.g. YTZ, LGW)
+        resolve to their market's route (e.g. YYZ-LHR).
         """
         row = await conn.fetchrow(
             """SELECT route_id, distance_nm, market_type, has_direct, typical_hours
@@ -258,7 +270,6 @@ class DB1BClient:
             origin, dest,
         )
         if not row:
-            # Try reversed direction
             row = await conn.fetchrow(
                 """SELECT route_id, distance_nm, market_type, has_direct, typical_hours
                    FROM route_markets
@@ -266,7 +277,25 @@ class DB1BClient:
                    LIMIT 1""",
                 dest, origin,
             )
-        return dict(row) if row else None
+        if row:
+            return dict(row)
+
+        # Fall back to city-based matching for alternate airports
+        city_a = AIRPORT_CITY.get(origin)
+        city_b = AIRPORT_CITY.get(dest)
+        if city_a and city_b and city_a != city_b:
+            row = await conn.fetchrow(
+                """SELECT route_id, distance_nm, market_type, has_direct, typical_hours
+                   FROM route_markets
+                   WHERE (city_a = $1 AND city_b = $2)
+                      OR (city_a = $2 AND city_b = $1)
+                   LIMIT 1""",
+                city_a, city_b,
+            )
+            if row:
+                return dict(row)
+
+        return None
 
     async def search_flights(
         self,
@@ -360,6 +389,11 @@ class DB1BClient:
 
         Returns dict keyed by date ISO string -> list of flight dicts.
         Replaces N individual search_flights() calls with a single SQL query.
+
+        DB1B fares are market-level (round-trip), so they apply in both
+        directions.  The calendar_fares table may only contain rows for
+        one direction (e.g., YYZ→LHR but not LHR→YYZ).  We query by
+        route_id only (not origin column) so both directions are covered.
         """
         pool = self._get_pool()
 

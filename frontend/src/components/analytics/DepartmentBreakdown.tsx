@@ -41,7 +41,7 @@ export function DepartmentBreakdown({ departments }: Props) {
               />
               <YAxis dataKey="department" type="category" tick={{ fontSize: 11 }} width={90} />
               <Tooltip
-                formatter={(value: number) => [`$${value.toLocaleString()}`, "Spend"]}
+                formatter={(value: number | undefined) => [`$${(value ?? 0).toLocaleString()}`, "Spend"]}
               />
               <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
             </BarChart>

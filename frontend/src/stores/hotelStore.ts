@@ -28,7 +28,7 @@ interface HotelState {
   clearResults: () => void;
 }
 
-export const useHotelStore = create<HotelState>((set, get) => ({
+export const useHotelStore = create<HotelState>((set, _get) => ({
   results: {},
   loading: false,
   error: null,

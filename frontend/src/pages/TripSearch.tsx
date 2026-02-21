@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,6 @@ import { useEventStore } from "@/stores/eventStore";
 import { SearchResults } from "@/components/search/SearchResults";
 import { JustificationModal } from "@/components/search/JustificationModal";
 import { TripCostBar } from "@/components/search/TripCostBar";
-import { ReturnDateOptimizer } from "@/components/search/ReturnDateOptimizer";
 import { MonthPriceTrend } from "@/components/search/MonthPriceTrend";
 import { HotelSearch } from "@/components/hotel/HotelSearch";
 import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
@@ -27,7 +26,7 @@ function toDateStr(dt: string): string {
 export default function TripSearch() {
   const { tripId } = useParams<{ tripId: string }>();
   const navigate = useNavigate();
-  const { currentTrip, loading: tripLoading, fetchTrip } = useTripStore();
+  const { currentTrip, loading: tripLoading, fetchTrip, patchLeg } = useTripStore();
   const {
     results,
     loading: searchLoading,
@@ -40,6 +39,7 @@ export default function TripSearch() {
     rescoreWithSlider,
     prefetchLeg,
     prefetching,
+    clearResults,
   } = useSearchStore();
   const { legEvents, fetchLegEvents } = useEventStore();
 
@@ -54,6 +54,7 @@ export default function TripSearch() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [justificationAnalysis, setJustificationAnalysis] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [hasSwitched, setHasSwitched] = useState(false);
   const [excludedAirlines, setExcludedAirlines] = useState<string[]>([]);
   const [elapsed, setElapsed] = useState(0);
 
@@ -95,37 +96,27 @@ export default function TripSearch() {
   // The currently selected flight for the active leg
   const activeSelectedFlight = activeLeg ? selectedFlights[activeLeg.id] || null : null;
 
-  // Check if this is a round trip (2 legs, second is reverse of first)
-  const isRoundTrip = useMemo(() => {
-    if (!currentTrip || currentTrip.legs.length !== 2) return false;
-    const [a, b] = currentTrip.legs;
-    return a.origin_city === b.destination_city && a.destination_city === b.origin_city;
-  }, [currentTrip]);
-
-  // Check if both legs of round trip have results
-  const bothLegsHaveResults = useMemo(() => {
-    if (!isRoundTrip || !currentTrip) return false;
-    return currentTrip.legs.every((leg) => results[leg.id]);
-  }, [isRoundTrip, currentTrip, results]);
-
   // Count how many legs have selections
   const selectedCount = Object.keys(selectedFlights).length;
   const totalLegs = currentTrip?.legs.length || 0;
   const allLegsSelected = selectedCount === totalLegs && totalLegs > 0;
 
-  // Auto-search active leg on initial load (skips if results exist from cache)
+  // Auto-search all legs on initial load (skips legs with cached results)
   const [autoSearched, setAutoSearched] = useState(false);
   useEffect(() => {
-    if (currentTrip && !autoSearched && !searchLoading) {
+    if (currentTrip && !autoSearched) {
       setAutoSearched(true);
-      for (const leg of currentTrip.legs) {
-        if (!results[leg.id]) {
-          searchLeg(leg.id);
-          break;
+      const unsearched = currentTrip.legs.filter((leg) => !results[leg.id]);
+      if (unsearched.length > 0) {
+        // Search first leg normally (with loading indicator)
+        searchLeg(unsearched[0].id);
+        // Prefetch remaining legs in background (no loading indicator)
+        for (let i = 1; i < unsearched.length; i++) {
+          prefetchLeg(unsearched[i].id);
         }
       }
     }
-  }, [currentTrip, autoSearched, searchLoading, results, searchLeg]);
+  }, [currentTrip, autoSearched, results, searchLeg, prefetchLeg]);
 
   // Prefetch remaining unsearched legs when a search completes
   useEffect(() => {
@@ -173,10 +164,6 @@ export default function TripSearch() {
     [activeLeg, rescoreWithSlider]
   );
 
-  function handleDateSelect(_date: string) {
-    // Date filtering is handled inside SearchResults component
-  }
-
   function handleFlightSelect(flight: FlightOption) {
     if (!activeLeg) return;
     setSelectedFlights((prev) => ({ ...prev, [activeLeg.id]: flight }));
@@ -194,15 +181,6 @@ export default function TripSearch() {
 
   function handleTripUpdated() {
     if (tripId) fetchTrip(tripId);
-  }
-
-  // Handle selecting a round-trip combo from the optimizer
-  function handleSelectCombo(outFlight: FlightOption, retFlight: FlightOption) {
-    if (!currentTrip || currentTrip.legs.length < 2) return;
-    setSelectedFlights({
-      [currentTrip.legs[0].id]: outFlight,
-      [currentTrip.legs[1].id]: retFlight,
-    });
   }
 
   // Handle switching to a trip-window proposal (shared by inline + modal)
@@ -235,11 +213,76 @@ export default function TripSearch() {
         .sort((a, b) => a.price - b.price)[0];
     }
 
-    if (outFlight && retFlight) {
-      setSelectedFlights({ [outLeg.id]: outFlight, [retLeg.id]: retFlight });
+    // If flights not in search results, build from proposal data (DB1B historical)
+    if (!outFlight) {
+      const pf = proposal.outbound_flight;
+      outFlight = {
+        id: `db1b-out-${proposal.outbound_date}-${pf.airline_code}`,
+        airline_code: pf.airline_code,
+        airline_name: pf.airline_name,
+        flight_numbers: `${pf.airline_code}`,
+        origin_airport: outLeg.origin_airport,
+        destination_airport: outLeg.destination_airport,
+        departure_time: pf.departure_time || `${proposal.outbound_date}T08:00:00`,
+        arrival_time: pf.arrival_time || `${proposal.outbound_date}T17:00:00`,
+        duration_minutes: pf.duration_minutes || 0,
+        stops: pf.stops,
+        stop_airports: null,
+        price: pf.price,
+        currency: "USD",
+        cabin_class: outLeg.cabin_class || null,
+        seats_remaining: null,
+        is_alternate_airport: false,
+        is_alternate_date: true,
+        source: "db1b_historical",
+      } as FlightOption;
     }
-    setJustificationAnalysis(null);
+    if (!retFlight) {
+      const pf = proposal.return_flight;
+      retFlight = {
+        id: `db1b-ret-${proposal.return_date}-${pf.airline_code}`,
+        airline_code: pf.airline_code,
+        airline_name: pf.airline_name,
+        flight_numbers: `${pf.airline_code}`,
+        origin_airport: retLeg.origin_airport,
+        destination_airport: retLeg.destination_airport,
+        departure_time: pf.departure_time || `${proposal.return_date}T08:00:00`,
+        arrival_time: pf.arrival_time || `${proposal.return_date}T17:00:00`,
+        duration_minutes: pf.duration_minutes || 0,
+        stops: pf.stops,
+        stop_airports: null,
+        price: pf.price,
+        currency: "USD",
+        cabin_class: retLeg.cabin_class || null,
+        seats_remaining: null,
+        is_alternate_airport: false,
+        is_alternate_date: true,
+        source: "db1b_historical",
+      } as FlightOption;
+    }
+
+    setSelectedFlights({ [outLeg.id]: outFlight, [retLeg.id]: retFlight });
+    setHasSwitched(true);
   }, [currentTrip, results]);
+
+  // Handle cabin class downgrade (e.g. business → premium economy)
+  const handleCabinDowngrade = useCallback(async (suggestedCabin: string) => {
+    if (!currentTrip) return;
+    try {
+      // Patch cabin class on all legs sequentially (avoid store race condition)
+      for (const leg of currentTrip.legs) {
+        await patchLeg(leg.id, { cabin_class: suggestedCabin });
+      }
+      // Clear state and re-search
+      setJustificationAnalysis(null);
+      setHasSwitched(false);
+      setSelectedFlights({});
+      clearResults();
+      setAutoSearched(false);
+    } catch (err) {
+      console.error("Cabin downgrade failed:", err);
+    }
+  }, [currentTrip, patchLeg, clearResults]);
 
   // Confirm all leg selections (trip-level)
   async function handleConfirmTrip() {
@@ -282,14 +325,45 @@ export default function TripSearch() {
       for (const leg of currentTrip.legs) {
         const flight = selectedFlights[leg.id];
         if (flight) {
-          await apiClient.post(`/search/${leg.id}/select`, {
+          const payload: Record<string, unknown> = {
             flight_option_id: flight.id,
             slider_position: sliderValue,
             justification_note: justification || undefined,
-          });
+          };
+          // For synthetic DB1B flights, send full flight data so backend can persist
+          if (typeof flight.id === "string" && flight.id.startsWith("db1b-")) {
+            payload.synthetic_flight = {
+              airline_code: flight.airline_code,
+              airline_name: flight.airline_name,
+              origin_airport: flight.origin_airport,
+              destination_airport: flight.destination_airport,
+              departure_time: flight.departure_time,
+              arrival_time: flight.arrival_time,
+              duration_minutes: flight.duration_minutes || 0,
+              stops: flight.stops,
+              price: flight.price,
+              currency: flight.currency || "USD",
+              cabin_class: flight.cabin_class || null,
+            };
+          }
+          await apiClient.post(`/search/${leg.id}/select`, payload);
         }
       }
+      // Persist the analysis snapshot so review/approval pages can show what alternatives were presented
+      if (justificationAnalysis) {
+        try {
+          await apiClient.post(`/trips/${tripId}/save-analysis-snapshot`, {
+            legs: justificationAnalysis.legs,
+            trip_totals: justificationAnalysis.trip_totals,
+            trip_window_alternatives: justificationAnalysis.trip_window_alternatives,
+          });
+        } catch {
+          // Non-critical — review page can still fall back to live fetch
+        }
+      }
+
       setJustificationAnalysis(null);
+      setHasSwitched(false);
       setConfirmed(true);
 
       // Navigate to the review & submit page for manager approval
@@ -336,7 +410,12 @@ export default function TripSearch() {
           <span className="text-muted-foreground">/</span>
           <span className="text-sm font-medium">{currentTrip.title}</span>
         </div>
-        <h2 className="text-2xl font-bold tracking-tight">Flight Search</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-2xl font-bold tracking-tight">Flight Search</h2>
+          <span className="text-xs font-medium text-muted-foreground bg-muted rounded-md px-2 py-0.5">
+            All prices in USD
+          </span>
+        </div>
       </div>
 
       {/* Trip Cost Bar — shows total across all legs with comparisons */}
@@ -438,16 +517,6 @@ export default function TripSearch() {
       {/* Active leg details */}
       {activeLeg && (
         <LegCard leg={activeLeg} index={activeLegIndex} />
-      )}
-
-      {/* Return Date Optimizer — for round trips with both legs searched */}
-      {isRoundTrip && bothLegsHaveResults && currentTrip.legs.length === 2 && tripId && (
-        <ReturnDateOptimizer
-          tripId={tripId}
-          outboundResult={results[currentTrip.legs[0].id]}
-          returnResult={results[currentTrip.legs[1].id]}
-          onSelectCombo={handleSelectCombo}
-        />
       )}
 
       {/* Search button */}
@@ -556,8 +625,9 @@ export default function TripSearch() {
           sliderValue={sliderValue}
           sliderLoading={sliderLoading}
           onSliderChange={handleSliderChange}
-          onDateSelect={handleDateSelect}
+          onDateSelect={() => {}}
           onFlightSelect={handleFlightSelect}
+          selectedFlightId={activeLeg ? selectedFlights[activeLeg.id]?.id : undefined}
           excludedAirlines={excludedAirlines}
           dateEvents={legEventData?.date_events}
           allEvents={legEventData?.events}
@@ -601,8 +671,13 @@ export default function TripSearch() {
                 analysis={justificationAnalysis}
                 confirming={confirming}
                 mode="inline"
+                hasSwitched={hasSwitched}
+                currentTotal={Object.values(selectedFlights).reduce((s, f) => s + f.price, 0)}
+                switchedFlights={selectedFlights}
+                legs={currentTrip?.legs}
                 onConfirm={async (justification) => {
                   await confirmAllLegs(justification);
+                  setHasSwitched(false);
                 }}
                 onSwitch={(flightOptionId, legId) => {
                   const targetLegId = legId || activeLeg?.id;
@@ -612,10 +687,11 @@ export default function TripSearch() {
                   if (alt) {
                     setSelectedFlights((prev) => ({ ...prev, [targetLegId]: alt }));
                   }
-                  setJustificationAnalysis(null);
+                  setHasSwitched(true);
                 }}
                 onSwitchTripWindow={handleSwitchTripWindow}
-                onCancel={() => setJustificationAnalysis(null)}
+                onCabinDowngrade={handleCabinDowngrade}
+                onCancel={() => { if (hasSwitched) { setHasSwitched(false); } else { setJustificationAnalysis(null); } }}
               />
             </div>
           )}
@@ -634,6 +710,12 @@ export default function TripSearch() {
                         {sel ? (
                           <span className="font-medium">
                             {sel.airline_name} ${Math.round(sel.price).toLocaleString()}
+                            {sel.duration_minutes > 0 && (
+                              <span className="text-muted-foreground font-normal ml-1">
+                                {Math.floor(sel.duration_minutes / 60)}h{sel.duration_minutes % 60 > 0 ? ` ${sel.duration_minutes % 60}m` : ""}
+                                {" \u00b7 "}{sel.stops === 0 ? "Nonstop" : `${sel.stops} stop`}
+                              </span>
+                            )}
                           </span>
                         ) : (
                           <span className="text-muted-foreground italic">not selected</span>
@@ -664,6 +746,15 @@ export default function TripSearch() {
                     <span className="text-sm text-muted-foreground ml-2">
                       {activeSelectedFlight.origin_airport} &rarr;{" "}
                       {activeSelectedFlight.destination_airport}
+                      {activeSelectedFlight.duration_minutes > 0 && (
+                        <>
+                          {" \u00b7 "}
+                          {Math.floor(activeSelectedFlight.duration_minutes / 60)}h
+                          {activeSelectedFlight.duration_minutes % 60 > 0 && ` ${activeSelectedFlight.duration_minutes % 60}m`}
+                          {" \u00b7 "}
+                          {activeSelectedFlight.stops === 0 ? "Nonstop" : `${activeSelectedFlight.stops} stop`}
+                        </>
+                      )}
                     </span>
                   </div>
                   <span className="text-base font-bold">
@@ -699,7 +790,6 @@ export default function TripSearch() {
               {totalLegs > 1 && !allLegsSelected ? (
                 <Button
                   size="sm"
-                  variant="secondary"
                   onClick={() => {
                     // Jump to next unselected leg
                     const nextIdx = currentTrip.legs.findIndex((l) => !selectedFlights[l.id]);
@@ -709,7 +799,7 @@ export default function TripSearch() {
                     }
                   }}
                 >
-                  Select Leg {currentTrip.legs.findIndex((l) => !selectedFlights[l.id]) + 1}
+                  Select Leg {currentTrip.legs.findIndex((l) => !selectedFlights[l.id]) + 1} &rarr;
                 </Button>
               ) : confirmed ? (
                 <Button
@@ -729,7 +819,7 @@ export default function TripSearch() {
                     : confirming
                     ? "Saving..."
                     : allLegsSelected
-                    ? "Confirm & Review"
+                    ? "Confirm to Review"
                     : "Confirm Selection"}
                 </Button>
               )}
@@ -754,8 +844,13 @@ export default function TripSearch() {
           analysis={justificationAnalysis}
           confirming={confirming}
           mode="modal"
+          hasSwitched={hasSwitched}
+          currentTotal={Object.values(selectedFlights).reduce((s, f) => s + f.price, 0)}
+          switchedFlights={selectedFlights}
+          legs={currentTrip?.legs}
           onConfirm={async (justification) => {
             await confirmAllLegs(justification);
+            setHasSwitched(false);
           }}
           onSwitch={(flightOptionId, legId) => {
             const targetLegId = legId || activeLeg?.id;
@@ -765,10 +860,11 @@ export default function TripSearch() {
             if (alt) {
               setSelectedFlights((prev) => ({ ...prev, [targetLegId]: alt }));
             }
-            setJustificationAnalysis(null);
+            setHasSwitched(true);
           }}
           onSwitchTripWindow={handleSwitchTripWindow}
-          onCancel={() => setJustificationAnalysis(null)}
+          onCabinDowngrade={handleCabinDowngrade}
+          onCancel={() => { if (hasSwitched) { setHasSwitched(false); } else { setJustificationAnalysis(null); } }}
         />
       )}
     </div>

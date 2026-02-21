@@ -28,6 +28,27 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
+    # Auto-assign manager: department manager first, then any admin
+    manager_id = None
+    if req.department:
+        mgr = await db.execute(
+            select(User).where(
+                User.role == "manager",
+                User.department == req.department,
+                User.is_active == True,
+            ).limit(1)
+        )
+        mgr_user = mgr.scalar_one_or_none()
+        if mgr_user:
+            manager_id = mgr_user.id
+    if not manager_id:
+        admin = await db.execute(
+            select(User).where(User.role.in_(["manager", "admin"]), User.is_active == True).limit(1)
+        )
+        admin_user = admin.scalar_one_or_none()
+        if admin_user:
+            manager_id = admin_user.id
+
     user = User(
         email=req.email,
         password_hash=pwd_context.hash(req.password),
@@ -35,6 +56,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
         last_name=req.last_name,
         role=req.role,
         department=req.department,
+        manager_id=manager_id,
     )
     db.add(user)
     await db.commit()

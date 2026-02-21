@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import type { PriceCalendar } from "@/types/search";
+import type { FlightOption } from "@/types/flight";
 import { usePriceIntelStore } from "@/stores/priceIntelStore";
 import { MonthCalendarCell } from "./MonthCalendarCell";
 
@@ -13,12 +14,6 @@ const MONTH_SHORT = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-const PERCENTILE_STYLES: Record<string, string> = {
-  excellent: "text-emerald-600 font-semibold",
-  good: "text-emerald-600",
-  average: "text-amber-600",
-  high: "text-red-600",
-};
 
 interface Props {
   legId: string;
@@ -27,6 +22,10 @@ interface Props {
   selectedDate: string | null;
   onDateSelect: (date: string) => void;
   onMonthChange?: (year: number, month: number) => void;
+  /** When exactly one airline is filtered, show that airline's prices */
+  activeAirline?: string | null;
+  /** All flight options from search results (for airline-specific pricing) */
+  allOptions?: FlightOption[];
 }
 
 /** Get year/month for the Nth month offset from a base. */
@@ -45,6 +44,8 @@ export function MonthCalendar({
   selectedDate,
   onDateSelect,
   onMonthChange,
+  activeAirline,
+  allOptions,
 }: Props) {
   const prefDate = new Date(preferredDate + "T00:00:00");
   const [viewYear, setViewYear] = useState(prefDate.getFullYear());
@@ -56,7 +57,7 @@ export function MonthCalendar({
 
   const {
     monthData, monthLoading, fetchMonthCalendar,
-    priceContext, priceContextLoading, fetchPriceContext,
+    matrixData, fetchMonthMatrix,
   } = usePriceIntelStore();
 
   // Fetch months (second only when expanded)
@@ -67,40 +68,53 @@ export function MonthCalendar({
     }
   }, [legId, viewYear, viewMonth, second.year, second.month, expanded, fetchMonthCalendar]);
 
-  // Fetch price context when a date is selected
+  // When airline filter is active, ensure matrix data is loaded for visible months
   useEffect(() => {
-    if (selectedDate) {
-      fetchPriceContext(legId, selectedDate);
+    if (activeAirline) {
+      fetchMonthMatrix(legId, viewYear, viewMonth);
+      if (expanded) {
+        fetchMonthMatrix(legId, second.year, second.month);
+      }
     }
-  }, [selectedDate, legId, fetchPriceContext]);
+  }, [activeAirline, legId, viewYear, viewMonth, second.year, second.month, expanded, fetchMonthMatrix]);
 
-  const contextKey = selectedDate ? `${legId}:${selectedDate}` : "";
-  const context = contextKey ? priceContext[contextKey] : undefined;
-  const contextLoading = contextKey ? priceContextLoading[contextKey] : false;
-
-  /** Merge initial search data + store data for a given year/month. */
+  /** Merge initial search data + store data for a given year/month.
+   *  When activeAirline is set, shows that airline's prices instead of cheapest-overall. */
   const getMergedDates = useCallback(
     (y: number, m: number) => {
       const dates: Record<string, { min_price: number; has_direct: boolean; option_count: number }> = {};
       const mp = `${y}-${String(m).padStart(2, "0")}`;
       const key = `${legId}:${mp}`;
-      const stored = monthData[key];
 
-      // Initial search data first
-      for (const [dateStr, data] of Object.entries(initialCalendar.dates)) {
-        if (dateStr.startsWith(mp)) {
-          dates[dateStr] = {
-            min_price: data.min_price,
-            has_direct: data.has_direct ?? false,
-            option_count: data.option_count,
-          };
+      if (activeAirline && allOptions) {
+        // Airline-specific: compute from allOptions (search results for this airline)
+        for (const f of allOptions) {
+          const d = f.departure_time?.substring(0, 10);
+          if (!d?.startsWith(mp) || f.airline_name !== activeAirline) continue;
+          if (!dates[d] || f.price < dates[d].min_price) {
+            dates[d] = { min_price: f.price, has_direct: f.stops === 0, option_count: 1 };
+          } else {
+            dates[d].option_count++;
+            if (f.stops === 0) dates[d].has_direct = true;
+          }
         }
-      }
+        // Supplement from matrixData for dates outside the search window
+        const matrixEntries = matrixData[key];
+        if (matrixEntries) {
+          for (const entry of matrixEntries) {
+            if (entry.airline_name !== activeAirline) continue;
+            if (!(entry.date in dates)) {
+              dates[entry.date] = { min_price: entry.price, has_direct: entry.stops === 0, option_count: 1 };
+            }
+          }
+        }
+      } else {
+        // Default: cheapest overall (current behavior)
+        const stored = monthData[key];
 
-      // Merge lazy-loaded data
-      if (stored?.dates) {
-        for (const [dateStr, data] of Object.entries(stored.dates)) {
-          if (!(dateStr in dates)) {
+        // Initial search data first
+        for (const [dateStr, data] of Object.entries(initialCalendar.dates)) {
+          if (dateStr.startsWith(mp)) {
             dates[dateStr] = {
               min_price: data.min_price,
               has_direct: data.has_direct ?? false,
@@ -108,36 +122,47 @@ export function MonthCalendar({
             };
           }
         }
+
+        // Merge lazy-loaded data
+        if (stored?.dates) {
+          for (const [dateStr, data] of Object.entries(stored.dates)) {
+            if (!(dateStr in dates)) {
+              dates[dateStr] = {
+                min_price: data.min_price,
+                has_direct: data.has_direct ?? false,
+                option_count: data.option_count,
+              };
+            }
+          }
+        }
       }
 
       return dates;
     },
-    [initialCalendar.dates, monthData, legId]
+    [initialCalendar.dates, monthData, matrixData, legId, activeAirline, allOptions]
   );
 
   const mergedLeft = useMemo(() => getMergedDates(viewYear, viewMonth), [getMergedDates, viewYear, viewMonth]);
   const mergedRight = useMemo(() => getMergedDates(second.year, second.month), [getMergedDates, second.year, second.month]);
 
-  // Compute quartiles across visible months for consistent coloring
+  // Compute min/max across visible months for continuous heat map
   const allMerged = useMemo(() => expanded ? { ...mergedLeft, ...mergedRight } : { ...mergedLeft }, [mergedLeft, mergedRight, expanded]);
 
-  const priceQuartiles = useMemo(() => {
+  const priceRange = useMemo(() => {
     const prices = Object.values(allMerged)
       .map((d) => d.min_price)
-      .filter((p) => p > 0)
-      .sort((a, b) => a - b);
+      .filter((p) => p > 0);
 
-    if (prices.length === 0) return { q1: 0, q3: 0 };
-    const q1 = prices[Math.floor(prices.length * 0.25)];
-    const q3 = prices[Math.floor(prices.length * 0.75)];
-    return { q1, q3 };
+    if (prices.length === 0) return { min: 0, max: 0 };
+    return { min: Math.min(...prices), max: Math.max(...prices) };
   }, [allMerged]);
 
-  function getQuartile(price: number | null): "cheap" | "mid" | "expensive" | "none" {
-    if (price === null || price === 0) return "none";
-    if (price <= priceQuartiles.q1) return "cheap";
-    if (price >= priceQuartiles.q3) return "expensive";
-    return "mid";
+  /** Continuous ratio: 0.0 = cheapest, 1.0 = most expensive */
+  function getPriceRatio(price: number | null): number {
+    if (price === null || price === 0) return 0.5;
+    const { min, max } = priceRange;
+    if (max === min) return 0.5;
+    return (price - min) / (max - min);
   }
 
   function navigateMonth(delta: number) {
@@ -173,7 +198,9 @@ export function MonthCalendar({
     <div className="space-y-2">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Price Calendar</h3>
+        <h3 className="text-sm font-semibold">
+          {activeAirline ? `${activeAirline} Prices` : "Price Calendar"}
+        </h3>
         {initialCalendar.savings_if_flexible > 0 && (
           <span className="text-xs text-emerald-600 font-medium">
             Save ${Math.round(initialCalendar.savings_if_flexible)} with flexible dates
@@ -216,7 +243,7 @@ export function MonthCalendar({
           preferredDate={preferredDate}
           cheapestDate={cheapestDate}
           selectedDate={selectedDate}
-          getQuartile={getQuartile}
+          getPriceRatio={getPriceRatio}
           onDateSelect={onDateSelect}
           showHeader={expanded}
         />
@@ -230,7 +257,7 @@ export function MonthCalendar({
             preferredDate={preferredDate}
             cheapestDate={cheapestDate}
             selectedDate={selectedDate}
-            getQuartile={getQuartile}
+            getPriceRatio={getPriceRatio}
             onDateSelect={onDateSelect}
           />
         )}
@@ -252,67 +279,34 @@ export function MonthCalendar({
         </div>
       )}
 
-      {/* Price Context — shown when a date is selected */}
-      {selectedDate && (contextLoading || (context?.available && context.historical)) && (
-        <div className="rounded-md border border-border bg-muted/30 px-3 py-2 space-y-1">
-          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-            Market Price Range &middot; {selectedDate}
-          </p>
-          {contextLoading ? (
-            <div className="h-3 w-48 bg-muted animate-pulse rounded" />
-          ) : context?.available && context.historical ? (
-            <>
-              <div className="flex items-center gap-1.5 text-[9px]">
-                <span className="shrink-0 w-8 text-right">${Math.round(context.historical.min)}</span>
-                <div className="flex-1 h-2.5 bg-gradient-to-r from-emerald-200 via-amber-200 to-red-200 rounded-full relative">
-                  {context.percentile != null && (
-                    <div
-                      className="absolute top-[-1px] w-1.5 h-3.5 bg-primary rounded-sm"
-                      style={{ left: `${Math.max(2, Math.min(98, context.percentile))}%` }}
-                      title={context.current_price ? `Your price: $${Math.round(context.current_price)}` : undefined}
-                    />
-                  )}
-                </div>
-                <span className="shrink-0 w-8">${Math.round(context.historical.max)}</span>
-              </div>
-              {context.percentile_label && (
-                <p className="text-[10px]">
-                  <span className={PERCENTILE_STYLES[context.percentile_label] || ""}>
-                    {context.percentile_label.charAt(0).toUpperCase() + context.percentile_label.slice(1)} price
-                  </span>
-                  {" "}
-                  <span className="text-muted-foreground">
-                    ({context.percentile}th percentile
-                    {context.current_price ? ` at $${Math.round(context.current_price)}` : ""})
-                  </span>
-                </p>
-              )}
-            </>
-          ) : null}
-        </div>
-      )}
-
       {/* Legend + stats */}
       {hasData && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-[9px] text-muted-foreground">
-          <div className="flex gap-2">
-            <span className="flex items-center gap-0.5">
-              <span className="w-2.5 h-2.5 rounded bg-emerald-50 border border-emerald-300" />
-              Cheap
-            </span>
-            <span className="flex items-center gap-0.5">
-              <span className="w-2.5 h-2.5 rounded bg-amber-50 border border-amber-300" />
-              Avg
-            </span>
-            <span className="flex items-center gap-0.5">
-              <span className="w-2.5 h-2.5 rounded bg-red-50 border border-red-300" />
-              Exp
-            </span>
+          <div className="flex items-center gap-1">
+            {/* Gradient legend */}
+            <span className="font-medium">Low</span>
+            <div className="flex h-2.5">
+              <span className="w-3 rounded-l" style={{ backgroundColor: "rgb(5, 150, 105)" }} />
+              <span className="w-3" style={{ backgroundColor: "rgb(16, 185, 129)" }} />
+              <span className="w-3" style={{ backgroundColor: "rgb(110, 231, 183)" }} />
+              <span className="w-3" style={{ backgroundColor: "rgb(254, 243, 199)" }} />
+              <span className="w-3" style={{ backgroundColor: "rgb(253, 186, 116)" }} />
+              <span className="w-3" style={{ backgroundColor: "rgb(248, 113, 113)" }} />
+              <span className="w-3 rounded-r" style={{ backgroundColor: "rgb(220, 38, 38)" }} />
+            </div>
+            <span className="font-medium">High</span>
+            <span className="mx-1 opacity-40">|</span>
             <span className="flex items-center gap-0.5">
               <span className="text-[8px]">{"\u25CF"}</span> Direct
             </span>
             <span className="flex items-center gap-0.5">
               <span className="text-[8px]">{"\u2715"}</span> Connect
+            </span>
+            <span className="flex items-center gap-0.5">
+              <span className="w-2.5 h-2.5 rounded-sm ring-1.5 ring-blue-500 inline-block" /> Preferred
+            </span>
+            <span className="flex items-center gap-0.5">
+              <span className="text-[6px]">&#9733;</span> Cheapest
             </span>
           </div>
           <div className="flex gap-3">
@@ -343,7 +337,7 @@ interface GridProps {
   preferredDate: string;
   cheapestDate: string | null;
   selectedDate: string | null;
-  getQuartile: (price: number | null) => "cheap" | "mid" | "expensive" | "none";
+  getPriceRatio: (price: number | null) => number;
   onDateSelect: (date: string) => void;
   showHeader?: boolean;
 }
@@ -357,7 +351,7 @@ function SingleMonthGrid({
   preferredDate,
   cheapestDate,
   selectedDate,
-  getQuartile,
+  getPriceRatio,
   onDateSelect,
   showHeader = true,
 }: GridProps) {
@@ -405,12 +399,12 @@ function SingleMonthGrid({
               dateStr={cell.dateStr}
               price={data?.min_price ?? null}
               hasDirect={data?.has_direct ?? false}
-              isPreferred={cell.dateStr === preferredDate}
+              isPreferred={cell.dateStr === preferredDate && (!selectedDate || selectedDate === preferredDate)}
               isCheapest={cell.dateStr === cheapestDate}
               isSelected={cell.dateStr === selectedDate}
               isPast={isPast}
               isLoading={cellIsLoading}
-              quartile={getQuartile(data?.min_price ?? null)}
+              priceRatio={getPriceRatio(data?.min_price ?? null)}
               onClick={onDateSelect}
             />
           );

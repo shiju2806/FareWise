@@ -15,3 +15,16 @@ export function formatShortDate(dateStr: string): string {
     weekday: "short",
   });
 }
+
+/**
+ * Format flight duration in minutes to a compact string.
+ *
+ * Examples:
+ *   formatDuration(125) → "2h05m"
+ *   formatDuration(60)  → "1h00m"
+ */
+export function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${h}h${m.toString().padStart(2, "0")}m`;
+}

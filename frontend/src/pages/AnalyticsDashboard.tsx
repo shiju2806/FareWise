@@ -54,11 +54,11 @@ export default function AnalyticsDashboard() {
       </div>
 
       {/* Department breakdown from latest monthly snapshot */}
-      {overview?.latest_snapshot?.trip_counts && (
+      {overview?.latest_snapshot && "trip_counts" in overview.latest_snapshot && (
         <DepartmentBreakdown
           departments={
-            (overview.latest_snapshot as Record<string, Record<string, { trips: number; spend: number }>>)
-              .departments || {}
+            ((overview.latest_snapshot as Record<string, unknown>)
+              ?.departments as Record<string, { trips: number; spend: number }>) || {}
           }
         />
       )}

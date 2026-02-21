@@ -15,49 +15,40 @@ import logging
 from datetime import date
 from decimal import Decimal
 
-import anthropic
-
 from app.config import settings
+from app.services.llm_client import llm_client
 from app.services.amadeus_analytics_service import analytics_service
 from app.services.cache_service import cache_service
 from app.services.price_forecast_service import forecast_service
+from app.services.recommendation.prompts import load_prompt
 
 logger = logging.getLogger(__name__)
 
-ADVISOR_SYSTEM_PROMPT = """You are a corporate travel price intelligence advisor. Analyze the provided flight pricing signals and produce a clear, actionable recommendation for a corporate traveler.
+# Load reasoning guide once at module level
+_PRICE_GUIDE = load_prompt("price_advisor_guide.md")
+
+ADVISOR_SYSTEM_PROMPT = f"""{_PRICE_GUIDE}
+
+---
 
 Your response MUST be valid JSON with this exact structure:
-{
+{{
     "recommendation": "book" | "wait" | "watch",
     "confidence": 0.0-1.0,
     "headline": "One compelling sentence summarizing the advice",
     "analysis": "2-3 sentences explaining the reasoning with specific data points",
     "factors": [
-        {"name": "Factor Name", "impact": "positive" | "negative" | "neutral", "detail": "Brief explanation"}
+        {{"name": "Factor Name", "impact": "positive" | "negative" | "neutral", "detail": "Brief explanation"}}
     ],
     "timing_advice": "When to book and what to watch for",
     "savings_potential": "$X-Y CAD potential savings if timing is optimized"
-}
-
-Guidelines:
-- "book" = price is good, book now before it increases
-- "wait" = price will likely drop, wait for sweet spot
-- "watch" = price is volatile, monitor daily
-- Be specific with dollar amounts and dates
-- Factor in corporate travel context (expense reports, approval timelines)
-- If departure is within 7 days, always recommend "book" (no time to wait)
-- Provide 3-6 factors, prioritized by impact
-- Keep analysis professional and data-driven — no urgency hype or alarming language
-- Use CAD currency throughout
+}}
 
 IMPORTANT — Market range context:
 - The "MARKET PRICE RANGE" section shows the spread of prices from DIFFERENT airlines on the SAME date
 - This is NOT historical pricing over time — it's today's market snapshot across carriers
 - A price near the bottom of this range means it's competitively priced TODAY, not "historically exceptional"
 - Small differences from the range minimum (<10%) are normal fare variation, not remarkable
-- Google Flights' own assessment (LOW/TYPICAL/HIGH) is the most reliable signal — it is backed by Google's actual historical data. TRUST this assessment over computed percentiles
-- If Google says TYPICAL but our percentile says 0th, trust Google — the price is normal
-- Do NOT manufacture urgency from minor price differences between data sources
 - Seats remaining refers to the cheapest fare only; other fares may have plenty of seats
 
 Respond with ONLY the JSON, no markdown formatting, no preamble."""
@@ -67,7 +58,7 @@ class PriceAdvisorService:
     """Orchestrates all pricing signals and produces LLM-powered advice."""
 
     def __init__(self):
-        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        pass
 
     async def get_advice(
         self,
@@ -290,15 +281,13 @@ class PriceAdvisorService:
         )
 
         try:
-            message = await self.client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+            raw_text = await llm_client.complete(
+                system=ADVISOR_SYSTEM_PROMPT,
+                user=prompt,
                 max_tokens=800,
                 temperature=0.2,
-                system=ADVISOR_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
+                json_mode=True,
             )
-
-            raw_text = message.content[0].text.strip()
             # Strip markdown code fences if present
             if raw_text.startswith("```"):
                 raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]

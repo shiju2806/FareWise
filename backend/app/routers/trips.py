@@ -2,7 +2,7 @@ import uuid
 from datetime import date as date_type
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -416,8 +416,21 @@ async def delete_trip(
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
 
-    if trip.status not in ("draft",):
-        raise HTTPException(status_code=400, detail="Can only delete draft trips")
+    if trip.status not in ("draft", "searching"):
+        raise HTTPException(status_code=400, detail="Can only delete unsubmitted trips")
+
+    # Clean up records that lack ON DELETE CASCADE
+    from app.models.policy import Selection
+    from app.models.events import HotelSelection
+
+    leg_ids = [l.id for l in trip.legs] if trip.legs else []
+    if not leg_ids:
+        leg_result = await db.execute(select(TripLeg.id).where(TripLeg.trip_id == trip.id))
+        leg_ids = [r[0] for r in leg_result.all()]
+
+    if leg_ids:
+        await db.execute(sa_delete(Selection).where(Selection.trip_leg_id.in_(leg_ids)))
+        await db.execute(sa_delete(HotelSelection).where(HotelSelection.trip_leg_id.in_(leg_ids)))
 
     await db.delete(trip)
     await db.commit()

@@ -1,6 +1,6 @@
 import type { FlightOption } from "@/types/flight";
 import { formatPrice } from "@/lib/currency";
-import { formatShortDate } from "@/lib/dates";
+import { formatShortDate, formatDuration } from "@/lib/dates";
 
 interface Props {
   flight: FlightOption;
@@ -13,6 +13,8 @@ interface Props {
   preferredDate?: string;
   /** Show departure date badge (used in all-dates view) */
   showDate?: boolean;
+  /** Whether this flight is currently selected */
+  isSelected?: boolean;
 }
 
 /** Hash a short string into a hue (0-360) for deterministic airline colors */
@@ -32,12 +34,6 @@ function formatTime(iso: string): string {
     minute: "2-digit",
     hour12: true,
   });
-}
-
-function formatDuration(minutes: number): string {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${h}h${m.toString().padStart(2, "0")}m`;
 }
 
 /** Returns +1 / +2 if arrival is on a later calendar day than departure */
@@ -68,6 +64,7 @@ export function FlightOptionCard({
   priceQuartiles,
   preferredDate,
   showDate,
+  isSelected,
 }: Props) {
   const hue = airlineHue(flight.airline_code);
   const overnight = dayOffset(flight.departure_time, flight.arrival_time);
@@ -82,7 +79,9 @@ export function FlightOptionCard({
       className={[
         "group relative rounded-md border transition-all",
         "hover:shadow-md hover:-translate-y-px",
-        isRecommended
+        isSelected
+          ? "border-l-[3px] border-l-emerald-500 border-y-emerald-300 border-r-emerald-300 bg-emerald-50/50 ring-1 ring-emerald-200"
+          : isRecommended
           ? "border-l-[3px] border-l-primary border-y-primary/30 border-r-primary/30 bg-primary/[0.03]"
           : "border-border bg-card",
         onSelect ? "cursor-pointer" : "",
@@ -252,13 +251,17 @@ export function FlightOptionCard({
         {onSelect && (
           <button
             type="button"
-            className="shrink-0 text-xs font-medium px-3 py-1.5 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+            className={`shrink-0 text-xs font-medium px-3 py-1.5 rounded-md transition-colors ${
+              isSelected
+                ? "bg-emerald-600 text-white"
+                : "bg-primary text-primary-foreground hover:bg-primary/90"
+            }`}
             onClick={(e) => {
               e.stopPropagation();
               onSelect(flight);
             }}
           >
-            Select
+            {isSelected ? "✓ Selected" : "Select"}
           </button>
         )}
       </div>

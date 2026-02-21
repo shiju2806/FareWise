@@ -116,7 +116,7 @@ export default function ApprovalDashboard() {
                     <div className="text-right space-y-1">
                       {approval.trip.total_estimated_cost && (
                         <p className="text-lg font-bold">
-                          {formatPrice(approval.trip.total_estimated_cost, approval.trip.currency)}
+                          {formatPrice(approval.trip.total_estimated_cost)}
                         </p>
                       )}
                       {approval.savings_report && (

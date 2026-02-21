@@ -205,5 +205,5 @@ export const useSearchStore = create<SearchState>()(persist((set, get) => ({
   partialize: (state) => ({
     results: state.results,
     sliderValue: state.sliderValue,
-  }),
+  } as SearchState),
 }));
