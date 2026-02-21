@@ -20,14 +20,3 @@ export interface PriceHistoryPoint {
   price: number;
   checked_at: string;
 }
-
-export interface Alert {
-  id: string;
-  type: "price_drop" | "booking_reminder" | "event_warning";
-  title: string;
-  body: string;
-  is_read: boolean;
-  reference_type: string | null;
-  reference_id: string | null;
-  created_at: string | null;
-}

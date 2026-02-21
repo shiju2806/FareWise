@@ -96,20 +96,6 @@ class NotificationService:
             reference_id=trip_id,
         )
 
-    async def send_group_trip_invite(
-        self, db: AsyncSession, user_id: uuid.UUID,
-        group_name: str, organizer_name: str, group_trip_id: uuid.UUID
-    ) -> Notification:
-        return await self._create(
-            db,
-            user_id=user_id,
-            type="group_trip_invite",
-            title="Group Trip Invitation",
-            body=f"{organizer_name} invited you to join '{group_name}'.",
-            reference_type="group_trip",
-            reference_id=group_trip_id,
-        )
-
     async def send_badge_earned(
         self, db: AsyncSession, user_id: uuid.UUID, badge_name: str
     ) -> Notification:

@@ -1,8 +1,13 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { TripCalendar } from "@/components/trips/TripCalendar";
 import { NewTripSlideOver } from "@/components/trips/NewTripSlideOver";
+import { CompanySavingsGoal } from "@/components/gamification/CompanySavingsGoal";
+import { useAuthStore } from "@/stores/authStore";
+import { useApprovalStore } from "@/stores/approvalStore";
+import { useAnalyticsStore } from "@/stores/analyticsStore";
 import TripHistory from "./TripHistory";
 
 type ViewMode = "calendar" | "list";
@@ -10,10 +15,14 @@ type ViewMode = "calendar" | "list";
 export default function Trips() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const user = useAuthStore((s) => s.user);
+  const { counts, fetchApprovals } = useApprovalStore();
+  const { savingsGoal, fetchSavingsGoal } = useAnalyticsStore();
   const [view, setView] = useState<ViewMode>(
     () => (localStorage.getItem("trips-view") as ViewMode) || "calendar"
   );
   const [showNewTrip, setShowNewTrip] = useState(false);
+  const isManager = user?.role === "manager" || user?.role === "admin";
 
   // Auto-open slide-over if ?new=1 query param
   useEffect(() => {
@@ -22,6 +31,11 @@ export default function Trips() {
       setSearchParams({}, { replace: true });
     }
   }, [searchParams, setSearchParams]);
+
+  useEffect(() => {
+    fetchSavingsGoal();
+    if (isManager) fetchApprovals();
+  }, [fetchSavingsGoal, fetchApprovals, isManager]);
 
   function setViewMode(mode: ViewMode) {
     setView(mode);
@@ -80,6 +94,30 @@ export default function Trips() {
           </Button>
         </div>
       </div>
+
+      {/* Manager approval banner */}
+      {isManager && counts.pending > 0 && (
+        <Card className="border-amber-200 bg-amber-50/50">
+          <CardContent className="pt-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold">
+                  {counts.pending} Pending Approval{counts.pending > 1 ? "s" : ""}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Trips waiting for your review
+                </p>
+              </div>
+              <Link to="/approvals">
+                <Button size="sm">Review Now</Button>
+              </Link>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Company savings goal */}
+      {savingsGoal && <CompanySavingsGoal goal={savingsGoal} />}
 
       {/* View content */}
       {view === "calendar" ? <TripCalendar /> : <TripHistory />}

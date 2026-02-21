@@ -22,8 +22,8 @@ export function useKeyboardShortcuts(
         case "a":
           navigate("/analytics");
           break;
-        case "s":
-          navigate("/my-stats");
+        case "p":
+          navigate("/profile");
           break;
         case "?":
           onToggleHelp();

@@ -121,9 +121,6 @@ export default function TripReview() {
         </p>
         <div className="flex gap-3 justify-center">
           <Button onClick={() => navigate("/trips")}>View My Trips</Button>
-          <Button variant="outline" onClick={() => navigate("/")}>
-            Dashboard
-          </Button>
         </div>
       </div>
     );

@@ -5,12 +5,10 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.policy import Notification
 from app.models.user import User
 from app.services.price_watch_service import price_watch_service
 
@@ -75,33 +73,3 @@ async def delete_price_watch(
     return {"deleted": True}
 
 
-@router.get("/alerts")
-async def get_alerts(
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Get user's recent alerts (price drops + proactive)."""
-    result = await db.execute(
-        select(Notification).where(
-            Notification.user_id == user.id,
-            Notification.type.in_(["price_drop", "booking_reminder", "event_warning"]),
-        ).order_by(Notification.created_at.desc()).limit(50)
-    )
-    alerts = result.scalars().all()
-
-    return {
-        "alerts": [
-            {
-                "id": str(a.id),
-                "type": a.type,
-                "title": a.title,
-                "body": a.body,
-                "is_read": a.is_read,
-                "reference_type": a.reference_type,
-                "reference_id": str(a.reference_id) if a.reference_id else None,
-                "created_at": a.created_at.isoformat() if a.created_at else None,
-            }
-            for a in alerts
-        ],
-        "unread_count": sum(1 for a in alerts if not a.is_read),
-    }

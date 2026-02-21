@@ -1,13 +1,10 @@
 import { create } from "zustand";
 import apiClient from "@/api/client";
-import type { PriceWatch, Alert } from "@/types/priceWatch";
+import type { PriceWatch } from "@/types/priceWatch";
 
 interface PriceWatchState {
   watches: PriceWatch[];
-  alerts: Alert[];
-  unreadAlertCount: number;
   loadingWatches: boolean;
-  loadingAlerts: boolean;
   creating: boolean;
 
   fetchWatches: () => Promise<void>;
@@ -22,15 +19,11 @@ interface PriceWatchState {
     current_price?: number;
   }) => Promise<void>;
   deleteWatch: (watchId: string) => Promise<void>;
-  fetchAlerts: () => Promise<void>;
 }
 
 export const usePriceWatchStore = create<PriceWatchState>((set) => ({
   watches: [],
-  alerts: [],
-  unreadAlertCount: 0,
   loadingWatches: false,
-  loadingAlerts: false,
   creating: false,
 
   fetchWatches: async () => {
@@ -63,20 +56,6 @@ export const usePriceWatchStore = create<PriceWatchState>((set) => ({
       }));
     } catch {
       // silent
-    }
-  },
-
-  fetchAlerts: async () => {
-    set({ loadingAlerts: true });
-    try {
-      const res = await apiClient.get("/alerts");
-      set({
-        alerts: res.data.alerts,
-        unreadAlertCount: res.data.unread_count,
-        loadingAlerts: false,
-      });
-    } catch {
-      set({ loadingAlerts: false });
     }
   },
 }));

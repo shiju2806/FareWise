@@ -10,7 +10,6 @@ import apiClient from "@/api/client";
 
 // Lazy-loaded pages for code splitting
 const Login = lazy(() => import("@/pages/Login"));
-const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Trips = lazy(() => import("@/pages/Trips"));
 const TripSearch = lazy(() => import("@/pages/TripSearch"));
 const TripReview = lazy(() => import("@/pages/TripReview"));
@@ -21,11 +20,7 @@ const PolicyManagement = lazy(() => import("@/pages/PolicyManagement"));
 const PriceWatches = lazy(() => import("@/pages/PriceWatches"));
 const AnalyticsDashboard = lazy(() => import("@/pages/AnalyticsDashboard"));
 const MyProfile = lazy(() => import("@/pages/MyProfile"));
-const MyStats = lazy(() => import("@/pages/MyStats"));
 const LeaderboardPage = lazy(() => import("@/pages/LeaderboardPage"));
-const GroupTrips = lazy(() => import("@/pages/GroupTrips"));
-const GroupTripDetailPage = lazy(() => import("@/pages/GroupTripDetailPage"));
-const AlertFeed = lazy(() => import("@/pages/AlertFeed"));
 
 function PageLoader() {
   return (
@@ -66,7 +61,7 @@ export default function App() {
               </ProtectedRoute>
             }
           >
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Navigate to="/trips" replace />} />
             <Route path="/trips/new" element={<Navigate to="/trips?new=1" replace />} />
             <Route path="/trips" element={<Trips />} />
             <Route path="/trips/:tripId/search" element={<TripSearch />} />
@@ -77,11 +72,7 @@ export default function App() {
             <Route path="/approvals/:approvalId" element={<ApprovalDetailPage />} />
             <Route path="/analytics" element={<AnalyticsDashboard />} />
             <Route path="/profile" element={<MyProfile />} />
-            <Route path="/my-stats" element={<MyStats />} />
             <Route path="/leaderboard" element={<LeaderboardPage />} />
-            <Route path="/group-trips" element={<GroupTrips />} />
-            <Route path="/group-trips/:groupId" element={<GroupTripDetailPage />} />
-            <Route path="/alerts" element={<AlertFeed />} />
             <Route path="/policies" element={<PolicyManagement />} />
           </Route>
         </Routes>

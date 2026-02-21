@@ -448,16 +448,6 @@ class AnalyticsService:
         if (pw_result.scalar() or 0) >= 3:
             badges.append("price_watcher")
 
-        # team_player (member of a group trip)
-        from app.models.collaboration import GroupTripMember
-        gm_result = await db.execute(
-            select(func.count(GroupTripMember.id)).where(
-                GroupTripMember.user_id == user.id
-            )
-        )
-        if (gm_result.scalar() or 0) > 0:
-            badges.append("team_player")
-
         return badges
 
     async def _compute_streak(self, db: AsyncSession, user_id) -> int:

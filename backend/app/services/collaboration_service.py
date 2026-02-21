@@ -1,4 +1,4 @@
-"""Collaboration service — overlap detection, group trips, coordination tips."""
+"""Collaboration service — overlap detection."""
 
 import logging
 import uuid
@@ -6,9 +6,8 @@ from datetime import date
 
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from app.models.collaboration import GroupTrip, GroupTripMember, TripOverlap
+from app.models.collaboration import TripOverlap
 from app.models.trip import Trip, TripLeg
 from app.models.user import User
 
@@ -16,12 +15,14 @@ logger = logging.getLogger(__name__)
 
 
 class CollaborationService:
-    """Detects trip overlaps and manages group trips."""
+    """Detects trip overlaps between travelers."""
 
     # ─── Overlap Detection ───
 
     async def detect_overlaps(self, db: AsyncSession, trip: Trip) -> list[TripOverlap]:
         """Detect overlaps between this trip and others from different users."""
+        from sqlalchemy.orm import selectinload
+
         legs = trip.legs
         if not legs:
             result = await db.execute(
@@ -121,6 +122,8 @@ class CollaborationService:
             is_a = o.trip_a_id == trip_id
 
             # Get other trip details
+            from sqlalchemy.orm import selectinload
+
             other_trip = await db.execute(
                 select(Trip).where(Trip.id == other_trip_id).options(selectinload(Trip.legs))
             )
@@ -173,201 +176,6 @@ class CollaborationService:
 
         await db.commit()
         return True
-
-    # ─── Group Trips ───
-
-    async def create_group_trip(
-        self, db: AsyncSession, organizer_id: uuid.UUID,
-        name: str, destination_city: str, start_date: date, end_date: date,
-        notes: str | None = None, member_emails: list[str] | None = None,
-    ) -> GroupTrip:
-        """Create a group trip and invite members."""
-        group = GroupTrip(
-            name=name,
-            organizer_id=organizer_id,
-            destination_city=destination_city,
-            start_date=start_date,
-            end_date=end_date,
-            notes=notes,
-        )
-        db.add(group)
-        await db.flush()
-
-        # Add organizer as member
-        db.add(GroupTripMember(
-            group_trip_id=group.id,
-            user_id=organizer_id,
-            role="organizer",
-            status="accepted",
-        ))
-
-        # Invite members by email
-        if member_emails:
-            for email in member_emails:
-                user_result = await db.execute(
-                    select(User).where(User.email == email)
-                )
-                user = user_result.scalar_one_or_none()
-                if user and user.id != organizer_id:
-                    db.add(GroupTripMember(
-                        group_trip_id=group.id,
-                        user_id=user.id,
-                        role="member",
-                        status="invited",
-                    ))
-
-        await db.commit()
-        await db.refresh(group)
-        logger.info(f"Created group trip '{name}' by user {organizer_id}")
-        return group
-
-    async def get_user_group_trips(self, db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
-        """Get all group trips the user is part of."""
-        result = await db.execute(
-            select(GroupTrip, GroupTripMember.role, GroupTripMember.status)
-            .join(GroupTripMember, GroupTripMember.group_trip_id == GroupTrip.id)
-            .where(GroupTripMember.user_id == user_id)
-            .order_by(GroupTrip.start_date)
-        )
-
-        trips = []
-        for gt, role, status in result.all():
-            # Count members
-            members_result = await db.execute(
-                select(GroupTripMember).where(
-                    GroupTripMember.group_trip_id == gt.id
-                )
-            )
-            members = members_result.scalars().all()
-
-            organizer = await db.execute(select(User).where(User.id == gt.organizer_id))
-            org = organizer.scalar_one_or_none()
-
-            trips.append({
-                "id": str(gt.id),
-                "name": gt.name,
-                "destination_city": gt.destination_city,
-                "start_date": gt.start_date.isoformat(),
-                "end_date": gt.end_date.isoformat(),
-                "status": gt.status,
-                "notes": gt.notes,
-                "my_role": role,
-                "my_status": status,
-                "organizer": f"{org.first_name} {org.last_name}" if org else "Unknown",
-                "member_count": len(members),
-                "accepted_count": sum(1 for m in members if m.status == "accepted"),
-            })
-
-        return trips
-
-    async def get_group_trip_detail(
-        self, db: AsyncSession, group_id: uuid.UUID
-    ) -> dict | None:
-        """Get detailed group trip info with members."""
-        result = await db.execute(
-            select(GroupTrip).where(GroupTrip.id == group_id)
-        )
-        gt = result.scalar_one_or_none()
-        if not gt:
-            return None
-
-        # Get members with user info
-        members_result = await db.execute(
-            select(GroupTripMember, User.first_name, User.last_name, User.email, User.department)
-            .join(User, User.id == GroupTripMember.user_id)
-            .where(GroupTripMember.group_trip_id == group_id)
-        )
-
-        members = [
-            {
-                "id": str(m.id),
-                "user_id": str(m.user_id),
-                "name": f"{fname} {lname}",
-                "email": email,
-                "department": dept,
-                "role": m.role,
-                "status": m.status,
-                "trip_id": str(m.trip_id) if m.trip_id else None,
-            }
-            for m, fname, lname, email, dept in members_result.all()
-        ]
-
-        organizer = await db.execute(select(User).where(User.id == gt.organizer_id))
-        org = organizer.scalar_one_or_none()
-
-        # Coordination tips
-        tips = await self._generate_coordination_tips(db, gt, members)
-
-        return {
-            "id": str(gt.id),
-            "name": gt.name,
-            "destination_city": gt.destination_city,
-            "start_date": gt.start_date.isoformat(),
-            "end_date": gt.end_date.isoformat(),
-            "status": gt.status,
-            "notes": gt.notes,
-            "organizer": f"{org.first_name} {org.last_name}" if org else "Unknown",
-            "members": members,
-            "coordination_tips": tips,
-        }
-
-    async def respond_to_invite(
-        self, db: AsyncSession, group_id: uuid.UUID, user_id: uuid.UUID, accept: bool
-    ) -> bool:
-        """Accept or decline a group trip invitation."""
-        result = await db.execute(
-            select(GroupTripMember).where(
-                and_(
-                    GroupTripMember.group_trip_id == group_id,
-                    GroupTripMember.user_id == user_id,
-                )
-            )
-        )
-        member = result.scalar_one_or_none()
-        if not member:
-            return False
-
-        member.status = "accepted" if accept else "declined"
-        await db.commit()
-        return True
-
-    async def _generate_coordination_tips(
-        self, db: AsyncSession, group: GroupTrip, members: list[dict]
-    ) -> list[str]:
-        """Generate smart tips for group coordination."""
-        tips = []
-        accepted = [m for m in members if m["status"] == "accepted"]
-
-        if len(accepted) >= 2:
-            tips.append(
-                f"{len(accepted)} travelers heading to {group.destination_city} — "
-                f"consider booking the same flights for group seating."
-            )
-
-        # Check if anyone has linked a trip
-        linked = [m for m in members if m.get("trip_id")]
-        if linked and len(linked) < len(accepted):
-            tips.append(
-                f"{len(linked)} of {len(accepted)} members have linked trips. "
-                f"Others should create their trip for better coordination."
-            )
-
-        # Date range tip
-        days = (group.end_date - group.start_date).days
-        if days >= 5:
-            tips.append(
-                f"{days}-day trip — ask your admin about group hotel rates for extended stays."
-            )
-
-        # Departments
-        depts = set(m.get("department") for m in accepted if m.get("department"))
-        if len(depts) > 1:
-            tips.append(
-                f"Cross-department trip ({', '.join(depts)}) — "
-                f"may qualify for conference or team-building policy exemptions."
-            )
-
-        return tips
 
 
 collaboration_service = CollaborationService()

@@ -20,7 +20,7 @@ from app.models.events import (
     PriceWatchHistory,
 )
 from app.models.analytics import AnalyticsSnapshot, TravelerScore
-from app.models.collaboration import GroupTrip, GroupTripMember, TripOverlap
+from app.models.collaboration import TripOverlap
 
 __all__ = [
     "AnalyticsSnapshot",
@@ -28,8 +28,6 @@ __all__ = [
     "ApprovalHistory",
     "EventCache",
     "FlightOption",
-    "GroupTrip",
-    "GroupTripMember",
     "HotelOption",
     "HotelSearch",
     "HotelSelection",
