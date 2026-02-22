@@ -479,9 +479,16 @@ async def get_price_advice(
         except Exception as e:
             logger.warning(f"Failed to fetch events for advisor: {e}")
 
-    # Get trip for city names
+    # Get trip context for city names and leg/trip type inference
     trip_result = await db.execute(select(Trip).where(Trip.id == leg.trip_id))
     trip = trip_result.scalar_one_or_none()
+
+    from sqlalchemy import func as sa_func
+    leg_count = await db.scalar(
+        select(sa_func.count()).select_from(TripLeg).where(TripLeg.trip_id == leg.trip_id)
+    )
+    trip_type = "round_trip" if leg_count >= 2 else "one_way"
+    leg_type = "one_way" if trip_type == "one_way" else ("outbound" if leg.sequence == 0 else "return")
 
     advice = await price_advisor.get_advice(
         search_id=str(search_log.id),
@@ -493,6 +500,8 @@ async def get_price_advice(
         events=events,
         origin_city=leg.origin_city,
         destination_city=leg.destination_city,
+        trip_type=trip_type,
+        leg_label=leg_type,
     )
 
     return advice

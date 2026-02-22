@@ -13,7 +13,6 @@ Falls back to rule-based recommendations if Claude fails.
 import json
 import logging
 from datetime import date
-from decimal import Decimal
 
 from app.config import settings
 from app.services.llm_client import llm_client
@@ -44,13 +43,17 @@ Your response MUST be valid JSON with this exact structure:
     "savings_potential": "$X-Y CAD potential savings if timing is optimized"
 }}
 
-IMPORTANT — Data context:
-- The "HISTORICAL PRICE RANGE" section shows the distribution of fares for this route across all available dates
-- The percentile tells you where the current price sits within that historical distribution
-- Seats remaining refers to the cheapest fare only; other fares may have plenty of seats
-- The "CURRENT PRICES" section is today's market snapshot across carriers on ONE date — do not confuse this with historical data
+The user message contains a JSON object matching the input schema above.
+Analyze all fields, apply the reasoning steps, and respond with ONLY
+the JSON recommendation. No markdown formatting, no preamble."""
 
-Respond with ONLY the JSON, no markdown formatting, no preamble."""
+
+# Direction label mapping — forecast uses rising/falling, guide uses increasing/decreasing
+_DIRECTION_MAP = {
+    "rising": "increasing",
+    "falling": "decreasing",
+    "stable": "stable",
+}
 
 
 class PriceAdvisorService:
@@ -70,6 +73,8 @@ class PriceAdvisorService:
         events: list[dict] | None = None,
         origin_city: str | None = None,
         destination_city: str | None = None,
+        trip_type: str | None = None,
+        leg_label: str | None = None,
     ) -> dict:
         """Generate price advice for a search result.
 
@@ -83,6 +88,8 @@ class PriceAdvisorService:
             events: Optional PredictHQ events near destination
             origin_city: Origin city name for display
             destination_city: Destination city name for display
+            trip_type: "one_way" or "round_trip"
+            leg_label: "outbound", "return", or "one_way"
 
         Returns:
             Advisor response dict with recommendation, analysis, factors, etc.
@@ -105,6 +112,7 @@ class PriceAdvisorService:
         advice = await self._generate_llm_advice(
             signals, origin, destination, departure_date,
             cabin_class, origin_city, destination_city,
+            trip_type, leg_label,
         )
 
         # Cache the result
@@ -140,6 +148,12 @@ class PriceAdvisorService:
             seats = sorted([f.get("seats_remaining") for f in flights if f.get("seats_remaining") is not None])
             min_seats = seats[len(seats) // 2] if seats else None
 
+        # Determine flight type of cheapest option
+        cheapest_is_direct = any(
+            f.get("stops", 1) == 0
+            for f in cheapest_flights
+        ) if cheapest_flights else False
+
         price_stats = {
             "cheapest": min(prices) if prices else 0,
             "most_expensive": max(prices) if prices else 0,
@@ -150,6 +164,7 @@ class PriceAdvisorService:
             "cheapest_direct": min(direct_prices) if direct_prices else None,
             "cheapest_connecting": min(connecting_prices) if connecting_prices else None,
             "min_seats_remaining": min_seats,
+            "cheapest_is_direct": cheapest_is_direct,
         }
 
         # Seasonality from Amadeus analytics
@@ -170,6 +185,7 @@ class PriceAdvisorService:
                     "name": evt.get("title", evt.get("name", "Event")),
                     "impact": impact,
                     "category": evt.get("category", ""),
+                    "date": evt.get("date", evt.get("start_date", "")),
                 })
             # Overall event impact = highest individual impact
             impact_order = {"low": 0, "medium": 1, "high": 2, "very_high": 3}
@@ -272,11 +288,14 @@ class PriceAdvisorService:
         cabin_class: str,
         origin_city: str | None,
         destination_city: str | None,
+        trip_type: str | None,
+        leg_label: str | None,
     ) -> dict:
         """Call Claude to synthesize signals into natural-language advice."""
         prompt = self._build_prompt(
             signals, origin, destination, departure_date,
             cabin_class, origin_city, destination_city,
+            trip_type, leg_label,
         )
 
         try:
@@ -321,103 +340,87 @@ class PriceAdvisorService:
         cabin_class: str,
         origin_city: str | None,
         destination_city: str | None,
+        trip_type: str | None,
+        leg_label: str | None,
     ) -> str:
-        """Build the structured prompt for Claude."""
+        """Build a structured JSON prompt matching the v4 guide schema."""
+        from app.services.recommendation.config import recommendation_config
+
         ps = signals["price_stats"]
         forecast = signals["forecast"]
         seasonality = signals["seasonality"]
-        bw = forecast["booking_window"]
 
-        route_display = f"{origin_city or origin} ({origin}) → {destination_city or destination} ({destination})"
+        # Build historical object (null if no data)
+        historical = None
+        pm = signals.get("price_metrics")
+        if pm:
+            historical = {
+                "percentile": signals.get("price_percentile"),
+                "low": pm.get("min"),
+                "q1": pm.get("q1"),
+                "median": pm.get("median"),
+                "q3": pm.get("q3"),
+                "high": pm.get("max"),
+                "data_points": pm.get("data_points"),  # null for DB1B
+            }
 
-        sections = [
-            f"Route: {route_display}",
-            f"Departure: {departure_date.isoformat()} ({departure_date.strftime('%A')})",
-            f"Cabin: {cabin_class}",
-            f"",
-            f"=== CURRENT PRICES ===",
-            f"Cheapest: ${ps['cheapest']:.0f} CAD",
-            f"Most expensive: ${ps['most_expensive']:.0f} CAD",
-            f"Average: ${ps['average']:.0f} CAD",
-            f"Total options: {ps['option_count']}",
-            f"Direct flights: {ps['direct_count']}",
-            f"Connecting flights: {ps['connecting_count']}",
-        ]
+        # Build forecast object
+        direction_raw = forecast.get("price_direction", "stable")
+        forecast_obj = {
+            "predicted_price": forecast["predicted_price"],
+            "direction": _DIRECTION_MAP.get(direction_raw, direction_raw),
+            "urgency": forecast["urgency_score"],
+            "confidence_band_low": forecast["confidence_band"]["low"],
+            "confidence_band_high": forecast["confidence_band"]["high"],
+        }
 
-        if ps.get("cheapest_direct"):
-            sections.append(f"Cheapest direct: ${ps['cheapest_direct']:.0f} CAD")
-        if ps.get("cheapest_connecting"):
-            sections.append(f"Cheapest connecting: ${ps['cheapest_connecting']:.0f} CAD")
-        if ps.get("min_seats_remaining") is not None:
-            sections.append(f"Seats remaining at cheapest fare: {ps['min_seats_remaining']}")
+        # Build events list
+        events_list = []
+        for evt in signals.get("event_details", []):
+            entry = {
+                "name": evt["name"],
+                "impact": evt["impact"],
+            }
+            if evt.get("date"):
+                entry["date"] = evt["date"]
+            events_list.append(entry)
 
-        sections.extend([
-            f"",
-            f"=== BOOKING WINDOW ===",
-            f"Days to departure: {bw['days_to_departure']}",
-            f"Window position: {bw['position']}",
-            f"Sweet spot: {bw['sweet_spot_starts']} to {bw['sweet_spot_ends']}",
-        ])
+        # Season label — normalize off_peak → off-peak
+        season_label = seasonality.get("season_label", "unknown") if seasonality.get("data_available") else None
+        if season_label == "off_peak":
+            season_label = "off-peak"
 
-        sections.extend([
-            f"",
-            f"=== FORECAST MODEL ===",
-            f"Predicted price: ${forecast['predicted_price']:.0f} CAD",
-            f"Confidence band: ${forecast['confidence_band']['low']:.0f}–${forecast['confidence_band']['high']:.0f} CAD",
-            f"Confidence level: {forecast['confidence_level']}",
-            f"Price direction: {forecast['price_direction']}",
-            f"Urgency score: {forecast['urgency_score']:.2f} (0=no rush, 1=book immediately)",
-        ])
+        # Flight type of cheapest option
+        flight_type = "nonstop" if ps.get("cheapest_is_direct") else "connecting"
 
-        if seasonality.get("data_available"):
-            sections.extend([
-                f"",
-                f"=== SEASONALITY ===",
-                f"Season: {seasonality.get('season_label', 'unknown')}",
-                f"Month percentile: {seasonality.get('current_month_percentile', 0.5):.0%} (higher = busier)",
-                f"Peak months: {', '.join(str(m) for m in seasonality.get('peak_months', []))}",
-                f"Off-peak months: {', '.join(str(m) for m in seasonality.get('off_peak_months', []))}",
-            ])
+        # Corporate rate cap from policy config
+        corporate_rate_cap = recommendation_config.policy_budgets.get(cabin_class)
 
-        if signals.get("event_details"):
-            sections.extend([
-                f"",
-                f"=== EVENTS NEAR DESTINATION ===",
-            ])
-            for evt in signals["event_details"]:
-                sections.append(f"- {evt['name']} (impact: {evt['impact']}, category: {evt.get('category', 'N/A')})")
+        # Origin/destination display — prefer city names
+        origin_display = f"{origin_city} ({origin})" if origin_city else origin
+        dest_display = f"{destination_city} ({destination})" if destination_city else destination
 
-        if signals.get("price_metrics"):
-            pm = signals["price_metrics"]
-            sections.extend([
-                f"",
-                f"=== HISTORICAL PRICE RANGE (this route) ===",
-                f"Cheapest available: ${pm.get('min', 0):.0f} CAD",
-                f"25th percentile: ${pm.get('q1', 0):.0f} CAD",
-                f"Median: ${pm.get('median', 0):.0f} CAD",
-                f"75th percentile: ${pm.get('q3', 0):.0f} CAD",
-                f"Most expensive: ${pm.get('max', 0):.0f} CAD",
-            ])
-            if signals.get("price_percentile") is not None:
-                sections.append(
-                    f"Current cheapest (${ps['cheapest']:.0f}) is at the "
-                    f"{signals['price_percentile']}th percentile historically "
-                    f"({signals['price_percentile_label']})"
-                )
-            if signals.get("price_assessment"):
-                sections.append(
-                    f"Price assessment: {signals['price_assessment'].upper()}"
-                )
+        input_data = {
+            "current_price": round(ps["cheapest"], 2),
+            "currency": "CAD",
+            "origin": origin_display,
+            "destination": dest_display,
+            "departure_date": departure_date.isoformat(),
+            "booking_date": date.today().isoformat(),
+            "cabin_class": cabin_class,
+            "flight_type": flight_type,
+            "trip_type": trip_type,
+            "leg": leg_label,
+            "historical": historical,
+            "price_assessment": signals.get("price_assessment"),
+            "forecast": forecast_obj,
+            "seats_remaining_cheapest_fare": ps.get("min_seats_remaining"),
+            "events": events_list if events_list else [],
+            "season": season_label,
+            "corporate_rate_cap": corporate_rate_cap,
+        }
 
-        if forecast.get("factors"):
-            sections.extend([
-                f"",
-                f"=== MODEL FACTORS ===",
-            ])
-            for f in forecast["factors"]:
-                sections.append(f"- {f['name']} ({f['impact']}): {f['detail']}")
-
-        return "\n".join(sections)
+        return json.dumps(input_data, indent=2)
 
     def _fallback_advice(
         self,
@@ -452,7 +455,6 @@ class PriceAdvisorService:
         # Historical price context can override recommendation
         if signals.get("price_metrics") and signals.get("price_percentile") is not None:
             pct = signals["price_percentile"]
-            pct_label = signals["price_percentile_label"]
             if pct <= 25 and recommendation != "book":
                 recommendation = "book"
                 headline = f"Price at ${ps['cheapest']:.0f} CAD is historically low ({pct}th percentile) — strong buy signal"
