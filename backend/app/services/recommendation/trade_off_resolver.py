@@ -303,7 +303,7 @@ class TradeOffResolver:
         disruption_score = disruption_map.get(alt.disruption_level, 0.5)
 
         # Red-eye penalty: reduce disruption score for late-night departures
-        if _is_red_eye(alt.departure_time):
+        if cfg.red_eye.is_red_eye(alt.departure_time):
             cabin = alt.cabin_class or "economy"
             if cabin in ("business", "first"):
                 disruption_score *= cfg.red_eye.penalty_business
@@ -515,8 +515,8 @@ class TradeOffResolver:
         disruption_score = disruption_map.get(proposal.disruption_level, 0.5)
 
         # Red-eye penalty for trip-window proposals (check both legs)
-        red_eye_out = _is_red_eye(proposal.outbound_flight.departure_time)
-        red_eye_ret = _is_red_eye(proposal.return_flight.departure_time)
+        red_eye_out = cfg.red_eye.is_red_eye(proposal.outbound_flight.departure_time)
+        red_eye_ret = cfg.red_eye.is_red_eye(proposal.return_flight.departure_time)
         if red_eye_out or red_eye_ret:
             cabin = context.legs[0].cabin_class if context.legs else "economy"
             penalty = (
@@ -790,20 +790,6 @@ def _stops_to_sustainability(stops: float) -> float:
     if stops <= 1:
         return 0.5
     return 0.2
-
-
-def _is_red_eye(departure_time: str) -> bool:
-    """Check if departure time falls in the red-eye window (config-driven).
-
-    Red-eye = departure between start_hour (e.g. 23:00) and end_hour (e.g. 06:00).
-    """
-    if not departure_time or len(departure_time) < 16:
-        return False
-    try:
-        hour = int(departure_time[11:13])
-        return hour >= cfg.red_eye.start_hour or hour < cfg.red_eye.end_hour
-    except (ValueError, IndexError):
-        return False
 
 
 # Singleton

@@ -18,6 +18,7 @@ interface Alternative {
   flight_option_id: string;
   origin_airport?: string;
   destination_airport?: string;
+  departure_time?: string;
   /** LLM-curated explanation for why this alternative is suggested */
   reason?: string;
 }
@@ -289,6 +290,9 @@ export function JustificationModal({
   const [justification, setJustification] = useState("");
   const [selectedPresets, setSelectedPresets] = useState<Set<string>>(new Set());
   const [showCustom, setShowCustom] = useState(false);
+  const [expandedProposals, setExpandedProposals] = useState(false);
+  const [expandedSameDay, setExpandedSameDay] = useState(false);
+  const [expandedDiffMonth, setExpandedDiffMonth] = useState(false);
 
   /** Format "2026-03-21T08:30:00" → "8:30a" */
   function fmtTime(iso?: string): string {
@@ -680,7 +684,7 @@ export function JustificationModal({
 
             <div className={`grid grid-cols-1 ${hasAlternatives ? "lg:grid-cols-5" : ""} gap-4 px-5`}>
               {/* LEFT COLUMN — Your selections + justification */}
-              <div className={`${hasAlternatives ? "lg:col-span-3" : ""} space-y-4`}>
+              <div className={`${hasAlternatives ? "lg:col-span-3 lg:sticky lg:top-0 lg:self-start" : ""} space-y-4`}>
                 {/* Multi-leg comparison tables */}
                 {isMultiLeg ? (
                   <div className="space-y-5">
@@ -759,14 +763,22 @@ export function JustificationModal({
                           {analysis.trip_window_alternatives!.original_trip_duration}-day trip (flexible ±2d), different dates
                         </p>
                       </div>
-                      {analysis.trip_window_alternatives!.proposals.map((proposal) => (
+                      {(expandedProposals
+                        ? analysis.trip_window_alternatives!.proposals
+                        : analysis.trip_window_alternatives!.proposals.slice(0, 3)
+                      ).map((proposal, idx) => (
                         <div
                           key={`${proposal.outbound_date}-${proposal.return_date}`}
-                          className="px-3 py-2.5 border-b border-blue-100/50 last:border-b-0"
+                          className={`px-3 py-2.5 border-b border-blue-100/50 last:border-b-0 ${idx === 0 ? "bg-emerald-50/30" : ""}`}
                         >
                           <div className="flex items-center justify-between">
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                                {idx === 0 && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 bg-emerald-600 text-white font-semibold">
+                                    Top pick
+                                  </span>
+                                )}
                                 <span className="font-medium">{fmtDate(proposal.outbound_date)}</span>
                                 <span className="text-muted-foreground">&rarr;</span>
                                 <span className="font-medium">{fmtDate(proposal.return_date)}</span>
@@ -813,13 +825,21 @@ export function JustificationModal({
                             </div>
                             <div className="text-right shrink-0 ml-2">
                               <div className="text-sm font-bold">{formatPrice(proposal.total_price)}</div>
-                              <div className={`text-[10px] font-semibold ${
-                                proposal.savings >= 0 ? "text-blue-700" : "text-amber-600"
-                              }`}>
-                                {proposal.savings >= 0
-                                  ? `Save ${formatPrice(proposal.savings)}`
-                                  : `${formatPrice(Math.abs(proposal.savings))} more`
-                                }
+                              <div className="flex items-center gap-1 justify-end">
+                                {proposal.savings > 0 && proposal.savings_percent >= 20 && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 font-medium bg-emerald-100 text-emerald-700">Great deal</span>
+                                )}
+                                {proposal.savings > 0 && proposal.savings_percent >= 10 && proposal.savings_percent < 20 && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 font-medium bg-amber-100 text-amber-700">Good savings</span>
+                                )}
+                                <span className={`text-[10px] font-semibold ${
+                                  proposal.savings >= 0 ? "text-blue-700" : "text-amber-600"
+                                }`}>
+                                  {proposal.savings >= 0
+                                    ? `Save ${formatPrice(proposal.savings)}`
+                                    : `${formatPrice(Math.abs(proposal.savings))} more`
+                                  }
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -837,6 +857,16 @@ export function JustificationModal({
                           )}
                         </div>
                       ))}
+                      {analysis.trip_window_alternatives!.proposals.length > 3 && (
+                        <div className="px-3 py-2">
+                          <button
+                            onClick={() => setExpandedProposals(!expandedProposals)}
+                            className="w-full text-xs text-blue-600 hover:text-blue-800 font-medium py-1 rounded-md hover:bg-blue-50 transition-colors"
+                          >
+                            {expandedProposals ? "Show less" : `Show ${analysis.trip_window_alternatives!.proposals.length - 3} more options`}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -851,14 +881,22 @@ export function JustificationModal({
                           Your airline on significantly different dates
                         </p>
                       </div>
-                      {analysis.trip_window_alternatives.different_month.map((proposal) => (
+                      {(expandedDiffMonth
+                        ? analysis.trip_window_alternatives.different_month
+                        : analysis.trip_window_alternatives.different_month.slice(0, 3)
+                      ).map((proposal, idx) => (
                         <div
                           key={`dm-${proposal.outbound_date}-${proposal.return_date}`}
-                          className="px-3 py-2.5 border-b border-purple-100/50 last:border-b-0"
+                          className={`px-3 py-2.5 border-b border-purple-100/50 last:border-b-0 ${idx === 0 ? "bg-emerald-50/30" : ""}`}
                         >
                           <div className="flex items-center justify-between">
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                                {idx === 0 && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 bg-emerald-600 text-white font-semibold">
+                                    Top pick
+                                  </span>
+                                )}
                                 <span className="font-medium">{fmtDate(proposal.outbound_date)}</span>
                                 <span className="text-muted-foreground">&rarr;</span>
                                 <span className="font-medium">{fmtDate(proposal.return_date)}</span>
@@ -905,13 +943,21 @@ export function JustificationModal({
                             </div>
                             <div className="text-right shrink-0 ml-2">
                               <div className="text-sm font-bold">{formatPrice(proposal.total_price)}</div>
-                              <div className={`text-[10px] font-semibold ${
-                                proposal.savings >= 0 ? "text-purple-700" : "text-amber-600"
-                              }`}>
-                                {proposal.savings >= 0
-                                  ? `Save ${formatPrice(proposal.savings)}`
-                                  : `${formatPrice(Math.abs(proposal.savings))} more`
-                                }
+                              <div className="flex items-center gap-1 justify-end">
+                                {proposal.savings > 0 && proposal.savings_percent >= 20 && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 font-medium bg-emerald-100 text-emerald-700">Great deal</span>
+                                )}
+                                {proposal.savings > 0 && proposal.savings_percent >= 10 && proposal.savings_percent < 20 && (
+                                  <span className="text-[9px] rounded-full px-1.5 py-0.5 font-medium bg-amber-100 text-amber-700">Good savings</span>
+                                )}
+                                <span className={`text-[10px] font-semibold ${
+                                  proposal.savings >= 0 ? "text-purple-700" : "text-amber-600"
+                                }`}>
+                                  {proposal.savings >= 0
+                                    ? `Save ${formatPrice(proposal.savings)}`
+                                    : `${formatPrice(Math.abs(proposal.savings))} more`
+                                  }
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -929,62 +975,115 @@ export function JustificationModal({
                           )}
                         </div>
                       ))}
+                      {analysis.trip_window_alternatives.different_month.length > 3 && (
+                        <div className="px-3 py-2">
+                          <button
+                            onClick={() => setExpandedDiffMonth(!expandedDiffMonth)}
+                            className="w-full text-xs text-purple-600 hover:text-purple-800 font-medium py-1 rounded-md hover:bg-purple-50 transition-colors"
+                          >
+                            {expandedDiffMonth ? "Show less" : `Show ${analysis.trip_window_alternatives.different_month.length - 3} more options`}
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
 
                   {/* Per-leg same-day alternatives */}
                   {isMultiLeg ? (
-                    analysis.legs!.map((leg) => {
-                      if (leg.alternatives.length === 0) return null;
-                      return (
-                        <div key={`alt-${leg.leg_id}`} className="space-y-1.5">
-                          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                            {leg.route} alternatives
-                          </h4>
-                          {leg.alternatives.map((alt) => (
-                            <div
-                              key={alt.flight_option_id}
-                              className="flex items-center justify-between rounded-lg border border-border bg-muted/20 px-3 py-2 hover:bg-muted/40 transition-colors"
-                            >
-                              <div className="min-w-0">
-                                <div className="text-sm font-medium">{alt.airline}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  {alt.label} &middot; {fmtDate(alt.date)} &middot;{" "}
-                                  {alt.stops === 0
-                                    ? "Nonstop"
-                                    : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
-                                  {alt.duration_minutes > 0 &&
-                                    ` \u00b7 ${fmtDuration(alt.duration_minutes)}`}
-                                </div>
-                                {alt.reason && (
-                                  <div className="text-[10px] text-blue-600 italic mt-0.5">
-                                    {alt.reason}
-                                  </div>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <div className="text-right">
-                                  <div className="text-sm font-bold text-emerald-700">
-                                    {formatPrice(alt.price)}
-                                  </div>
-                                  <div className="text-[10px] text-emerald-600">
-                                    {formatPrice(alt.savings)} less
-                                  </div>
-                                </div>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => onSwitch(alt.flight_option_id, leg.leg_id)}
-                                  className="text-xs"
+                    <>
+                      {analysis.legs!.map((leg) => {
+                        if (leg.alternatives.length === 0) return null;
+                        const visibleAlts = expandedSameDay ? leg.alternatives : leg.alternatives.slice(0, 2);
+                        const selectedPrice = leg.selected?.price || 1;
+                        return (
+                          <div key={`alt-${leg.leg_id}`} className="space-y-1.5">
+                            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              {leg.route} alternatives
+                            </h4>
+                            {visibleAlts.map((alt, altIdx) => {
+                              const savingsPct = selectedPrice > 0 ? (alt.savings / selectedPrice) * 100 : 0;
+                              const isTopPick = altIdx === 0;
+                              return (
+                                <div
+                                  key={alt.flight_option_id}
+                                  className={`flex items-center justify-between rounded-lg border px-3 py-2 transition-colors ${
+                                    isTopPick ? "border-emerald-200 bg-emerald-50/30 hover:bg-emerald-50/50" : "border-border bg-muted/20 hover:bg-muted/40"
+                                  }`}
                                 >
-                                  Switch
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      {isTopPick && (
+                                        <span className="text-[9px] rounded-full px-1.5 py-0.5 bg-emerald-600 text-white font-semibold">
+                                          Top pick
+                                        </span>
+                                      )}
+                                      <span className="text-sm font-medium">{alt.airline}</span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {alt.label} &middot; {fmtDate(alt.date)}
+                                      {fmtTime(alt.departure_time) && (
+                                        <> &middot; {fmtTime(alt.departure_time)}</>
+                                      )}
+                                      {" "}&middot;{" "}
+                                      {alt.stops === 0
+                                        ? "Nonstop"
+                                        : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
+                                      {alt.duration_minutes > 0 &&
+                                        ` \u00b7 ${fmtDuration(alt.duration_minutes)}`}
+                                    </div>
+                                    {alt.reason && (
+                                      <div className="text-[10px] text-blue-600 italic mt-0.5">
+                                        {alt.reason}
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <div className="text-right">
+                                      <div className="flex items-center gap-1 justify-end">
+                                        {savingsPct >= 20 && (
+                                          <span className="text-[9px] rounded-full px-1.5 py-0.5 font-medium bg-emerald-100 text-emerald-700">Great deal</span>
+                                        )}
+                                        {savingsPct >= 10 && savingsPct < 20 && (
+                                          <span className="text-[9px] rounded-full px-1.5 py-0.5 font-medium bg-amber-100 text-amber-700">Good savings</span>
+                                        )}
+                                        <span className="text-sm font-bold text-emerald-700">
+                                          {formatPrice(alt.price)}
+                                        </span>
+                                      </div>
+                                      <div className="text-[10px] text-emerald-600">
+                                        {formatPrice(alt.savings)} less
+                                      </div>
+                                    </div>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => onSwitch(alt.flight_option_id, leg.leg_id)}
+                                      className="text-xs"
+                                    >
+                                      Switch
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                      {(() => {
+                        const hiddenCount = analysis.legs!.reduce(
+                          (sum, leg) => sum + Math.max(0, leg.alternatives.length - 2), 0
+                        );
+                        if (hiddenCount <= 0) return null;
+                        return (
+                          <button
+                            onClick={() => setExpandedSameDay(!expandedSameDay)}
+                            className="w-full text-xs text-muted-foreground hover:text-foreground font-medium py-1.5 rounded-md hover:bg-muted/50 transition-colors"
+                          >
+                            {expandedSameDay ? "Show less" : `Show ${hiddenCount} more alternative${hiddenCount > 1 ? "s" : ""}`}
+                          </button>
+                        );
+                      })()}
+                    </>
                   ) : (
                     analysis.alternatives && analysis.alternatives.length > 0 && (
                       <div className="space-y-1.5">
@@ -999,7 +1098,11 @@ export function JustificationModal({
                             <div>
                               <div className="text-sm font-medium">{alt.airline}</div>
                               <div className="text-xs text-muted-foreground">
-                                {alt.label} &middot; {fmtDate(alt.date)} &middot;{" "}
+                                {alt.label} &middot; {fmtDate(alt.date)}
+                                {fmtTime(alt.departure_time) && (
+                                  <> &middot; {fmtTime(alt.departure_time)}</>
+                                )}
+                                {" "}&middot;{" "}
                                 {alt.stops === 0
                                   ? "Nonstop"
                                   : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}

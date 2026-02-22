@@ -205,6 +205,8 @@ class AudienceAdapter:
             "is_user_airline": alt.is_user_airline,
             "cabin_class": alt.cabin_class,
             "savings_percent": alt.savings_percent,
+            "departure_time": alt.departure_time,
+            "duration_minutes": alt.duration_minutes,
         }
         if sa.reason:
             d["reason"] = sa.reason

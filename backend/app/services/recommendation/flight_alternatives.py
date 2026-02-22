@@ -64,6 +64,9 @@ class Alternative:
     savings_amount: float
     savings_percent: float
 
+    # Connection details
+    stop_airports: str = ""        # e.g. "YVR" for 1-stop via Vancouver
+
     # Hotel impact (for date-shift alternatives)
     hotel_impact: dict | None = None
     net_savings: dict | None = None
@@ -90,8 +93,11 @@ class Alternative:
             "flight_option_id": self.flight_option_id,
             "origin_airport": self.origin_airport,
             "destination_airport": self.destination_airport,
+            "departure_time": self.departure_time,
+            "arrival_time": self.arrival_time,
             "cabin_class": self.cabin_class,
             "is_user_airline": self.is_user_airline,
+            "stop_airports": self.stop_airports,
         }
         if self.hotel_impact:
             d["hotel_impact"] = self.hotel_impact
@@ -357,6 +363,8 @@ class FlightAlternativesGenerator:
         alternatives: list[Alternative] = []
         min_savings = cfg.alternatives.layer1_min_savings
 
+        cabin = leg.cabin_class
+
         # 1a: Different airline, same date, same airport, cheaper
         same_date_others = [
             o for o in options
@@ -365,6 +373,7 @@ class FlightAlternativesGenerator:
             and not o.is_alternate_airport
             and o.price < sel_price
             and (sel_price - o.price) >= min_savings
+            and not cfg.red_eye.is_excluded(o.departure_time, cabin)
         ]
 
         if same_date_others:
@@ -396,6 +405,7 @@ class FlightAlternativesGenerator:
                     cabin_class=o.cabin_class,
                     savings_amount=round(savings, 2),
                     savings_percent=round(savings / sel_price * 100, 1) if sel_price > 0 else 0,
+                    stop_airports=o.stop_airports or "",
                 ))
 
         # 1b: Nearby airport, same date, cheaper
@@ -405,6 +415,7 @@ class FlightAlternativesGenerator:
             and _extract_date(o.departure_time) == sel_date
             and o.price < sel_price
             and (sel_price - o.price) >= min_savings
+            and not cfg.red_eye.is_excluded(o.departure_time, cabin)
         ]
 
         existing_ids = {a.flight_option_id for a in alternatives}
@@ -435,6 +446,7 @@ class FlightAlternativesGenerator:
                     cabin_class=cheapest_nearby.cabin_class,
                     savings_amount=round(savings, 2),
                     savings_percent=round(savings / sel_price * 100, 1) if sel_price > 0 else 0,
+                    stop_airports=cheapest_nearby.stop_airports or "",
                 ))
 
         return alternatives
@@ -453,6 +465,7 @@ class FlightAlternativesGenerator:
         Air Canada 1-stop is $2,139 — same loyalty, cheaper price.
         """
         min_savings = cfg.alternatives.layer1_routing_min_savings
+        cabin = leg.cabin_class
 
         routing_options = [
             o for o in options
@@ -463,6 +476,7 @@ class FlightAlternativesGenerator:
             and (sel_price - o.price) >= min_savings
             and o.stops > selected.stops
             and o.id != selected.id
+            and not cfg.red_eye.is_excluded(o.departure_time, cabin)
         ]
 
         if not routing_options:
@@ -502,6 +516,7 @@ class FlightAlternativesGenerator:
                 cabin_class=o.cabin_class,
                 savings_amount=round(savings, 2),
                 savings_percent=round(savings / sel_price * 100, 1) if sel_price > 0 else 0,
+                stop_airports=o.stop_airports or "",
                 is_user_airline=True,
             ))
 
@@ -527,6 +542,7 @@ class FlightAlternativesGenerator:
             return []
 
         min_savings = cfg.alternatives.layer2_min_savings
+        cabin = leg.cabin_class
 
         same_airline_diff_date = [
             o for o in options
@@ -534,6 +550,7 @@ class FlightAlternativesGenerator:
             and _extract_date(o.departure_time) != sel_date
             and o.price < sel_price
             and (sel_price - o.price) >= min_savings
+            and not cfg.red_eye.is_excluded(o.departure_time, cabin)
         ]
 
         if not same_airline_diff_date:
@@ -632,6 +649,7 @@ class FlightAlternativesGenerator:
                 cabin_class=o.cabin_class,
                 savings_amount=round(savings, 2),
                 savings_percent=round(savings / sel_price * 100, 1) if sel_price > 0 else 0,
+                stop_airports=o.stop_airports or "",
                 hotel_impact=hi.to_dict() if hi.has_impact else None,
                 net_savings=net.to_dict(),
                 is_user_airline=True,
@@ -654,12 +672,15 @@ class FlightAlternativesGenerator:
 
         min_savings = cfg.alternatives.layer4_min_savings
 
+        cabin = leg.cabin_class
+
         lower_options = [
             o for o in options
             if o.cabin_class == lower_cabin
             and _extract_date(o.departure_time) == sel_date
             and o.price < sel_price
             and (sel_price - o.price) >= min_savings
+            and not cfg.red_eye.is_excluded(o.departure_time, cabin)
         ]
 
         if not lower_options:
@@ -700,6 +721,7 @@ class FlightAlternativesGenerator:
                 cabin_class=o.cabin_class,
                 savings_amount=round(savings, 2),
                 savings_percent=round(savings / sel_price * 100, 1) if sel_price > 0 else 0,
+                stop_airports=o.stop_airports or "",
             ))
 
         return alternatives
@@ -728,6 +750,14 @@ class FlightAlternativesGenerator:
 
         if not outbound_options or not return_options:
             return []
+
+        # Hard-exclude red-eye flights for business/first cabin
+        cabin = outbound_leg.cabin_class
+        if cabin in cfg.red_eye.hard_filter_cabins:
+            outbound_options = [o for o in outbound_options if not cfg.red_eye.is_red_eye(o.departure_time)]
+            return_options = [o for o in return_options if not cfg.red_eye.is_red_eye(o.departure_time)]
+            if not outbound_options or not return_options:
+                return []
 
         pref_out = date.fromisoformat(preferred_outbound)
 

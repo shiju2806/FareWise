@@ -303,11 +303,20 @@ Respond ONLY with valid JSON:
                     if nights != 0:
                         hotel_str = f" [{nights:+d} hotel nights]"
 
+                # Extract HH:MM from ISO departure time
+                dep_short = _extract_time(alt.departure_time)
+                dep_str = f" dep {dep_short}" if dep_short else ""
+                dur_str = f" {alt.duration_minutes}min" if alt.duration_minutes else ""
+                stop_via = ""
+                if alt.stop_airports:
+                    stop_via = f" via {alt.stop_airports}"
+
                 sections.append(
                     f"  {alt_id}: [{alt.disruption_level}] {alt.alt_type} — "
-                    f"{alt.airline_name} ${alt.price:.0f} on {alt.date}, "
+                    f"{alt.airline_name} ${alt.price:.0f} on {alt.date}{dep_str},{dur_str} "
+                    f"{alt.stops}stop{stop_via}, "
                     f"save ${alt.savings_amount:.0f} ({alt.savings_percent:.0f}%), "
-                    f"{alt.stops}stop, score={sa.score.total:.0f}"
+                    f"score={sa.score.total:.0f}"
                     f"{hotel_str}{net_str}"
                 )
             sections.append("")
@@ -324,10 +333,14 @@ Respond ONLY with valid JSON:
                     net_amt = p.net_savings.get("net_amount")
                     if net_amt is not None:
                         net_str = f" (net ${net_amt:.0f} after hotel)"
+                out_dep = _extract_time(p.outbound_flight.departure_time)
+                ret_dep = _extract_time(p.return_flight.departure_time)
+                out_time = f" dep {out_dep}" if out_dep else ""
+                ret_time = f" dep {ret_dep}" if ret_dep else ""
                 sections.append(
                     f"  {tw_id}: {p.outbound_date} → {p.return_date} ({p.trip_duration}d) | "
-                    f"{p.outbound_flight.airline_name} ${p.outbound_flight.price:.0f} + "
-                    f"{p.return_flight.airline_name} ${p.return_flight.price:.0f} = "
+                    f"{p.outbound_flight.airline_name} ${p.outbound_flight.price:.0f}{out_time} + "
+                    f"{p.return_flight.airline_name} ${p.return_flight.price:.0f}{ret_time} = "
                     f"${p.total_price:.0f}, save ${p.savings_amount:.0f}, "
                     f"score={sp.score.total:.0f}{ua_tag}{net_str}"
                 )
@@ -344,10 +357,14 @@ Respond ONLY with valid JSON:
                     net_amt = p.net_savings.get("net_amount")
                     if net_amt is not None:
                         net_str = f" (net ${net_amt:.0f} after hotel)"
+                out_dep = _extract_time(p.outbound_flight.departure_time)
+                ret_dep = _extract_time(p.return_flight.departure_time)
+                out_time = f" dep {out_dep}" if out_dep else ""
+                ret_time = f" dep {ret_dep}" if ret_dep else ""
                 sections.append(
                     f"  {dm_id}: {p.outbound_date} → {p.return_date} ({p.trip_duration}d) | "
-                    f"{p.outbound_flight.airline_name} ${p.outbound_flight.price:.0f} + "
-                    f"{p.return_flight.airline_name} ${p.return_flight.price:.0f} = "
+                    f"{p.outbound_flight.airline_name} ${p.outbound_flight.price:.0f}{out_time} + "
+                    f"{p.return_flight.airline_name} ${p.return_flight.price:.0f}{ret_time} = "
                     f"${p.total_price:.0f}, save ${p.savings_amount:.0f}, "
                     f"score={sp.score.total:.0f}{ua_tag}{net_str}"
                 )
@@ -376,6 +393,10 @@ Respond ONLY with valid JSON:
                     total_matched += 1
                 else:
                     sa.reason = self._generate_alt_reason(sa, context)
+                    logger.warning(
+                        f"LLM reason missing for {alt_id} ({alt.alt_type}, "
+                        f"{alt.airline_name}), using fallback: {sa.reason!r}"
+                    )
 
         # Trip-window proposals (simple TW-1, TW-2 IDs)
         for i, sp in enumerate(resolved.trip_window):
@@ -386,6 +407,10 @@ Respond ONLY with valid JSON:
                 total_matched += 1
             elif not sp.proposal.reason:
                 sp.proposal.reason = self._generate_tw_reason(sp, context)
+                logger.warning(
+                    f"LLM reason missing for {tw_id} ({sp.proposal.outbound_date} → "
+                    f"{sp.proposal.return_date}), using fallback: {sp.proposal.reason!r}"
+                )
 
         # Different-month proposals (simple DM-1, DM-2 IDs)
         for i, sp in enumerate(resolved.different_month):
@@ -396,6 +421,10 @@ Respond ONLY with valid JSON:
                 total_matched += 1
             elif not sp.proposal.reason:
                 sp.proposal.reason = self._generate_tw_reason(sp, context)
+                logger.warning(
+                    f"LLM reason missing for {dm_id} ({sp.proposal.outbound_date} → "
+                    f"{sp.proposal.return_date}), using fallback: {sp.proposal.reason!r}"
+                )
 
         if total_expected > 0:
             hit_rate = total_matched / total_expected * 100
@@ -651,6 +680,13 @@ Respond ONLY with valid JSON:
         if rec in ("approve", "review", "optimize"):
             return rec
         return "review"
+
+
+def _extract_time(departure_time: str) -> str:
+    """Extract HH:MM from ISO datetime string (e.g. '2025-04-12T14:30:00' → '14:30')."""
+    if not departure_time or len(departure_time) < 16:
+        return ""
+    return departure_time[11:16]
 
 
 def _truncate(text, max_len: int) -> str:

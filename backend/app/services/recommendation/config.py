@@ -131,6 +131,23 @@ class RedEyeConfig:
     end_hour: int = 6            # 6am — departures before this are red-eye
     penalty_economy: float = 0.7     # disruption multiplier for economy/premium_economy
     penalty_business: float = 0.4    # disruption multiplier for business/first
+    hard_filter_cabins: tuple = ("business", "first")  # hard-exclude red-eyes for these cabins
+
+    def is_red_eye(self, departure_time: str) -> bool:
+        """Check if departure falls in the red-eye window (23:00-05:59)."""
+        if not departure_time or len(departure_time) < 16:
+            return False
+        try:
+            hour = int(departure_time[11:13])
+            return hour >= self.start_hour or hour < self.end_hour
+        except (ValueError, IndexError):
+            return False
+
+    def is_excluded(self, departure_time: str, cabin_class: str) -> bool:
+        """Hard-exclude red-eye departures for business/first cabin."""
+        if cabin_class not in self.hard_filter_cabins:
+            return False
+        return self.is_red_eye(departure_time)
 
 
 @dataclass(frozen=True)

@@ -28,6 +28,16 @@ export default function TripReview() {
   const [expandedSameDay, setExpandedSameDay] = useState(false);
   const [expandedDiffMonth, setExpandedDiffMonth] = useState(false);
 
+  /** Format "2026-03-21T08:30:00" → "8:30a" */
+  function fmtTime(iso?: string): string {
+    if (!iso || iso.length < 16) return "";
+    const h = parseInt(iso.substring(11, 13), 10);
+    const m = iso.substring(14, 16);
+    const ampm = h >= 12 ? "p" : "a";
+    const h12 = h % 12 || 12;
+    return `${h12}:${m}${ampm}`;
+  }
+
   useEffect(() => {
     if (!tripId) return;
     fetchTrip(tripId);
@@ -564,6 +574,9 @@ export default function TripReview() {
                                   </span>
                                 )}
                                 <span className="text-sm font-medium">{alt.airline}</span>
+                                {fmtTime(alt.departure_time) && (
+                                  <span className="text-xs text-muted-foreground">{fmtTime(alt.departure_time)}</span>
+                                )}
                                 <span className="text-xs text-muted-foreground">
                                   {alt.stops === 0 ? "Nonstop" : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
                                 </span>

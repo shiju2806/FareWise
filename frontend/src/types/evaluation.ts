@@ -49,6 +49,8 @@ export interface ReviewAlternative {
   savings: number;
   stops: number;
   flight_option_id: string;
+  departure_time?: string;
+  duration_minutes?: number;
 }
 
 export interface ReviewLeg {
