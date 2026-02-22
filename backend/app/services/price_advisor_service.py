@@ -44,12 +44,11 @@ Your response MUST be valid JSON with this exact structure:
     "savings_potential": "$X-Y CAD potential savings if timing is optimized"
 }}
 
-IMPORTANT — Market range context:
-- The "MARKET PRICE RANGE" section shows the spread of prices from DIFFERENT airlines on the SAME date
-- This is NOT historical pricing over time — it's today's market snapshot across carriers
-- A price near the bottom of this range means it's competitively priced TODAY, not "historically exceptional"
-- Small differences from the range minimum (<10%) are normal fare variation, not remarkable
+IMPORTANT — Data context:
+- The "HISTORICAL PRICE RANGE" section shows the distribution of fares for this route across all available dates
+- The percentile tells you where the current price sits within that historical distribution
 - Seats remaining refers to the cheapest fare only; other fares may have plenty of seats
+- The "CURRENT PRICES" section is today's market snapshot across carriers on ONE date — do not confuse this with historical data
 
 Respond with ONLY the JSON, no markdown formatting, no preamble."""
 
@@ -196,7 +195,7 @@ class PriceAdvisorService:
         price_metrics = None
         price_percentile = None
         price_percentile_label = None
-        google_assessment = None
+        price_assessment = None  # LOW/TYPICAL/HIGH — populated if data source provides it
 
         try:
             # Check cache first
@@ -207,7 +206,7 @@ class PriceAdvisorService:
                 price_metrics = cached_metrics.get("historical")
                 price_percentile = cached_metrics.get("percentile")
                 price_percentile_label = cached_metrics.get("percentile_label")
-                google_assessment = cached_metrics.get("google_assessment")
+                price_assessment = cached_metrics.get("price_assessment")
             elif cached_metrics is None:
                 # Primary: DB1B historical data
                 db1b_context = await db1b_client.get_price_context(
@@ -261,7 +260,7 @@ class PriceAdvisorService:
             "price_metrics": price_metrics,
             "price_percentile": price_percentile,
             "price_percentile_label": price_percentile_label,
-            "google_assessment": google_assessment,
+            "price_assessment": price_assessment,
         }
 
     async def _generate_llm_advice(
@@ -392,7 +391,7 @@ class PriceAdvisorService:
             pm = signals["price_metrics"]
             sections.extend([
                 f"",
-                f"=== MARKET PRICE RANGE (same-day, across airlines) ===",
+                f"=== HISTORICAL PRICE RANGE (this route) ===",
                 f"Cheapest available: ${pm.get('min', 0):.0f} CAD",
                 f"25th percentile: ${pm.get('q1', 0):.0f} CAD",
                 f"Median: ${pm.get('median', 0):.0f} CAD",
@@ -401,13 +400,13 @@ class PriceAdvisorService:
             ])
             if signals.get("price_percentile") is not None:
                 sections.append(
-                    f"Current cheapest (${ps['cheapest']:.0f}) falls at the "
-                    f"{signals['price_percentile']}th percentile of today's market range "
+                    f"Current cheapest (${ps['cheapest']:.0f}) is at the "
+                    f"{signals['price_percentile']}th percentile historically "
                     f"({signals['price_percentile_label']})"
                 )
-            if signals.get("google_assessment"):
+            if signals.get("price_assessment"):
                 sections.append(
-                    f"Google Flights assessment (based on real historical data): {signals['google_assessment'].upper()} price"
+                    f"Price assessment: {signals['price_assessment'].upper()}"
                 )
 
         if forecast.get("factors"):
