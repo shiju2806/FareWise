@@ -130,6 +130,31 @@ async def search_flights(
         await _reset_trip_status(db, leg.trip_id)
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
+    # --- Policy evaluation (informational badges) ---
+    policy_map: dict = {}
+    policy_summary = None
+    try:
+        from app.services.policy_engine import PolicyEngine
+        all_options = result.get("all_options", [])
+        if all_options:
+            policy_map = await PolicyEngine.evaluate_flight_options(
+                db, leg, all_options, user_role=getattr(user, "role", None)
+            )
+            if policy_map:
+                total = len(all_options)
+                flagged = len(policy_map)
+                policy_summary = {
+                    "total_options": total,
+                    "compliant_count": total - flagged,
+                    "flagged_count": flagged,
+                }
+    except Exception:
+        logger.warning("Policy evaluation failed — returning results without policy data",
+                       exc_info=True)
+
+    result["policy_map"] = policy_map
+    result["policy_summary"] = policy_summary
+
     return result
 
 

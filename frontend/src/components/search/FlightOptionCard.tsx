@@ -1,6 +1,8 @@
 import type { FlightOption } from "@/types/flight";
+import type { FlightPolicyStatus } from "@/types/search";
 import { formatPrice } from "@/lib/currency";
 import { formatShortDate, formatDuration } from "@/lib/dates";
+import { policyBadgeColors, statusIcons } from "@/lib/policy";
 
 interface Props {
   flight: FlightOption;
@@ -15,6 +17,8 @@ interface Props {
   showDate?: boolean;
   /** Whether this flight is currently selected */
   isSelected?: boolean;
+  /** Policy check status for this flight (informational) */
+  policyStatus?: FlightPolicyStatus | null;
 }
 
 /** Hash a short string into a hue (0-360) for deterministic airline colors */
@@ -65,6 +69,7 @@ export function FlightOptionCard({
   preferredDate,
   showDate,
   isSelected,
+  policyStatus,
 }: Props) {
   const hue = airlineHue(flight.airline_code);
   const overnight = dayOffset(flight.departure_time, flight.arrival_time);
@@ -231,6 +236,14 @@ export function FlightOptionCard({
           {flight.seats_remaining != null && flight.seats_remaining <= 5 && (
             <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 whitespace-nowrap">
               {flight.seats_remaining} left
+            </span>
+          )}
+          {policyStatus && policyStatus.worst !== "pass" && (
+            <span
+              className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full whitespace-nowrap border ${policyBadgeColors[policyStatus.worst]}`}
+              title={policyStatus.checks.map(c => c.details).join("\n")}
+            >
+              {statusIcons[policyStatus.worst]} {policyStatus.label}
             </span>
           )}
         </div>

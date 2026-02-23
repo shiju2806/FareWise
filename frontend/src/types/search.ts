@@ -1,4 +1,5 @@
 import type { FlightOption } from "./flight";
+import type { PolicyCheck } from "./evaluation";
 
 export interface PriceCalendarDate {
   min_price: number;
@@ -30,6 +31,12 @@ export interface SearchResult {
     different_routing: FlightOption[];
   };
   all_options: FlightOption[];
+  policy_map?: Record<string, PolicyCheck[]>;
+  policy_summary?: {
+    total_options: number;
+    compliant_count: number;
+    flagged_count: number;
+  } | null;
   metadata: {
     total_options_found: number;
     airports_searched: string[];
@@ -158,4 +165,11 @@ export interface TripWindowAlternatives {
   proposals: TripWindowProposal[];
   /** LLM-categorized proposals for significantly shifted dates (different month) */
   different_month?: TripWindowProposal[];
+}
+
+// Policy status for a single flight option (computed from policy_map)
+export interface FlightPolicyStatus {
+  worst: "pass" | "warn" | "block" | "info";
+  checks: PolicyCheck[];
+  label: string;
 }

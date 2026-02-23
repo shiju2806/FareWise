@@ -11,6 +11,8 @@ import { WhyThisPrice } from "@/components/events/WhyThisPrice";
 import { EventPanel } from "@/components/events/EventPanel";
 import { PriceWatchSetup } from "@/components/pricewatch/PriceWatchSetup";
 import { usePriceIntelStore } from "@/stores/priceIntelStore";
+import { getFlightPolicyStatus } from "@/lib/policy";
+import { statusIcons } from "@/lib/policy";
 
 interface Props {
   result: SearchResult;
@@ -100,6 +102,10 @@ export function SearchResults({
 
   // Identify the recommended flight ID for highlighting in the list
   const recommendedId = result.recommendation?.id;
+
+  // Policy data (informational badges)
+  const policyMap = result.policy_map ?? {};
+  const policySummary = result.policy_summary;
 
   function toggleAirline(name: string) {
     setAirlineFilter((prev) => {
@@ -375,6 +381,12 @@ export function SearchResults({
           )}
         </div>
 
+        {policySummary && policySummary.flagged_count > 0 && (
+          <p className="text-xs text-gray-500 px-1">
+            {statusIcons.warn} {policySummary.compliant_count} of {policySummary.total_options} options are within policy
+          </p>
+        )}
+
         {filteredOptions.length === 0 && selectedDate && dateHasFlights && (
           <p className="text-sm text-muted-foreground py-4 text-center">
             No flights match filters.{" "}
@@ -400,6 +412,7 @@ export function SearchResults({
               priceQuartiles={priceQuartiles}
               preferredDate={result.leg.preferred_date}
               showDate={!selectedDate}
+              policyStatus={getFlightPolicyStatus(policyMap[flight.id])}
             />
           ))}
         </div>

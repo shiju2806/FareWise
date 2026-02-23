@@ -372,6 +372,73 @@ class PolicyEngine:
     """Evaluates all active policies against a trip's selected flights."""
 
     @staticmethod
+    def _flight_proxy(flight_dict: dict):
+        """Wrap a plain dict so checkers can use attribute access."""
+        from types import SimpleNamespace
+        return SimpleNamespace(**flight_dict)
+
+    @classmethod
+    async def evaluate_flight_options(
+        cls, db: AsyncSession, leg, flights: list[dict], user_role: str | None = None
+    ) -> dict[str, list[dict]]:
+        """Run per-leg policy checks against each flight option.
+
+        Returns ``{flight_id: [PolicyCheckResult-as-dict, ...]}``.
+        Only non-pass results are included (pass = compliant = no badge needed).
+        """
+        PER_LEG_RULES = {
+            "max_price", "advance_booking", "cabin_restriction",
+            "preferred_airline", "max_stops", "passenger_cabin",
+        }
+
+        result = await db.execute(
+            select(Policy).where(
+                Policy.is_active == True,
+                Policy.rule_type.in_(PER_LEG_RULES),
+            )
+        )
+        active_policies = result.scalars().all()
+
+        if not active_policies:
+            return {}
+
+        # Filter out policies where user_role is in exception_roles
+        applicable = [
+            p for p in active_policies
+            if not (user_role and p.exception_roles and user_role in p.exception_roles)
+        ]
+        if not applicable:
+            return {}
+
+        result_map: dict[str, list[dict]] = {}
+        for flight_dict in flights:
+            fid = flight_dict.get("id", "")
+            proxy = cls._flight_proxy(flight_dict)
+            checks: list[dict] = []
+            for policy in applicable:
+                checker_cls = CHECKER_MAP.get(policy.rule_type)
+                if not checker_cls:
+                    continue
+                try:
+                    check_result = checker_cls().check(policy, leg, None, proxy)
+                except Exception:
+                    logger.debug("Checker %s failed for flight %s", policy.rule_type, fid, exc_info=True)
+                    continue
+                if check_result and check_result.status != "pass":
+                    checks.append({
+                        "policy_name": check_result.policy_name,
+                        "status": check_result.status,
+                        "details": check_result.details,
+                        "rule_type": check_result.rule_type,
+                        "policy_id": str(check_result.policy_id),
+                        "severity": check_result.severity,
+                    })
+            if checks:
+                result_map[fid] = checks
+
+        return result_map
+
+    @staticmethod
     def _consolidate_per_leg_violations(evaluation: PolicyEvaluation, legs: list[TripLeg]) -> None:
         """Merge per-leg max_price blocks/warnings into single trip-level notes.
 
