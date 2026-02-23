@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { TripLeg } from "@/types/trip";
 import type { FlightOption } from "@/types/flight";
 import type { SearchResult } from "@/types/search";
-import apiClient from "@/api/client";
 import { formatPrice } from "@/lib/currency";
 
 interface Props {
@@ -14,12 +13,12 @@ interface Props {
   onLegClick: (index: number) => void;
 }
 
-/** Per-cabin-class daily policy budgets (one-way, USD) — mirrors backend */
+/** Per-cabin-class daily policy budgets (one-way, CAD) — mirrors backend config.py */
 const POLICY_BUDGET: Record<string, number> = {
-  economy: 600,
-  premium_economy: 1100,
-  business: 2000,
-  first: 4500,
+  economy: 800,
+  premium_economy: 1500,
+  business: 3500,
+  first: 6000,
 };
 
 const fmtPrice = (n: number, currency?: string) => formatPrice(n, currency || "USD");
@@ -46,18 +45,7 @@ interface LegComparison {
   policyBudget: number;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-interface TripAnalysis {
-  summary: string;
-  recommendation: "approve" | "review" | "optimize";
-  key_insight: string;
-  total_assessment: string;
-  justification_prompt: string | null;
-}
-
 export function TripCostBar({ tripId, legs, selectedFlights, results, activeLegIndex, onLegClick }: Props) {
-  const [analysis, setAnalysis] = useState<TripAnalysis | null>(null);
-  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
 
   const comparisons = useMemo<LegComparison[]>(() => {
     return legs.map((leg) => {
@@ -90,47 +78,10 @@ export function TripCostBar({ tripId, legs, selectedFlights, results, activeLegI
   const allSelected = comparisons.every((c) => c.selected !== null);
   const anySelected = comparisons.some((c) => c.selected !== null);
 
-  // Fetch LLM trip analysis when all legs are selected
-  useEffect(() => {
-    if (!allSelected || !tripId) {
-      setAnalysis(null);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingAnalysis(true);
-
-    const selectedMap: Record<string, string> = {};
-    for (const leg of legs) {
-      const flight = selectedFlights[leg.id];
-      if (flight) selectedMap[leg.id] = flight.id;
-    }
-
-    apiClient
-      .post(`/trips/${tripId}/analyze-trip`, { selected_flights: selectedMap })
-      .then((res) => {
-        if (!cancelled) {
-          setAnalysis(res.data?.analysis || null);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoadingAnalysis(false);
-      });
-
-    return () => { cancelled = true; };
-  }, [allSelected, tripId, legs, selectedFlights]);
-
   if (!anySelected && legs.length <= 1) return null;
 
   const savingsVsCheapest = totalSelected - totalCheapest;
   const policyDiff = totalSelected - totalPolicy;
-
-  const recommendationColor = analysis?.recommendation === "approve"
-    ? "text-emerald-700 bg-emerald-50"
-    : analysis?.recommendation === "optimize"
-    ? "text-red-700 bg-red-50"
-    : "text-amber-700 bg-amber-50";
 
   return (
     <div className="rounded-lg border border-border bg-card shadow-sm overflow-hidden">
@@ -234,13 +185,6 @@ export function TripCostBar({ tripId, legs, selectedFlights, results, activeLegI
               </span>
             )}
 
-            {/* LLM recommendation badge */}
-            {analysis && (
-              <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-md ${recommendationColor}`}>
-                {analysis.recommendation === "approve" ? "Approved" :
-                 analysis.recommendation === "optimize" ? "Optimize" : "Review"}
-              </span>
-            )}
           </div>
 
           {allSelected && (
@@ -251,25 +195,6 @@ export function TripCostBar({ tripId, legs, selectedFlights, results, activeLegI
         </div>
       )}
 
-      {/* LLM insight banner */}
-      {analysis && analysis.key_insight && (
-        <div className={`border-t px-3 py-2 text-[11px] ${
-          analysis.recommendation === "approve"
-            ? "border-emerald-200 bg-emerald-50/50 text-emerald-800"
-            : analysis.recommendation === "optimize"
-            ? "border-red-200 bg-red-50/50 text-red-800"
-            : "border-amber-200 bg-amber-50/50 text-amber-800"
-        }`}>
-          {analysis.key_insight}
-        </div>
-      )}
-
-      {loadingAnalysis && (
-        <div className="border-t border-border px-3 py-1.5 flex items-center gap-2">
-          <div className="h-3 w-3 animate-spin rounded-full border border-primary border-t-transparent" />
-          <span className="text-[10px] text-muted-foreground">Analyzing trip cost...</span>
-        </div>
-      )}
     </div>
   );
 }

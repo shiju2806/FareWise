@@ -56,6 +56,7 @@ class AdvisorOutput:
     recommendation: str = "review"  # "approve" | "review" | "optimize"
     justification_prompt: str | None = None
     justification_required: bool = False
+    manager_narrative: str = ""
 
     # Trip totals for frontend
     trip_totals: dict = field(default_factory=dict)
@@ -79,6 +80,7 @@ class AdvisorOutput:
             "trip_summary": self.trip_summary,
             "key_insight": self.key_insight,
             "recommendation": self.recommendation,
+            "manager_narrative": self.manager_narrative,
             "source": self.source,
         }
 
@@ -180,6 +182,7 @@ class TravelAdvisor:
         # Truncate LLM narrative fields to prevent UI overflow
         trip_summary = _truncate(parsed.get("trip_summary", ""), 300)
         key_insight = _truncate(parsed.get("key_insight", ""), 150)
+        manager_narrative = _truncate(parsed.get("manager_narrative", ""), 500)
         justification_prompt = parsed.get("justification_prompt")
         if justification_prompt and justification_required:
             justification_prompt = _truncate(justification_prompt, 300)
@@ -193,6 +196,7 @@ class TravelAdvisor:
             recommendation=self._validate_recommendation(parsed.get("recommendation", "review")),
             justification_prompt=justification_prompt,
             justification_required=justification_required,
+            manager_narrative=manager_narrative,
             trip_totals=trip_totals,
             source="llm",
         )
@@ -267,7 +271,8 @@ Respond ONLY with valid JSON:
   "trip_summary": "...",
   "key_insight": "...",
   "recommendation": "approve|review|optimize",
-  "justification_prompt": "..." or null
+  "justification_prompt": "..." or null,
+  "manager_narrative": "3-4 sentence factual summary for manager approval. Include: total cost and where it falls between lowest/highest fares, dollar difference from lowest combo, notable choices (preferred airline, nonstop, schedule), policy compliance status. Be neutral — state numbers and facts only, no praise or criticism."
 }}"""
 
     def _build_user_prompt(
@@ -462,6 +467,7 @@ Respond ONLY with valid JSON:
         trip_summary = self._generate_trip_summary(trip_totals, context, cost_drivers)
         key_insight = self._generate_key_insight(resolved, trip_totals, cost_drivers)
         recommendation = self._compute_recommendation(trip_totals)
+        manager_narrative = self._generate_manager_narrative(trip_totals, context)
 
         justification_prompt = None
         if justification_required:
@@ -474,6 +480,7 @@ Respond ONLY with valid JSON:
             recommendation=recommendation,
             justification_prompt=justification_prompt,
             justification_required=justification_required,
+            manager_narrative=manager_narrative,
             trip_totals=trip_totals,
             source="fallback",
         )
@@ -643,6 +650,61 @@ Respond ONLY with valid JSON:
             f"flight selections — for example, airline preference, schedule requirements, "
             f"or meeting constraints?"
         )
+
+    def _generate_manager_narrative(
+        self,
+        trip_totals: dict,
+        context: TripContext,
+    ) -> str:
+        """Generate a 3-4 sentence factual narrative for manager approval (fallback)."""
+        selected = trip_totals["selected"]
+        cheapest = trip_totals["cheapest"]
+        savings = trip_totals["savings_amount"]
+        pct = trip_totals["savings_percent"]
+        num_legs = len(context.legs)
+
+        traveler = context.traveler
+        route_parts = [f"{leg.origin_airport} → {leg.destination_airport}" for leg in context.legs]
+        route_str = " / ".join(route_parts)
+
+        # Sentence 1: total cost positioning
+        parts = [
+            f"{traveler.name} selected a {num_legs}-leg itinerary ({route_str}) "
+            f"totaling ${selected:.0f} CAD."
+        ]
+
+        # Sentence 2: cheapest comparison
+        if savings > 0:
+            parts.append(
+                f"This is ${savings:.0f} ({pct:.0f}%) above the lowest-fare combination "
+                f"of ${cheapest:.0f} CAD."
+            )
+        else:
+            parts.append(
+                "The selected flights match or beat the lowest available fares."
+            )
+
+        # Sentence 3: notable choices (airlines, nonstop)
+        airlines = set()
+        nonstop_count = 0
+        for leg in context.legs:
+            if leg.selected_flight:
+                airlines.add(leg.selected_flight.airline_name)
+                if leg.selected_flight.stops == 0:
+                    nonstop_count += 1
+        if airlines:
+            airline_str = ", ".join(sorted(airlines))
+            nonstop_str = f" ({nonstop_count} nonstop)" if nonstop_count > 0 else ""
+            parts.append(f"Selected carrier(s): {airline_str}{nonstop_str}.")
+
+        # Sentence 4: policy
+        policy_status = trip_totals.get("policy_status", "")
+        if "over" in str(policy_status):
+            parts.append("Trip exceeds policy budget.")
+        elif "under" in str(policy_status) or "at" in str(policy_status):
+            parts.append("All selections are within policy.")
+
+        return " ".join(parts)
 
     # ---- Shared helpers ----
 

@@ -64,6 +64,7 @@ class AudienceAdapter:
             "trip_summary": output.trip_summary,
             "key_insight": output.key_insight,
             "recommendation": output.recommendation,
+            "manager_narrative": output.manager_narrative,
             "source": output.source,
             "cabin_downgrade_suggestion": self._compute_cabin_downgrade_suggestion(
                 output, context,
@@ -99,7 +100,7 @@ class AudienceAdapter:
             ],
             "trip_window_snapshot": self._format_trip_window(output),
             "per_leg_summary": self._format_per_leg_summary(output, context),
-            "narrative": output.trip_summary,
+            "narrative": output.manager_narrative or output.trip_summary,
             "cost_drivers": cost_drivers.to_dict() if cost_drivers else None,
         }
 

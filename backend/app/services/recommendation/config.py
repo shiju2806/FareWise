@@ -103,7 +103,7 @@ class LLMParams:
     """Parameters for the advisor LLM call."""
     model_primary: str = "gpt-4o-mini"
     model_fallback: str = "claude-sonnet-4-5-20250929"
-    max_tokens: int = 800
+    max_tokens: int = 1000
     temperature: float = 0.1
     json_mode: bool = True
 

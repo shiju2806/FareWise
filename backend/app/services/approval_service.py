@@ -21,7 +21,6 @@ from app.data.currency import get_currency_for_airport
 from app.models.search_log import FlightOption, SearchLog
 from app.models.trip import Trip, TripLeg
 from app.models.user import User
-from app.services.narrative_generator import narrative_generator
 from app.services.notification_service import notification_service
 from app.services.policy_engine import policy_engine
 
@@ -156,20 +155,29 @@ class ApprovalService:
                             f"{ev['title']} in {leg.destination_city} ({ev.get('impact_level', 'unknown')} impact)"
                         )
 
-        # Generate narrative
+        # Prefer LLM narrative from analysis snapshot (produced at confirm time)
         traveler_name = f"{user.first_name} {user.last_name}"
-        narrative = await narrative_generator.generate(
-            traveler_name=traveler_name,
-            trip_title=trip.title or "Untitled Trip",
-            selected_total=selected_total,
-            cheapest_total=cheapest_total,
-            most_expensive_total=most_expensive_total,
-            policy_status=evaluation.overall_status,
-            per_leg_details=per_leg_details,
-            hotel_total=hotel_selected_total if has_hotel else None,
-            events_context=events_context or None,
-            currency=primary_currency,
-        )
+        narrative = ""
+        if trip.analysis_snapshot:
+            narrative = (
+                trip.analysis_snapshot.get("manager_narrative")
+                or trip.analysis_snapshot.get("trip_summary", "")
+            )
+
+        # Fallback: rule-based if snapshot doesn't have a narrative
+        if not narrative:
+            narrative = self._build_narrative(
+                traveler_name=traveler_name,
+                trip_title=trip.title or "Untitled Trip",
+                selected_total=selected_total,
+                cheapest_total=cheapest_total,
+                most_expensive_total=most_expensive_total,
+                policy_status=evaluation.overall_status,
+                per_leg_details=per_leg_details,
+                hotel_total=hotel_selected_total if has_hotel else None,
+                events_context=events_context or None,
+                currency=primary_currency,
+            )
 
         # Build slider positions map
         slider_positions = {
@@ -507,6 +515,70 @@ class ApprovalService:
             "comment_id": str(history.id),
             "notification_sent": True,
         }
+
+    def _build_narrative(
+        self,
+        traveler_name: str,
+        trip_title: str,
+        selected_total: Decimal,
+        cheapest_total: Decimal,
+        most_expensive_total: Decimal,
+        policy_status: str,
+        per_leg_details: list[dict],
+        hotel_total: Decimal | None = None,
+        events_context: list[str] | None = None,
+        currency: str = "USD",
+    ) -> str:
+        """Rule-based narrative — replaces LLM narrative_generator.generate().
+
+        Produces a factual 3-4 sentence summary matching the same tone the LLM
+        was instructed to use: neutral, dollar amounts, no judgment.
+        """
+        savings_vs_expensive = most_expensive_total - selected_total
+        premium_vs_cheapest = selected_total - cheapest_total
+
+        # Sentence 1: total cost and positioning
+        parts = [
+            f"{traveler_name} selected a {trip_title} itinerary totaling "
+            f"{currency} {selected_total:,.0f}, which is "
+            f"{currency} {savings_vs_expensive:,.0f} below the most expensive "
+            f"available option ({currency} {most_expensive_total:,.0f})."
+        ]
+
+        # Sentence 2: comparison to cheapest
+        if premium_vs_cheapest > 0:
+            parts.append(
+                f"The selected flights are {currency} {premium_vs_cheapest:,.0f} "
+                f"above the lowest-fare combination of {currency} {cheapest_total:,.0f}."
+            )
+        else:
+            parts.append(
+                f"The selected flights match or beat the lowest available fares."
+            )
+
+        # Sentence 3: per-leg highlights (routes with largest premium)
+        notable = sorted(
+            [d for d in per_leg_details if d["selected_price"] > d["cheapest_price"] + 20],
+            key=lambda d: d["selected_price"] - d["cheapest_price"],
+            reverse=True,
+        )
+        if notable:
+            top = notable[0]
+            diff = top["selected_price"] - top["cheapest_price"]
+            parts.append(
+                f"The largest fare difference is on {top['route']} "
+                f"({currency} {diff:,.0f} above cheapest)."
+            )
+
+        # Sentence 4: policy status
+        status_labels = {
+            "compliant": "All selections are within policy.",
+            "warning": "Some selections triggered policy warnings.",
+            "violation": "One or more selections violate company policy.",
+        }
+        parts.append(status_labels.get(policy_status, f"Policy status: {policy_status}."))
+
+        return " ".join(parts)
 
     async def _find_approver(self, db: AsyncSession, traveler: User) -> User | None:
         """Find the appropriate approver for a traveler."""

@@ -1,5 +1,6 @@
 """Trip Analysis router — trip-level cost analysis and LLM insights."""
 
+import hashlib
 import logging
 import uuid
 from datetime import date, datetime
@@ -97,6 +98,12 @@ async def _get_leg_flights(
     ]
 
 
+def _selection_hash(selected_flights: dict[str, str]) -> str:
+    """Deterministic hash of selected flight IDs for cache keying."""
+    pairs = sorted(selected_flights.items())
+    return hashlib.md5(str(pairs).encode()).hexdigest()
+
+
 @router.post("/{trip_id}/analyze-trip")
 async def analyze_trip(
     trip_id: uuid.UUID,
@@ -104,18 +111,12 @@ async def analyze_trip(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Analyze entire trip cost with LLM-powered insights.
+    """Structured cost summary for the trip (no LLM).
 
-    Compares selected flights across all legs against:
-    - Cheapest alternatives (different airlines, with stops, different dates)
-    - Company policy budgets per cabin class
-    - Routing alternatives
-
-    Returns LLM-generated trip-level recommendation and justification prompt.
+    Returns per-leg breakdown with cheapest alternatives and policy budgets.
     """
     trip = await _get_user_trip(trip_id, db, user)
 
-    # Sort legs by sequence
     legs_sorted = sorted(trip.legs, key=lambda l: l.sequence)
 
     legs_info = []
@@ -123,20 +124,15 @@ async def analyze_trip(
     all_options_per_leg = []
 
     for leg in legs_sorted:
-        # Get all flight options for this leg
         options = await _get_leg_flights(leg, db)
         all_options_per_leg.append(options)
 
         legs_info.append({
             "origin_airport": leg.origin_airport,
             "destination_airport": leg.destination_airport,
-            "origin_city": leg.origin_city,
-            "destination_city": leg.destination_city,
-            "preferred_date": leg.preferred_date.isoformat() if leg.preferred_date else "",
             "cabin_class": leg.cabin_class or "economy",
         })
 
-        # Find the selected flight
         flight_id = req.selected_flights.get(str(leg.id))
         if flight_id:
             matching = [o for o in options if o["id"] == flight_id]
@@ -144,24 +140,13 @@ async def analyze_trip(
         else:
             selected_flights.append(None)
 
-    # Get LLM analysis
-    analysis = await trip_intelligence.analyze_trip(
-        legs=legs_info,
-        selected_flights=selected_flights,
-        all_options_per_leg=all_options_per_leg,
-    )
-
-    # Also include cost summary (non-LLM structured data)
     cost_summary = trip_intelligence.get_cost_summary(
         legs=legs_info,
         selected_flights=selected_flights,
         all_options_per_leg=all_options_per_leg,
     )
 
-    return {
-        "analysis": analysis,
-        "cost_summary": cost_summary,
-    }
+    return {"cost_summary": cost_summary}
 
 
 @router.get("/{trip_id}/cost-summary")
@@ -211,9 +196,20 @@ async def analyze_selections(
 
     Runs the full pipeline: context assembly → alternative generation →
     cost driver analysis → trade-off scoring → LLM reasoning → audience formatting.
-    Returns ReviewAnalysis-compatible output for the traveler UI.
+
+    Results are cached by selection hash on the trip's analysis_snapshot column.
+    Identical re-confirms return the cached result instantly.
     """
     logger.info(f"analyze-selections called: trip_id={trip_id}, selected_flights={req.selected_flights}")
+
+    # --- Hash-based cache: skip pipeline if selections haven't changed ---
+    trip = await _get_user_trip(trip_id, db, user)
+    sel_hash = _selection_hash(req.selected_flights)
+
+    if trip.analysis_snapshot and trip.analysis_snapshot.get("selection_hash") == sel_hash:
+        logger.info(f"Returning cached analysis for trip {trip_id} (hash={sel_hash[:8]})")
+        return trip.analysis_snapshot
+
     from app.services.recommendation.context_assembler import context_assembler
     from app.services.recommendation.flight_alternatives import flight_alternatives_generator
     from app.services.recommendation.cost_driver_analyzer import cost_driver_analyzer
@@ -243,7 +239,14 @@ async def analyze_selections(
         output = await travel_advisor.advise(resolved, context, cost_drivers)
 
         # 7. Format for traveler view
-        return audience_adapter.for_traveler(output, context)
+        result = audience_adapter.for_traveler(output, context)
+
+        # Cache result with selection hash for instant retrieval
+        result["selection_hash"] = sel_hash
+        trip.analysis_snapshot = result
+        await db.commit()
+
+        return result
     except Exception as e:
         logger.exception(f"analyze-selections FAILED for trip {trip_id}: {e}")
         raise
@@ -356,13 +359,15 @@ async def save_analysis_snapshot(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Persist the analysis snapshot (alternatives shown to traveler) on the trip."""
+    """Merge analysis snapshot fields into the trip (preserves hash-cached data)."""
     trip = await _get_user_trip(trip_id, db, user)
-    trip.analysis_snapshot = {
+    existing = trip.analysis_snapshot or {}
+    existing.update({
         "legs": req.legs,
         "trip_totals": req.trip_totals,
         "trip_window_alternatives": req.trip_window_alternatives,
         "saved_at": datetime.utcnow().isoformat(),
-    }
+    })
+    trip.analysis_snapshot = existing
     await db.commit()
     return {"ok": True}
