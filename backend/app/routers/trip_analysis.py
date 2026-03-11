@@ -269,7 +269,7 @@ async def cheaper_months(
     Queries DB1B data for the selected airline across adjacent months
     and returns suggestions if a significantly cheaper month exists.
     """
-    from app.services.db1b_client import db1b_client
+    from app.services.flight_provider import flight_provider
 
     trip = await _get_user_trip(trip_id, db, user)
     legs_sorted = sorted(trip.legs, key=lambda l: l.sequence)
@@ -303,7 +303,7 @@ async def cheaper_months(
     # Fetch matrix data for each month (per-airline per-date)
     import asyncio
     month_tasks = [
-        db1b_client.search_month_matrix(origin, destination, y, m, cabin)
+        flight_provider.search_month_matrix(origin, destination, y, m, cabin)
         for y, m in months_to_check
     ]
     month_results = await asyncio.gather(*month_tasks, return_exceptions=True)

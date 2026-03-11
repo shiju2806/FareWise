@@ -24,6 +24,7 @@ class TripLegResponse(BaseModel):
     flexibility_days: int
     cabin_class: str
     passengers: int
+    companion_preferred_date: date | None = None
 
     model_config = {"from_attributes": True}
 
@@ -44,6 +45,8 @@ class TripResponse(BaseModel):
     parsed_input: dict | None
     total_estimated_cost: float | None
     currency: str
+    companions: int = 0
+    companion_cabin_class: str | None = None
     legs: list[TripLegResponse]
     created_at: datetime
     updated_at: datetime
@@ -59,3 +62,4 @@ class PatchLegRequest(BaseModel):
     cabin_class: str | None = None
     passengers: int | None = None
     flexibility_days: int | None = None
+    companion_preferred_date: date | None = None

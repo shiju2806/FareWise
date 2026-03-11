@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import apiClient from "@/api/client";
-import type { TripLeg } from "@/types/trip";
+import type { TripLeg, CompanionPricing, CabinBudgetResult } from "@/types/trip";
+import type { SearchResult } from "@/types/search";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -13,6 +14,7 @@ interface Props {
   activeLeg: TripLeg;
   legsCount: number;
   onTripUpdated: () => void;
+  searchResults?: Record<string, SearchResult>;
 }
 
 const QUICK_ACTIONS = [
@@ -20,6 +22,7 @@ const QUICK_ACTIONS = [
   { label: "Add return flight", icon: "↩" },
   { label: "Change to business class", icon: "✈" },
   { label: "Search ±3 days flexibility", icon: "📅" },
+  { label: "My family is joining this trip", icon: "👨‍👩‍👧‍👦" },
 ];
 
 const STORAGE_PREFIX = "farewise-assistant-";
@@ -38,12 +41,14 @@ function saveChat(tripId: string, messages: ChatMessage[], history: { role: stri
   } catch { /* sessionStorage full */ }
 }
 
-export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated }: Props) {
+export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated, searchResults }: Props) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadChat(tripId).messages);
   const [conversationHistory, setConversationHistory] = useState<{ role: string; content: string }[]>(() => loadChat(tripId).history);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [companionPricing, setCompanionPricing] = useState<CompanionPricing | null>(null);
+  const [cabinBudget, setCabinBudget] = useState<CabinBudgetResult | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Persist conversation to sessionStorage on change
@@ -59,7 +64,11 @@ export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated }:
 
   // Build trip context for the chat
   function getTripContext(): string {
-    return `Current trip: ${activeLeg.origin_city} (${activeLeg.origin_airport}) → ${activeLeg.destination_city} (${activeLeg.destination_airport}) on ${activeLeg.preferred_date}, ${activeLeg.cabin_class}, ${activeLeg.passengers} pax. ${legsCount} leg(s) total. Trip ID: ${tripId}`;
+    let ctx = `Current trip: ${activeLeg.origin_city} (${activeLeg.origin_airport}) → ${activeLeg.destination_city} (${activeLeg.destination_airport}) on ${activeLeg.preferred_date}, ${activeLeg.cabin_class}, ${activeLeg.passengers} pax. ${legsCount} leg(s) total. Trip ID: ${tripId}`;
+    if (activeLeg.companion_preferred_date && activeLeg.companion_preferred_date !== activeLeg.preferred_date) {
+      ctx += `. Companions fly on ${activeLeg.companion_preferred_date} (different from employee)`;
+    }
+    return ctx;
   }
 
   async function sendMessage(text: string) {
@@ -80,11 +89,84 @@ export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated }:
       const data = res.data as {
         reply: string;
         conversation_history: { role: string; content: string }[];
+        partial_trip?: {
+          companions?: number;
+          companion_cabin_class?: string;
+        } | null;
       };
 
       const assistantMsg: ChatMessage = { role: "assistant", content: data.reply };
       setMessages((prev) => [...prev, assistantMsg]);
       setConversationHistory(data.conversation_history);
+
+      // If companion info detected, fetch cabin budget recommendation
+      const companions = data.partial_trip?.companions;
+      if (companions && companions > 0) {
+        // Collect anchor prices from search results
+        const anchorPrices: Record<string, number> = {};
+        if (searchResults) {
+          for (const [legId, sr] of Object.entries(searchResults)) {
+            if (sr.anchor) {
+              anchorPrices[legId] = sr.anchor.price;
+            }
+          }
+        }
+
+        // If we have anchors, use the cabin budget engine
+        if (Object.keys(anchorPrices).length > 0) {
+          try {
+            const totalTravelers = 1 + companions; // employee + companions
+            const budgetRes = await apiClient.post(`/trips/${tripId}/cabin-budget`, {
+              total_travelers: totalTravelers,
+              anchor_prices: anchorPrices,
+            });
+            const budgetResult = budgetRes.data as CabinBudgetResult;
+            setCabinBudget(budgetResult);
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: budgetResult.recommendation_reason },
+            ]);
+          } catch {
+            // Fall back to companion pricing
+            try {
+              const cabin = data.partial_trip?.companion_cabin_class || "economy";
+              const pricingRes = await apiClient.post(`/trips/${tripId}/companion-pricing`, {
+                companions,
+                companion_cabin_class: cabin,
+              });
+              const pricing = pricingRes.data as CompanionPricing;
+              setCompanionPricing(pricing);
+              if (pricing.summary) {
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "assistant", content: pricing.summary },
+                ]);
+              }
+            } catch {
+              // Both failed — don't break the chat
+            }
+          }
+        } else {
+          // No anchors — use existing companion pricing
+          try {
+            const cabin = data.partial_trip?.companion_cabin_class || "economy";
+            const pricingRes = await apiClient.post(`/trips/${tripId}/companion-pricing`, {
+              companions,
+              companion_cabin_class: cabin,
+            });
+            const pricing = pricingRes.data as CompanionPricing;
+            setCompanionPricing(pricing);
+            if (pricing.summary) {
+              setMessages((prev) => [
+                ...prev,
+                { role: "assistant", content: pricing.summary },
+              ]);
+            }
+          } catch {
+            // Companion pricing failed — don't break the chat
+          }
+        }
+      }
 
       // Check if the response suggests a trip modification was needed
       // Apply quick actions directly
@@ -231,6 +313,88 @@ export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated }:
                 <span className="w-1.5 h-1.5 bg-muted-foreground/50 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
               </div>
             </div>
+          </div>
+        )}
+
+        {cabinBudget && cabinBudget.cabin_options.length > 0 && (
+          <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg p-2.5 text-xs space-y-2">
+            <div className="font-semibold text-emerald-900 dark:text-emerald-100">
+              Cabin Budget Recommendation
+            </div>
+            <div className="space-y-1 text-emerald-800 dark:text-emerald-200">
+              <div className="flex justify-between">
+                <span>Budget (anchor total)</span>
+                <span className="font-medium">${cabinBudget.budget_envelope.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Travelers</span>
+                <span className="font-medium">{cabinBudget.total_travelers}</span>
+              </div>
+              {cabinBudget.cabin_options.map((opt) => (
+                <div
+                  key={opt.cabin_class}
+                  className={`flex justify-between items-center px-1.5 py-0.5 rounded ${
+                    opt.cabin_class === cabinBudget.recommended_cabin
+                      ? "bg-emerald-100 dark:bg-emerald-900/50 font-semibold"
+                      : ""
+                  }`}
+                >
+                  <span className="capitalize flex items-center gap-1">
+                    {opt.cabin_class.replace("_", " ")}
+                    {opt.cabin_class === cabinBudget.recommended_cabin && (
+                      <span className="text-[9px] bg-emerald-200 dark:bg-emerald-800 text-emerald-800 dark:text-emerald-200 px-1 rounded">
+                        recommended
+                      </span>
+                    )}
+                  </span>
+                  <span className={opt.fits_budget ? "text-emerald-700 dark:text-emerald-300" : "text-red-600 dark:text-red-400"}>
+                    ${opt.total_all_travelers.toLocaleString()}
+                    {!opt.fits_budget && " (over)"}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {cabinBudget.economy_savings > 0 && (
+              <div className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                Economy saves ${cabinBudget.economy_savings.toLocaleString()} vs your business class budget
+              </div>
+            )}
+          </div>
+        )}
+
+        {companionPricing && companionPricing.companion_options.length > 0 && !cabinBudget && (
+          <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-2.5 text-xs space-y-2">
+            <div className="font-semibold text-blue-900 dark:text-blue-100">
+              Family Travel Pricing
+            </div>
+            <div className="space-y-1 text-blue-800 dark:text-blue-200">
+              <div className="flex justify-between">
+                <span>Your {activeLeg.cabin_class}</span>
+                <span className="font-medium">${companionPricing.employee_total.toLocaleString()}</span>
+              </div>
+              {companionPricing.companion_options.map((opt) => (
+                <div key={`${opt.leg_id}-${opt.cabin_class}`} className="flex justify-between">
+                  <span>{opt.route} ({opt.cabin_class})</span>
+                  <span>${opt.per_person.toLocaleString()}/person</span>
+                </div>
+              ))}
+              <div className="border-t border-blue-200 dark:border-blue-700 pt-1 flex justify-between font-semibold">
+                <span>Combined ({companionPricing.companions_count + 1} travelers)</span>
+                <span>
+                  ${companionPricing.combined_min.toLocaleString()}
+                  {companionPricing.combined_max !== companionPricing.combined_min &&
+                    `–$${companionPricing.combined_max.toLocaleString()}`}
+                </span>
+              </div>
+            </div>
+            {companionPricing.nearby_date_options.length > 0 && (
+              <div className="text-[10px] text-blue-600 dark:text-blue-400">
+                Cheaper dates available — shift by{" "}
+                {Math.abs(companionPricing.nearby_date_options[0].date_diff_days)} day(s) saves $
+                {(companionPricing.nearby_date_options[0].savings_vs_selected *
+                  companionPricing.companions_count).toLocaleString()}
+              </div>
+            )}
           </div>
         )}
       </div>

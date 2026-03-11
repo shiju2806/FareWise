@@ -28,6 +28,7 @@ from app.services.recommendation.config import (
     CORPORATE_DAY_RULES,
     recommendation_config,
 )
+from app.services.recommendation.airline_tiers import get_tier, is_tier_compatible
 from app.services.recommendation.context_assembler import TripContext
 from app.services.recommendation.flight_alternatives import (
     Alternative,
@@ -253,8 +254,12 @@ class TradeOffResolver:
         # Sort by score descending (secondary: lower price breaks ties)
         scored.sort(key=lambda sa: (-sa.score.total, sa.alternative.price))
 
-        # Curate: select top N with diversity
-        curated = self._curate_leg_alternatives(scored)
+        # Curate: select top N with diversity (with tier filtering for premium cabins)
+        leg_ctx = next((lc for lc in context.legs if lc.leg_id == leg.leg_id), None)
+        cabin = leg_ctx.cabin_class if leg_ctx else "economy"
+        sel_code = leg_ctx.selected_flight.airline_code if leg_ctx and leg_ctx.selected_flight else ""
+        sel_stops = leg_ctx.selected_flight.stops if leg_ctx and leg_ctx.selected_flight else 0
+        curated = self._curate_leg_alternatives(scored, cabin, sel_code, sel_stops)
 
         # Assign ranks
         for i, sa in enumerate(curated):
@@ -299,7 +304,11 @@ class TradeOffResolver:
         pref_score = self._compute_preference(alt.airline_code, pref)
 
         # --- Disruption dimension ---
-        disruption_map = {"low": 1.0, "medium": 0.6, "high": 0.2}
+        disruption_map = {
+            "low": weights.disruption_low,
+            "medium": weights.disruption_medium,
+            "high": weights.disruption_high,
+        }
         disruption_score = disruption_map.get(alt.disruption_level, 0.5)
 
         # Red-eye penalty: reduce disruption score for late-night departures
@@ -309,6 +318,17 @@ class TradeOffResolver:
                 disruption_score *= cfg.red_eye.penalty_business
             else:
                 disruption_score *= cfg.red_eye.penalty_economy
+
+        # Friday evening / Saturday boost — corporate-friendly departure days
+        try:
+            from datetime import datetime as _dt
+            dep_dt = _dt.fromisoformat(alt.departure_time[:19])
+            if dep_dt.weekday() == 4 and dep_dt.hour >= 17:  # Fri after 5pm
+                disruption_score *= 1.3
+            elif dep_dt.weekday() == 5:  # Saturday
+                disruption_score *= 1.2
+        except (ValueError, TypeError, IndexError):
+            pass
 
         # --- Sustainability dimension ---
         sustainability_score = _stops_to_sustainability(alt.stops)
@@ -345,90 +365,69 @@ class TradeOffResolver:
     def _curate_leg_alternatives(
         self,
         scored: list[ScoredAlternative],
+        cabin_class: str = "economy",
+        selected_airline: str = "",
+        selected_stops: int = 0,
     ) -> list[ScoredAlternative]:
-        """Select top alternatives for a leg with diversity guarantees.
+        """Build expanded pool for LLM veto — top N by score with minimal guarantees.
 
-        Ensures:
-        - At least one per type (same_date, nearby_airport, date_shift, cabin) if available
-        - No more than total_max alternatives
-        - User's airline alternatives always included
+        The LLM will do the intelligent curation (alliance awareness, diversity,
+        corporate day preference). We just build a pool of 8-10 ranked candidates.
         """
-        if len(scored) <= limits.total_max:
-            return scored
+        # Tier-based hard filter for premium cabins
+        if cabin_class in cfg.tier_filter.premium_cabins:
+            filtered, budget_count = [], 0
+            for sa in scored:
+                allowed, is_budget = is_tier_compatible(
+                    sa.alternative.airline_code, selected_airline, cabin_class,
+                    sa.alternative.savings_percent, sa.alternative.stops, selected_stops,
+                )
+                if not allowed:
+                    logger.info(
+                        f"Tier filter: dropped {sa.alternative.airline_name} "
+                        f"({get_tier(sa.alternative.airline_code)}) — "
+                        f"{cabin_class} traveler on {selected_airline}"
+                    )
+                    continue
+                if is_budget:
+                    if budget_count >= cfg.tier_filter.budget_exception_max_per_leg:
+                        continue
+                    budget_count += 1
+                filtered.append(sa)
+            scored = filtered
+
+        pool_max = limits.llm_pool_max
 
         curated: list[ScoredAlternative] = []
-        used: set[str] = set()  # flight_option_id
+        used: set[str] = set()
 
-        # Guarantee: one per unique alt_type (highest scored of each)
+        # Guarantee: one per unique alt_type (highest scored)
         types_seen: set[str] = set()
         for sa in scored:
-            if len(curated) >= limits.total_max:
+            if len(curated) >= pool_max:
                 break
-            alt_type = sa.alternative.alt_type
-            if alt_type not in types_seen:
+            if sa.alternative.alt_type not in types_seen:
                 curated.append(sa)
                 used.add(sa.alternative.flight_option_id)
-                types_seen.add(alt_type)
+                types_seen.add(sa.alternative.alt_type)
 
-        # Guarantee: user's airline
+        # Guarantee: at least 1 user's airline (if not already included)
         for sa in scored:
-            if len(curated) >= limits.total_max:
+            if len(curated) >= pool_max:
                 break
             if sa.alternative.is_user_airline and sa.alternative.flight_option_id not in used:
                 curated.append(sa)
                 used.add(sa.alternative.flight_option_id)
                 break
 
-        # Guarantee: same-alliance partner (if available and not already included)
-        if cfg.curation.same_alliance_slots > 0:
-            from app.services.recommendation.airline_tiers import same_alliance as _same_alliance
-
-            # Use user's airline codes as the reference for alliance matching
-            user_codes = {
-                sa.alternative.airline_code
-                for sa in curated
-                if sa.alternative.is_user_airline
-            }
-            if not user_codes and curated:
-                user_codes = {curated[0].alternative.airline_code}
-
-            alliance_count = 0
-            for sa in scored:
-                if alliance_count >= cfg.curation.same_alliance_slots:
-                    break
-                if len(curated) >= limits.total_max:
-                    break
-                if sa.alternative.flight_option_id in used:
-                    continue
-                # Skip if this airline is already the user's airline
-                if sa.alternative.airline_code in user_codes:
-                    continue
-                for ref_code in user_codes:
-                    if _same_alliance(sa.alternative.airline_code, ref_code):
-                        curated.append(sa)
-                        used.add(sa.alternative.flight_option_id)
-                        alliance_count += 1
-                        break
-
-        # Fill remaining slots — prefer diverse airlines first
-        seen_airlines = {sa.alternative.airline_code for sa in curated}
+        # Fill remaining by score
         for sa in scored:
-            if len(curated) >= limits.total_max:
-                break
-            if sa.alternative.flight_option_id not in used and sa.alternative.airline_code not in seen_airlines:
-                curated.append(sa)
-                used.add(sa.alternative.flight_option_id)
-                seen_airlines.add(sa.alternative.airline_code)
-
-        # Then fill any remaining slots by score regardless of airline
-        for sa in scored:
-            if len(curated) >= limits.total_max:
+            if len(curated) >= pool_max:
                 break
             if sa.alternative.flight_option_id not in used:
                 curated.append(sa)
                 used.add(sa.alternative.flight_option_id)
 
-        # Re-sort by score (secondary: lower price breaks ties)
         curated.sort(key=lambda sa: (-sa.score.total, sa.alternative.price))
         return curated
 
@@ -462,7 +461,7 @@ class TradeOffResolver:
                 pref_out = date.fromisoformat(preferred_outbound)
                 for sp in scored:
                     days_shift = abs((date.fromisoformat(sp.proposal.outbound_date) - pref_out).days)
-                    if days_shift <= 21:
+                    if days_shift <= cfg.search_ranges.layer_split_days:
                         tw_scored.append(sp)
                     else:
                         dm_scored.append(sp)
@@ -473,9 +472,13 @@ class TradeOffResolver:
         tw_scored.sort(key=lambda sp: sp.score.total, reverse=True)
         dm_scored.sort(key=lambda sp: sp.score.total, reverse=True)
 
-        # Curate each category
-        tw_curated = self._curate_proposals(tw_scored, limits.layer2_max, "trip_window")
-        dm_curated = self._curate_proposals(dm_scored, limits.layer3_max, "different_month")
+        # Curate each category (with tier filtering for premium cabins)
+        leg_ctx = context.legs[0] if context.legs else None
+        cabin = leg_ctx.cabin_class if leg_ctx else "economy"
+        sel_code = leg_ctx.selected_flight.airline_code if leg_ctx and leg_ctx.selected_flight else ""
+        sel_stops = leg_ctx.selected_flight.stops if leg_ctx and leg_ctx.selected_flight else 0
+        tw_curated = self._curate_proposals(tw_scored, limits.layer2_max, "trip_window", cabin, sel_code, sel_stops)
+        dm_curated = self._curate_proposals(dm_scored, limits.layer3_max, "different_month", cabin, sel_code, sel_stops)
 
         return tw_curated, dm_curated
 
@@ -511,7 +514,11 @@ class TradeOffResolver:
         pref_score = (out_pref + ret_pref) / 2.0
 
         # --- Disruption ---
-        disruption_map = {"low": 1.0, "medium": 0.6, "high": 0.2}
+        disruption_map = {
+            "low": weights.disruption_low,
+            "medium": weights.disruption_medium,
+            "high": weights.disruption_high,
+        }
         disruption_score = disruption_map.get(proposal.disruption_level, 0.5)
 
         # Red-eye penalty for trip-window proposals (check both legs)
@@ -528,6 +535,17 @@ class TradeOffResolver:
                 disruption_score *= penalty * penalty
             else:
                 disruption_score *= penalty
+
+        # Friday evening / Saturday boost for outbound leg
+        try:
+            from datetime import datetime as _dt
+            out_dt = _dt.fromisoformat(proposal.outbound_flight.departure_time[:19])
+            if out_dt.weekday() == 4 and out_dt.hour >= 17:
+                disruption_score *= 1.3
+            elif out_dt.weekday() == 5:
+                disruption_score *= 1.2
+        except (ValueError, TypeError, IndexError):
+            pass
 
         # --- Sustainability ---
         avg_stops = (proposal.outbound_flight.stops + proposal.return_flight.stops) / 2.0
@@ -577,83 +595,56 @@ class TradeOffResolver:
         scored: list[ScoredProposal],
         max_proposals: int,
         category: str,
+        cabin_class: str = "economy",
+        selected_airline: str = "",
+        selected_stops: int = 0,
     ) -> list[ScoredProposal]:
-        """Select top proposals with diversity guarantees.
+        """Build expanded pool for LLM veto.
 
-        Ensures:
-        1. User's airline included (highest scored user-airline proposal)
-        2. At least 2 different airlines
-        3. Max N proposals
+        The LLM will do the intelligent curation (airline preference, diversity).
+        We just ensure user's airline is represented and fill by score.
         """
         if not scored:
             return []
-        if len(scored) <= max_proposals:
-            for i, sp in enumerate(scored):
-                sp.rank = i + 1
-                sp.category = category
-            return scored
+
+        # Tier-based hard filter for premium cabins
+        if cabin_class in cfg.tier_filter.premium_cabins:
+            filtered, budget_count = [], 0
+            for sp in scored:
+                out_ok, out_b = is_tier_compatible(
+                    sp.proposal.outbound_flight.airline_code, selected_airline,
+                    cabin_class, sp.proposal.savings_percent,
+                    sp.proposal.outbound_flight.stops, selected_stops,
+                )
+                ret_ok, ret_b = is_tier_compatible(
+                    sp.proposal.return_flight.airline_code, selected_airline,
+                    cabin_class, sp.proposal.savings_percent,
+                    sp.proposal.return_flight.stops, selected_stops,
+                )
+                if not (out_ok and ret_ok):
+                    continue
+                if out_b or ret_b:
+                    if budget_count >= cfg.tier_filter.budget_exception_max_per_leg:
+                        continue
+                    budget_count += 1
+                filtered.append(sp)
+            scored = filtered
+
+        pool_max = limits.llm_pool_tw_max
 
         curated: list[ScoredProposal] = []
-        used: set[int] = set()  # id() of proposal
+        used: set[int] = set()
 
-        # Slot 1: User's airline (best scored)
+        # Guarantee: at least 1 user's airline
         for sp in scored:
             if sp.proposal.is_user_airline:
                 curated.append(sp)
                 used.add(id(sp))
                 break
 
-        # Slot 2: Best scored overall (different from slot 1)
+        # Fill by score
         for sp in scored:
-            if id(sp) not in used:
-                curated.append(sp)
-                used.add(id(sp))
-                break
-
-        # Slot 3: Same-alliance partner (if available)
-        if cfg.curation.same_alliance_slots > 0:
-            from app.services.recommendation.airline_tiers import same_alliance as _same_alliance
-
-            user_codes = {
-                sp.proposal.outbound_flight.airline_code
-                for sp in curated
-                if sp.proposal.is_user_airline
-            }
-            alliance_count = 0
-            for sp in scored:
-                if alliance_count >= cfg.curation.same_alliance_slots:
-                    break
-                if len(curated) >= max_proposals:
-                    break
-                if id(sp) in used:
-                    continue
-                out_code = sp.proposal.outbound_flight.airline_code
-                if out_code in user_codes:
-                    continue
-                for ref_code in user_codes:
-                    if _same_alliance(out_code, ref_code):
-                        curated.append(sp)
-                        used.add(id(sp))
-                        alliance_count += 1
-                        break
-
-        # Remaining slots: diverse airlines, by score
-        seen_airlines = {
-            sp.proposal.outbound_flight.airline_code for sp in curated
-        }
-        for sp in scored:
-            if len(curated) >= max_proposals:
-                break
-            if id(sp) in used:
-                continue
-            if sp.proposal.outbound_flight.airline_code not in seen_airlines:
-                curated.append(sp)
-                used.add(id(sp))
-                seen_airlines.add(sp.proposal.outbound_flight.airline_code)
-
-        # Fill remaining by score
-        for sp in scored:
-            if len(curated) >= max_proposals:
+            if len(curated) >= pool_max:
                 break
             if id(sp) not in used:
                 curated.append(sp)
@@ -664,6 +655,20 @@ class TradeOffResolver:
         for i, sp in enumerate(curated):
             sp.rank = i + 1
             sp.category = category
+
+        # Log curated pool for debugging
+        user_count = sum(1 for sp in curated if sp.proposal.is_user_airline)
+        logger.info(
+            f"Curated {category}: {len(curated)} proposals "
+            f"({user_count} user-airline) from {len(scored)} scored"
+        )
+        for sp in curated[:5]:
+            p = sp.proposal
+            logger.info(
+                f"  {category} pool: {p.outbound_flight.airline_name} "
+                f"{p.outbound_date}->{p.return_date} ${p.total_price:.0f} "
+                f"save ${p.savings_amount:.0f} user={p.is_user_airline} score={sp.score.total:.0f}"
+            )
 
         return curated
 

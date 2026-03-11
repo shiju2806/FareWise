@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { useHotelStore } from "@/stores/hotelStore";
 import { HotelOptionCard } from "./HotelOptionCard";
@@ -11,18 +11,32 @@ interface Props {
   legId: string;
   destinationCity: string;
   preferredDate: string;
+  /** Pre-computed check-in date from flight selection */
+  initialCheckIn?: string;
+  /** Pre-computed check-out date from return leg */
+  initialCheckOut?: string;
+  /** Auto-trigger search on mount when no results exist */
+  autoSearch?: boolean;
 }
 
-export function HotelSearch({ legId, destinationCity, preferredDate }: Props) {
+export function HotelSearch({ legId, destinationCity, preferredDate, initialCheckIn, initialCheckOut, autoSearch }: Props) {
   const { results, loading, error, searchHotels, selectHotel } = useHotelStore();
   const result = results[legId] as HotelSearchResult | undefined;
 
-  const [checkIn, setCheckIn] = useState(preferredDate);
-  const [checkOut, setCheckOut] = useState(() => {
+  const [checkIn, setCheckIn] = useState(initialCheckIn || preferredDate);
+  const [checkOut, setCheckOut] = useState(initialCheckOut || (() => {
     const d = new Date(preferredDate + "T12:00:00");
     d.setDate(d.getDate() + 3);
     return d.toISOString().split("T")[0];
-  });
+  }));
+
+  // Auto-trigger hotel search when component mounts with autoSearch prop
+  useEffect(() => {
+    if (autoSearch && !result && !loading) {
+      searchHotels(legId, checkIn, checkOut, 1, null, null, "value");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSearch, legId]);
   const [guests, setGuests] = useState(1);
   const [showAll, setShowAll] = useState(false);
   const [selectedHotel, setSelectedHotel] = useState<HotelOption | null>(null);

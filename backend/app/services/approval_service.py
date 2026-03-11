@@ -21,6 +21,7 @@ from app.data.currency import get_currency_for_airport
 from app.models.search_log import FlightOption, SearchLog
 from app.models.trip import Trip, TripLeg
 from app.models.user import User
+from app.services.companion_pricing_service import companion_pricing_service
 from app.services.notification_service import notification_service
 from app.services.policy_engine import policy_engine
 
@@ -29,6 +30,47 @@ logger = logging.getLogger(__name__)
 
 class ApprovalService:
     """Manages the approval state machine and trip submission flow."""
+
+    async def _build_companion_snapshot(self, trip: Trip, db: AsyncSession) -> dict | None:
+        """Compute companion pricing snapshot. Returns None if no companions."""
+        if not trip.companions or trip.companions <= 0:
+            return None
+        try:
+            comp_result = await companion_pricing_service.get_companion_pricing(
+                str(trip.id),
+                trip.companions,
+                trip.companion_cabin_class or "economy",
+                db,
+            )
+            companion_total = sum(o.total for o in comp_result.companion_options)
+            return {
+                "companions_count": comp_result.companions_count,
+                "companion_cabin_class": comp_result.companion_cabin_class,
+                "employee_total": comp_result.employee_total,
+                "companion_total": companion_total,
+                "combined_total": comp_result.employee_total + companion_total,
+                "per_leg": [
+                    {
+                        "leg_id": o.leg_id, "route": o.route, "date": o.date,
+                        "cabin_class": o.cabin_class, "airline_code": o.airline_code,
+                        "airline_name": o.airline_name, "per_person": o.per_person,
+                        "total": o.total, "stops": o.stops,
+                    }
+                    for o in comp_result.companion_options
+                ],
+                "nearby_date_savings": [
+                    {
+                        "leg_id": n.leg_id, "route": n.route, "date": n.date,
+                        "date_diff_days": n.date_diff_days,
+                        "savings_vs_selected": n.savings_vs_selected,
+                        "per_person": n.per_person,
+                    }
+                    for n in comp_result.nearby_date_options
+                ],
+            }
+        except Exception as e:
+            logger.warning("Companion pricing failed for trip %s: %s", trip.id, e)
+            return {"error": str(e), "companions_count": trip.companions}
 
     async def evaluate_trip(self, db: AsyncSession, trip: Trip, user: User) -> dict:
         """Run policy checks and generate savings data WITHOUT submitting."""
@@ -213,6 +255,11 @@ class ApprovalService:
             "events_context": events_context or None,
         }
 
+        # Phase G — include companion pricing in evaluate response
+        companion_data = await self._build_companion_snapshot(trip, db)
+        if companion_data:
+            report_data["companion_snapshot"] = companion_data
+
         return {
             "savings_report": report_data,
             "violations": [
@@ -315,6 +362,10 @@ class ApprovalService:
             # Pull analysis snapshot from trip (saved at confirmation time)
             snapshot = trip.analysis_snapshot or {}
 
+            # Phase G — compute companion pricing snapshot
+            companion_data = await self._build_companion_snapshot(trip, db)
+            report_data["companion_snapshot"] = companion_data
+
             savings_report = SavingsReport(
                 trip_id=trip.id,
                 selected_total=Decimal(str(report_data["selected_total"])),
@@ -331,6 +382,8 @@ class ApprovalService:
                 per_leg_summary=report_data.get("per_leg_summary"),
                 alternatives_snapshot=snapshot.get("legs"),
                 trip_window_snapshot=snapshot.get("trip_window_alternatives"),
+                # Phase G — companion pricing audit trail
+                companion_snapshot=companion_data,
             )
             db.add(savings_report)
 

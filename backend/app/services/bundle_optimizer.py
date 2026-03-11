@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.trip import TripLeg
-from app.services.amadeus_client import amadeus_client
+from app.services.flight_provider import flight_provider
 from app.services.event_service import event_service
 from app.services.hotel_service import hotel_service
 
@@ -41,13 +41,11 @@ class BundleOptimizer:
         # Fetch flight prices for each candidate date
         flight_prices: dict[str, float] = {}
         for d in candidates:
-            flights = await amadeus_client.search_flight_offers(
+            flights = await flight_provider.search_flights(
                 origin=origin,
                 destination=destination,
                 departure_date=d,
                 cabin_class=cabin,
-                adults=leg.passengers,
-                max_results=5,
             )
             if flights:
                 cheapest = min(f["price"] for f in flights)

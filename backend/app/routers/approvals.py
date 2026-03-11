@@ -342,6 +342,7 @@ async def get_approval_detail(
                     "preferred_date": l.preferred_date.isoformat(),
                     "cabin_class": l.cabin_class,
                     "passengers": l.passengers,
+                    "companion_preferred_date": l.companion_preferred_date.isoformat() if l.companion_preferred_date else None,
                 }
                 for l in trip.legs
             ],
@@ -373,6 +374,7 @@ async def get_approval_detail(
             "alternatives_snapshot": savings_report.alternatives_snapshot,
             "trip_window_snapshot": savings_report.trip_window_snapshot,
             "cheaper_months_snapshot": savings_report.cheaper_months_snapshot,
+            "companion_snapshot": savings_report.companion_snapshot,
         } if savings_report else None,
         "history": history_list,
     }

@@ -210,6 +210,32 @@ export function SearchResults({
         />
       )}
 
+      {/* 1b. Anchor — Smart Default card (business/first class only) */}
+      {result.anchor && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50/80 dark:bg-emerald-950/30 dark:border-emerald-800 px-3 py-2.5 space-y-1">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-900/50 px-1.5 py-0.5 rounded">
+                Smart Default
+              </span>
+              <span className="text-xs font-semibold text-emerald-900 dark:text-emerald-100">
+                {result.anchor.airline_name} {result.anchor.flight_numbers}
+              </span>
+              <span className="text-[10px] text-emerald-700 dark:text-emerald-300">
+                {result.anchor.origin_airport} &rarr; {result.anchor.destination_airport}
+                {result.anchor.stops === 0 ? " · Nonstop" : ` · ${result.anchor.stops} stop`}
+              </span>
+            </div>
+            <span className="text-sm font-bold text-emerald-800 dark:text-emerald-200">
+              ${Math.round(result.anchor.price).toLocaleString()}
+            </span>
+          </div>
+          <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+            {result.anchor.anchor_reason}
+          </p>
+        </div>
+      )}
+
       {/* 2. Event warning banner */}
       {eventSummary?.recommendation && (
         <div className="rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-800 flex items-center gap-2">
@@ -236,6 +262,7 @@ export function SearchResults({
           onMonthChange={handleMonthChange}
           activeAirline={airlineFilter.size === 1 ? Array.from(airlineFilter)[0] : null}
           allOptions={result.all_options}
+          route={`${result.leg.origin} → ${result.leg.destination}`}
         />
       </div>
 

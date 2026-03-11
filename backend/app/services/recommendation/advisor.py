@@ -19,12 +19,13 @@ Falls back to rule-based reasoning when LLM is unavailable.
 import json
 import logging
 import math
+import re
 from dataclasses import dataclass, field
 
 from app.services.llm_client import llm_client
+from app.services.recommendation.airline_tiers import get_tier, get_alliance
 from app.services.recommendation.config import recommendation_config
 from app.services.recommendation.context_assembler import TripContext
-from app.services.recommendation.prompts import load_prompt
 from app.services.recommendation.cost_driver_analyzer import CostDriverReport
 from app.services.recommendation.trade_off_resolver import (
     ResolvedResult,
@@ -35,9 +36,6 @@ from app.services.recommendation.trade_off_resolver import (
 logger = logging.getLogger(__name__)
 
 cfg = recommendation_config
-
-# Load reasoning guide once at module level
-_ADVISOR_GUIDE = load_prompt("travel_advisor_guide.md")
 
 
 # ---------- Data structures ----------
@@ -149,9 +147,17 @@ class TravelAdvisor:
         trip_totals: dict,
         justification_required: bool,
     ) -> AdvisorOutput:
-        """Make the single LLM call for reasoning."""
+        """Make the single LLM call for selection + reasoning."""
+        import copy
+
         system_prompt = self._build_system_prompt(context, trip_totals, cost_drivers)
         user_prompt = self._build_user_prompt(resolved, context)
+
+        # Log user prompt for debugging (shows what the LLM sees)
+        logger.debug(f"LLM user prompt:\n{user_prompt}")
+
+        # Deep-copy before LLM filters — used for validation fallback
+        original_resolved = copy.deepcopy(resolved)
 
         raw = await llm_client.complete(
             system=system_prompt,
@@ -159,33 +165,51 @@ class TravelAdvisor:
             max_tokens=cfg.llm.max_tokens,
             temperature=cfg.llm.temperature,
             json_mode=cfg.llm.json_mode,
+            model=cfg.llm.model_primary,
         )
 
-        # Clean markdown fencing if present
+        # Extract reasoning and JSON from free-form response
         text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
+        logger.debug(f"LLM raw response ({len(text)} chars):\n{text[:1500]}")
 
-        parsed = json.loads(text)
+        # Log the free-form reasoning (everything before the JSON block)
+        json_start = text.find("```json")
+        if json_start > 0:
+            reasoning = text[:json_start].strip()
+            reasoning_preview = reasoning[:300] + "..." if len(reasoning) > 300 else reasoning
+            logger.info(f"LLM reasoning: {reasoning_preview}")
+            logger.debug(f"LLM reasoning (full): {reasoning}")
+        else:
+            # No fenced block — check if response starts with { (direct JSON)
+            brace_start = text.find("{")
+            if brace_start > 0:
+                reasoning = text[:brace_start].strip()
+                if reasoning:
+                    reasoning_preview = reasoning[:300] + "..." if len(reasoning) > 300 else reasoning
+                    logger.info(f"LLM reasoning: {reasoning_preview}")
 
-        # Apply reasons to alternatives (fill gaps with fallback)
-        reasons = parsed.get("reasons", {})
-        # Truncate individual reasons to prevent UI overflow
-        for key in list(reasons):
-            if isinstance(reasons[key], str) and len(reasons[key]) > 80:
-                reasons[key] = reasons[key][:77] + "..."
-        self._apply_reasons(resolved, reasons, context)
+        # Extract and parse JSON block
+        json_text = _extract_json_block(text)
+        parsed = json.loads(json_text)
+
+        # Log selection summary
+        per_leg_data = parsed.get("per_leg", {})
+        for lid, selections in per_leg_data.items():
+            logger.debug(f"LLM leg {lid}: selected={list(selections.keys())}")
+
+        # Apply LLM selections — filter alternatives to only those selected
+        self._apply_selections(resolved, parsed, context)
+
+        # Validate selections — enforce safety invariants
+        self._validate_selections(resolved, original_resolved, context)
 
         # Truncate LLM narrative fields to prevent UI overflow
-        trip_summary = _truncate(parsed.get("trip_summary", ""), 300)
-        key_insight = _truncate(parsed.get("key_insight", ""), 150)
-        manager_narrative = _truncate(parsed.get("manager_narrative", ""), 500)
+        trip_summary = _truncate(parsed.get("trip_summary", ""), cfg.llm.trip_summary_max_chars)
+        key_insight = _truncate(parsed.get("key_insight", ""), cfg.llm.key_insight_max_chars)
+        manager_narrative = _truncate(parsed.get("manager_narrative", ""), cfg.llm.manager_narrative_max_chars)
         justification_prompt = parsed.get("justification_prompt")
         if justification_prompt and justification_required:
-            justification_prompt = _truncate(justification_prompt, 300)
+            justification_prompt = _truncate(justification_prompt, cfg.llm.justification_prompt_max_chars)
         elif not justification_required:
             justification_prompt = None
 
@@ -215,6 +239,12 @@ class TravelAdvisor:
             if leg.selected_flight:
                 selected_airlines.append(leg.selected_flight.airline_name)
         airline_str = selected_airlines[0] if selected_airlines else "unknown"
+        # Airline tier for context
+        selected_codes = []
+        for leg in context.legs:
+            if leg.selected_flight:
+                selected_codes.append(leg.selected_flight.airline_code)
+        airline_tier = get_tier(selected_codes[0]) if selected_codes else "unknown"
 
         # Route summary
         legs_desc = []
@@ -246,57 +276,69 @@ class TravelAdvisor:
 
         cabin = context.legs[0].cabin_class if context.legs else "economy"
 
-        return f"""{_ADVISOR_GUIDE}
+        return f"""You are a corporate travel advisor. Analyze the alternatives below and select the best 3-5 per leg to show the traveler.
 
----
-
-TRIP CONTEXT:
-- Traveler: {traveler.name} ({traveler.role}, {traveler.department or 'N/A'})
-- Route: {route_str}
-- Dates: {date_str} ({dur_str})
-- Cabin: {cabin}
-- Selected airline: {airline_str}
-- Selected total: ${trip_totals['selected']:.0f} CAD
-- Cheapest available: ${trip_totals['cheapest']:.0f} CAD
-- Premium over cheapest: ${trip_totals['savings_amount']:.0f} ({trip_totals['savings_percent']:.0f}%)
-- Thresholds: "approve" if premium ≤ ${cfg.justification.min_savings_amount:.0f} AND ≤ {cfg.justification.min_savings_percent:.0f}%. "optimize" if ≥ $500 OR ≥ 30%.
+TRIP: {route_str}, {date_str} ({dur_str}), {cabin} class
+TRAVELER: {traveler.name} ({traveler.role}), selected {airline_str} [{airline_tier.upper().replace('_', ' ')}]
+COST: ${trip_totals['selected']:.0f} total, ${trip_totals['savings_amount']:.0f} ({trip_totals['savings_percent']:.0f}%) over cheapest
 {drivers_str}{events_str}
+THRESHOLDS: approve ≤${cfg.justification.min_savings_amount:.0f}/≤{cfg.justification.min_savings_percent:.0f}%, optimize ≥${cfg.justification.optimize_amount:.0f}/≥{cfg.justification.optimize_percent:.0f}%
 
-YOUR TASK:
-For each alternative/proposal listed below, write a REASON (under 15 words) explaining why a corporate traveler should consider it. Be specific with dollar amounts and trade-offs. Follow the reasoning steps in the guide above.
+INSTRUCTIONS:
+1. Think through each alternative: savings, day/time, airline tier, disruption level.
+2. Select 3-5 per leg with meaningfully different trade-offs.
+3. Always keep: 1 cabin downgrade (if available), 1 user's airline option, 1 non-user airline for comparison.
+4. Drop: work-hours departures (Mon-Thu 9am-5pm), near-zero savings, duplicates.
+5. Trip-window/different-month: prefer user's airline, max 1 non-user for comparison.
+6. TIER RULE: For business/first class, only select full-service alternatives. Lower-tier carriers have been pre-filtered; any remaining are tagged budget exceptions with significant savings.
 
-Respond ONLY with valid JSON:
+Write a BRIEF analysis (5-8 bullet points max), then output a ```json block with EXACT short IDs from the prompt (L1-1, L2-1, TW-1, DM-1, etc.):
+```json
 {{
-  "reasons": {{"ALT-ID": "reason text", ...}},
-  "trip_summary": "...",
-  "key_insight": "...",
+  "per_leg": {{"1": {{"L1-1": "reason under 20 words", "L1-3": "reason"}}, "2": {{"L2-1": "reason"}}}},
+  "trip_window": {{"TW-1": "reason"}},
+  "different_month": {{"DM-1": "reason"}},
+  "trip_summary": "2-3 sentences: total cost, premium, cost driver, savings available",
+  "key_insight": "Single most actionable optimization with airline, date, amount",
   "recommendation": "approve|review|optimize",
-  "justification_prompt": "..." or null,
-  "manager_narrative": "3-4 sentence factual summary for manager approval. Include: total cost and where it falls between lowest/highest fares, dollar difference from lowest combo, notable choices (preferred airline, nonstop, schedule), policy compliance status. Be neutral — state numbers and facts only, no praise or criticism."
-}}"""
+  "justification_prompt": "Question referencing best alternative with savings, or null",
+  "manager_narrative": "3-4 factual sentences for manager: cost, carrier, routing, compliance"
+}}
+```"""
 
     def _build_user_prompt(
         self,
         resolved: ResolvedResult,
         context: TripContext,
     ) -> str:
-        """Build the user prompt listing all alternatives for the LLM."""
+        """Build the user prompt listing all alternatives for the LLM.
+
+        Uses short IDs (L1-1, L1-2, L2-1, ...) instead of UUID-based IDs
+        for reliable LLM copy-paste. The mapping from short IDs to actual
+        flight_option_ids is stored on the resolved object for _apply_selections.
+        """
         sections = []
 
+        # Build short ID mapping: "L1-1" → (leg_id, flight_option_id)
+        # Store on resolved for use by _apply_selections
+        resolved._short_id_map = {}
+
         # Per-leg alternatives
-        for leg in resolved.per_leg:
+        for leg_idx, leg in enumerate(resolved.per_leg):
             if not leg.alternatives:
                 continue
-            sections.append(f"LEG: {leg.route}")
+            leg_num = leg_idx + 1
+            sections.append(f"LEG {leg_num}: {leg.route}")
             if leg.selected:
                 sel = leg.selected
                 sections.append(
                     f"  Selected: {sel.get('airline', '?')} ${sel.get('price', 0):.0f} "
                     f"on {sel.get('date', '?')}"
                 )
-            for sa in leg.alternatives:
+            for alt_idx, sa in enumerate(leg.alternatives):
                 alt = sa.alternative
-                alt_id = f"L-{leg.leg_id}-{alt.flight_option_id}"
+                short_id = f"L{leg_num}-{alt_idx + 1}"
+                resolved._short_id_map[short_id] = (leg.leg_id, alt.flight_option_id)
                 net_str = ""
                 if alt.net_savings:
                     net_amt = alt.net_savings.get("net_amount")
@@ -316,23 +358,32 @@ Respond ONLY with valid JSON:
                 if alt.stop_airports:
                     stop_via = f" via {alt.stop_airports}"
 
+                ua_tag = " [USER'S AIRLINE]" if alt.is_user_airline else ""
+                tier = get_tier(alt.airline_code)
+                tier_tag = {"full_service": " [FULL SERVICE]", "mid_tier": " [MID TIER]", "low_cost": " [LOW COST]"}.get(tier, "")
+                # Show cabin class for cabin downgrade alternatives
+                cabin_tag = ""
+                if alt.alt_type == "cabin_downgrade" and hasattr(alt, "cabin_class") and alt.cabin_class:
+                    cabin_tag = f" [CABIN: {alt.cabin_class.upper().replace('_', ' ')}]"
                 sections.append(
-                    f"  {alt_id}: [{alt.disruption_level}] {alt.alt_type} — "
+                    f"  {short_id}: [{alt.disruption_level}] {alt.alt_type} — "
                     f"{alt.airline_name} ${alt.price:.0f} on {alt.date}{dep_str},{dur_str} "
                     f"{alt.stops}stop{stop_via}, "
                     f"save ${alt.savings_amount:.0f} ({alt.savings_percent:.0f}%), "
                     f"score={sa.score.total:.0f}"
-                    f"{hotel_str}{net_str}"
+                    f"{ua_tag}{tier_tag}{cabin_tag}{hotel_str}{net_str}"
                 )
             sections.append("")
 
         # Trip-window proposals (use simple TW-1, TW-2 IDs for LLM reliability)
         if resolved.trip_window:
-            sections.append("TRIP WINDOW (date shifts ≤3 weeks):")
+            sections.append(f"TRIP WINDOW — select up to {cfg.limits.layer2_max}:")
             for i, sp in enumerate(resolved.trip_window):
                 p = sp.proposal
                 tw_id = f"TW-{i + 1}"
                 ua_tag = " [USER'S AIRLINE]" if p.is_user_airline else ""
+                out_tier = get_tier(p.outbound_flight.airline_code)
+                tier_tag = {"full_service": " [FULL SERVICE]", "mid_tier": " [MID TIER]", "low_cost": " [LOW COST]"}.get(out_tier, "")
                 net_str = ""
                 if p.net_savings:
                     net_amt = p.net_savings.get("net_amount")
@@ -347,16 +398,18 @@ Respond ONLY with valid JSON:
                     f"{p.outbound_flight.airline_name} ${p.outbound_flight.price:.0f}{out_time} + "
                     f"{p.return_flight.airline_name} ${p.return_flight.price:.0f}{ret_time} = "
                     f"${p.total_price:.0f}, save ${p.savings_amount:.0f}, "
-                    f"score={sp.score.total:.0f}{ua_tag}{net_str}"
+                    f"score={sp.score.total:.0f}{ua_tag}{tier_tag}{net_str}"
                 )
             sections.append("")
 
         if resolved.different_month:
-            sections.append("DIFFERENT MONTH (date shifts >3 weeks):")
+            sections.append(f"DIFFERENT MONTH — select up to {cfg.limits.layer3_max}:")
             for i, sp in enumerate(resolved.different_month):
                 p = sp.proposal
                 dm_id = f"DM-{i + 1}"
                 ua_tag = " [USER'S AIRLINE]" if p.is_user_airline else ""
+                out_tier = get_tier(p.outbound_flight.airline_code)
+                tier_tag = {"full_service": " [FULL SERVICE]", "mid_tier": " [MID TIER]", "low_cost": " [LOW COST]"}.get(out_tier, "")
                 net_str = ""
                 if p.net_savings:
                     net_amt = p.net_savings.get("net_amount")
@@ -371,75 +424,204 @@ Respond ONLY with valid JSON:
                     f"{p.outbound_flight.airline_name} ${p.outbound_flight.price:.0f}{out_time} + "
                     f"{p.return_flight.airline_name} ${p.return_flight.price:.0f}{ret_time} = "
                     f"${p.total_price:.0f}, save ${p.savings_amount:.0f}, "
-                    f"score={sp.score.total:.0f}{ua_tag}{net_str}"
+                    f"score={sp.score.total:.0f}{ua_tag}{tier_tag}{net_str}"
                 )
             sections.append("")
 
         return "\n".join(sections)
 
-    def _apply_reasons(
+    def _apply_selections(
         self,
         resolved: ResolvedResult,
-        reasons: dict,
+        parsed: dict,
         context: TripContext,
     ) -> None:
-        """Apply LLM-generated reasons, fill gaps with rule-based fallback."""
-        total_expected = 0
-        total_matched = 0
+        """Filter alternatives to only those the LLM selected, apply reasons.
 
-        # Per-leg alternatives
-        for leg in resolved.per_leg:
+        Unlike _apply_reasons which filled gaps with fallback, this method DROPS
+        alternatives the LLM didn't select. The LLM is the intelligent curator.
+
+        Uses short IDs (L1-1, L1-2, ...) that map to per-leg alternatives via
+        the _short_id_map built in _build_user_prompt.
+        """
+        per_leg_data = parsed.get("per_leg", {})
+        total_pool = 0
+        total_selected = 0
+
+        # Build reverse mapping: (leg_id, flight_option_id) → short_id
+        short_id_map = getattr(resolved, "_short_id_map", {})
+        reverse_map = {v: k for k, v in short_id_map.items()}
+
+        for leg_idx, leg in enumerate(resolved.per_leg):
+            pool_size = len(leg.alternatives)
+            total_pool += pool_size
+
+            # Flat map: {"L1-1": "reason", "L1-3": "reason"}
+            leg_num = str(leg_idx + 1)
+            selected_map = per_leg_data.get(leg_num, per_leg_data.get(leg.leg_id, {}))
+
+            if not selected_map:
+                logger.warning(f"LLM returned no selections for leg {leg_num} ({leg.route})")
+                continue
+
+            # Filter alternatives to only selected ones
+            kept = []
             for sa in leg.alternatives:
-                total_expected += 1
-                alt = sa.alternative
-                alt_id = f"L-{leg.leg_id}-{alt.flight_option_id}"
-                if alt_id in reasons:
-                    sa.reason = reasons[alt_id]
-                    total_matched += 1
+                short_id = reverse_map.get((leg.leg_id, sa.alternative.flight_option_id), "")
+                if short_id in selected_map:
+                    reason = selected_map[short_id]
+                    if isinstance(reason, str) and len(reason) > cfg.llm.reason_max_chars:
+                        reason = reason[:cfg.llm.reason_max_chars - 3] + "..."
+                    sa.reason = reason
+                    kept.append(sa)
                 else:
-                    sa.reason = self._generate_alt_reason(sa, context)
-                    logger.warning(
-                        f"LLM reason missing for {alt_id} ({alt.alt_type}, "
-                        f"{alt.airline_name}), using fallback: {sa.reason!r}"
+                    logger.info(
+                        f"LLM dropped {short_id} ({sa.alternative.airline_name} "
+                        f"${sa.alternative.price:.0f})"
                     )
 
-        # Trip-window proposals (simple TW-1, TW-2 IDs)
+            total_selected += len(kept)
+            leg.alternatives = kept
+
+        # Trip-window — flat map
+        tw_selected = parsed.get("trip_window", {})
+        kept_tw = []
         for i, sp in enumerate(resolved.trip_window):
-            total_expected += 1
             tw_id = f"TW-{i + 1}"
-            if tw_id in reasons:
-                sp.proposal.reason = reasons[tw_id]
-                total_matched += 1
-            elif not sp.proposal.reason:
-                sp.proposal.reason = self._generate_tw_reason(sp, context)
-                logger.warning(
-                    f"LLM reason missing for {tw_id} ({sp.proposal.outbound_date} → "
-                    f"{sp.proposal.return_date}), using fallback: {sp.proposal.reason!r}"
-                )
-
-        # Different-month proposals (simple DM-1, DM-2 IDs)
-        for i, sp in enumerate(resolved.different_month):
-            total_expected += 1
-            dm_id = f"DM-{i + 1}"
-            if dm_id in reasons:
-                sp.proposal.reason = reasons[dm_id]
-                total_matched += 1
-            elif not sp.proposal.reason:
-                sp.proposal.reason = self._generate_tw_reason(sp, context)
-                logger.warning(
-                    f"LLM reason missing for {dm_id} ({sp.proposal.outbound_date} → "
-                    f"{sp.proposal.return_date}), using fallback: {sp.proposal.reason!r}"
-                )
-
-        if total_expected > 0:
-            hit_rate = total_matched / total_expected * 100
-            if hit_rate < 50:
-                logger.warning(
-                    f"LLM reason hit rate low: {total_matched}/{total_expected} "
-                    f"({hit_rate:.0f}%). LLM returned keys: {list(reasons.keys())[:5]}"
-                )
+            if tw_id in tw_selected:
+                reason = tw_selected[tw_id]
+                if isinstance(reason, str) and len(reason) > cfg.llm.reason_max_chars:
+                    reason = reason[:cfg.llm.reason_max_chars - 3] + "..."
+                sp.proposal.reason = reason
+                kept_tw.append(sp)
             else:
-                logger.info(f"LLM reasons: {total_matched}/{total_expected} matched ({hit_rate:.0f}%)")
+                logger.debug(f"LLM dropped {tw_id}")
+        total_pool += len(resolved.trip_window)
+        total_selected += len(kept_tw)
+        resolved.trip_window = kept_tw
+
+        # Different-month — flat map
+        dm_selected = parsed.get("different_month", {})
+        kept_dm = []
+        for i, sp in enumerate(resolved.different_month):
+            dm_id = f"DM-{i + 1}"
+            if dm_id in dm_selected:
+                reason = dm_selected[dm_id]
+                if isinstance(reason, str) and len(reason) > cfg.llm.reason_max_chars:
+                    reason = reason[:cfg.llm.reason_max_chars - 3] + "..."
+                sp.proposal.reason = reason
+                kept_dm.append(sp)
+            else:
+                logger.debug(f"LLM dropped {dm_id}")
+        total_pool += len(resolved.different_month)
+        total_selected += len(kept_dm)
+        resolved.different_month = kept_dm
+
+        logger.info(
+            f"LLM veto: {total_selected}/{total_pool} alternatives selected "
+            f"({total_pool - total_selected} dropped)"
+        )
+
+    def _validate_selections(
+        self,
+        resolved: ResolvedResult,
+        original_resolved: ResolvedResult,
+        context: TripContext,
+    ) -> None:
+        """Validate LLM selections — enforce safety invariants.
+
+        Rules:
+        1. Max total_max (5) per leg
+        2. At least 1 user-airline per leg (if any existed in pool)
+        3. If LLM returned empty for a leg, fall back to top-3 by score
+        4. Max layer2_max (4) trip-window, max layer3_max (4) different-month
+        """
+        for leg, orig_leg in zip(resolved.per_leg, original_resolved.per_leg):
+            # Rule 1: cap per leg
+            if len(leg.alternatives) > cfg.limits.total_max:
+                leg.alternatives = leg.alternatives[:cfg.limits.total_max]
+
+            # Rule 2: at least 1 user-airline
+            has_user = any(sa.alternative.is_user_airline for sa in leg.alternatives)
+            pool_had_user = any(sa.alternative.is_user_airline for sa in orig_leg.alternatives)
+            if pool_had_user and not has_user:
+                for sa in orig_leg.alternatives:
+                    if sa.alternative.is_user_airline:
+                        sa.reason = self._generate_alt_reason(sa, context)
+                        leg.alternatives.append(sa)
+                        logger.info(
+                            f"Validation: added back user-airline {sa.alternative.airline_name} "
+                            f"for leg {leg.leg_id}"
+                        )
+                        break
+
+            # Rule 3: at least 1 non-user-airline for price comparison
+            has_non_user = any(not sa.alternative.is_user_airline for sa in leg.alternatives)
+            pool_had_non_user = any(not sa.alternative.is_user_airline for sa in orig_leg.alternatives)
+            logger.debug(
+                f"Validation check leg {leg.leg_id}: has_non_user={has_non_user}, "
+                f"pool_had_non_user={pool_had_non_user}, "
+                f"current_count={len(leg.alternatives)}, max={cfg.limits.total_max}"
+            )
+            if pool_had_non_user and not has_non_user and len(leg.alternatives) < cfg.limits.total_max:
+                # Add back highest-savings non-user alternative from pool
+                for sa in sorted(
+                    orig_leg.alternatives,
+                    key=lambda s: s.alternative.savings_amount,
+                    reverse=True,
+                ):
+                    if not sa.alternative.is_user_airline:
+                        sa.reason = self._generate_alt_reason(sa, context)
+                        leg.alternatives.append(sa)
+                        logger.info(
+                            f"Validation: added back non-user-airline {sa.alternative.airline_name} "
+                            f"(saves ${sa.alternative.savings_amount:.0f}) for leg {leg.leg_id}"
+                        )
+                        break
+
+            # Rule 4: empty fallback
+            if not leg.alternatives:
+                leg.alternatives = orig_leg.alternatives[:3]
+                for sa in leg.alternatives:
+                    sa.reason = self._generate_alt_reason(sa, context)
+                logger.warning(
+                    f"Validation: LLM returned empty for leg {leg.leg_id}, "
+                    f"falling back to top-3 by score"
+                )
+
+        # Rule 4: user-airline guarantee for trip-window
+        tw_has_user = any(sp.proposal.is_user_airline for sp in resolved.trip_window)
+        tw_pool_had_user = any(sp.proposal.is_user_airline for sp in original_resolved.trip_window)
+        if tw_pool_had_user and not tw_has_user:
+            for sp in original_resolved.trip_window:
+                if sp.proposal.is_user_airline:
+                    sp.proposal.reason = self._generate_tw_reason(sp, context)
+                    resolved.trip_window.insert(0, sp)
+                    logger.info(
+                        f"Validation: added back user-airline trip-window proposal "
+                        f"({sp.proposal.outbound_flight.airline_name})"
+                    )
+                    break
+
+        # Rule 5: user-airline guarantee for different-month
+        dm_has_user = any(sp.proposal.is_user_airline for sp in resolved.different_month)
+        dm_pool_had_user = any(sp.proposal.is_user_airline for sp in original_resolved.different_month)
+        if dm_pool_had_user and not dm_has_user:
+            for sp in original_resolved.different_month:
+                if sp.proposal.is_user_airline:
+                    sp.proposal.reason = self._generate_tw_reason(sp, context)
+                    resolved.different_month.insert(0, sp)
+                    logger.info(
+                        f"Validation: added back user-airline different-month proposal "
+                        f"({sp.proposal.outbound_flight.airline_name})"
+                    )
+                    break
+
+        # Rule 6: cap trip-window and different-month
+        if len(resolved.trip_window) > cfg.limits.layer2_max:
+            resolved.trip_window = resolved.trip_window[:cfg.limits.layer2_max]
+        if len(resolved.different_month) > cfg.limits.layer3_max:
+            resolved.different_month = resolved.different_month[:cfg.limits.layer3_max]
 
     # ---- Fallback path ----
 
@@ -505,12 +687,15 @@ Respond ONLY with valid JSON:
             return f"Save ${savings:.0f} on {alt.airline_name} with {stop_label}"
 
         if alt.alt_type == "same_airline_date_shift":
-            # Include hotel impact if available
+            # Include work-hours and hotel context
+            wh_note = ""
+            if cfg.work_hours.is_work_hours(alt.departure_time):
+                wh_note = ", mid-day departure"
             if alt.net_savings:
                 net = alt.net_savings.get("net_amount")
                 if net is not None and net != savings:
-                    return f"{alt.airline_name} on {alt.date}, ${net:.0f} net savings after hotel"
-            return f"{alt.airline_name} on {alt.date} saves ${savings:.0f}"
+                    return f"{alt.airline_name} on {alt.date}, ${net:.0f} net after hotel{wh_note}"
+            return f"{alt.airline_name} on {alt.date} saves ${savings:.0f}{wh_note}"
 
         if alt.alt_type == "cabin_downgrade":
             cabin_name = alt.cabin_class.replace("_", " ").title()
@@ -603,7 +788,7 @@ Respond ONLY with valid JSON:
             if best_tw is None or sp.proposal.savings_amount > best_tw.proposal.savings_amount:
                 best_tw = sp
 
-        if best_tw and best_tw.proposal.savings_amount >= 200:
+        if best_tw and best_tw.proposal.savings_amount >= cfg.alternatives.layer3_min_savings:
             p = best_tw.proposal
             return (
                 f"Shifting to {p.outbound_date} → {p.return_date} saves "
@@ -617,7 +802,7 @@ Respond ONLY with valid JSON:
                 if best_alt is None or sa.alternative.savings_amount > best_alt.alternative.savings_amount:
                     best_alt = sa
 
-        if best_alt and best_alt.alternative.savings_amount >= 50:
+        if best_alt and best_alt.alternative.savings_amount >= cfg.alternatives.layer1_min_savings:
             alt = best_alt.alternative
             return f"{alt.label} saves ${alt.savings_amount:.0f}"
 
@@ -630,7 +815,7 @@ Respond ONLY with valid JSON:
 
         if amount <= cfg.justification.min_savings_amount and pct <= cfg.justification.min_savings_percent:
             return "approve"
-        if pct >= 30 or amount >= 500:
+        if pct >= cfg.justification.optimize_percent or amount >= cfg.justification.optimize_amount:
             return "optimize"
         return "review"
 
@@ -745,10 +930,23 @@ Respond ONLY with valid JSON:
 
 
 def _extract_time(departure_time: str) -> str:
-    """Extract HH:MM from ISO datetime string (e.g. '2025-04-12T14:30:00' → '14:30')."""
+    """Extract day-of-week + HH:MM from ISO datetime, with work-hours tag.
+
+    Examples:
+        '2025-04-12T14:30:00' → 'Sat 14:30'
+        '2025-04-16T12:35:00' → 'Wed 12:35 [WORK HRS]'
+    """
     if not departure_time or len(departure_time) < 16:
         return ""
-    return departure_time[11:16]
+    try:
+        from datetime import datetime as _dt
+        dt = _dt.fromisoformat(departure_time[:19])
+        result = dt.strftime("%a %H:%M")
+        if cfg.work_hours.is_work_hours(departure_time):
+            result += " [WORK HRS]"
+        return result
+    except (ValueError, TypeError):
+        return departure_time[11:16]
 
 
 def _truncate(text, max_len: int) -> str:
@@ -760,6 +958,24 @@ def _truncate(text, max_len: int) -> str:
     if len(text) <= max_len:
         return text
     return text[:max_len - 3] + "..."
+
+
+def _extract_json_block(text: str) -> str:
+    """Extract JSON from free-form LLM response.
+
+    Looks for ```json ... ``` fenced block first,
+    falls back to finding the outermost { ... } pair.
+    """
+    m = re.search(r"```json\s*\n(.*?)```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        return text[start:end + 1]
+
+    raise ValueError("No JSON block found in LLM response")
 
 
 # Singleton

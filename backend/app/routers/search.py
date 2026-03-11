@@ -334,7 +334,7 @@ async def get_month_matrix(
     Cached for 1 hour.
     """
     from app.services.cache_service import cache_service
-    from app.services.db1b_client import db1b_client
+    from app.services.flight_provider import flight_provider
 
     leg = await _get_user_leg(trip_leg_id, db, user)
 
@@ -344,7 +344,7 @@ async def get_month_matrix(
         return cached
 
     try:
-        entries = await db1b_client.search_month_matrix(
+        entries = await flight_provider.search_month_matrix(
             origin=leg.origin_airport,
             destination=leg.destination_airport,
             year=year,
@@ -544,8 +544,8 @@ async def get_price_context(
     Returns where the current price falls relative to historical data:
     min, Q1, median, Q3, max, and a percentile ranking.
     """
-    from app.services.amadeus_client import amadeus_client
     from app.services.cache_service import cache_service
+    from app.services.flight_provider import flight_provider
 
     leg = await _get_user_leg(trip_leg_id, db, user)
 
@@ -574,59 +574,18 @@ async def get_price_context(
     if search_log and search_log.cheapest_price:
         current_price = float(search_log.cheapest_price)
 
-    # Primary: DB1B historical data — compute quartiles from real fare data
-    from app.services.db1b_client import db1b_client
-
+    # Price context via configured provider (DB1B / Amadeus / Composite)
     response = None
     try:
-        db1b_context = await db1b_client.get_price_context(
+        response = await flight_provider.get_price_context(
             origin=leg.origin_airport,
             destination=leg.destination_airport,
             departure_date=parsed_date,
             cabin_class=leg.cabin_class,
             current_price=current_price,
         )
-        if db1b_context:
-            response = db1b_context
     except Exception as e:
-        logger.warning(f"DB1B price context failed: {e}")
-
-    # Fallback: Amadeus price metrics
-    if not response:
-        try:
-            metrics = await amadeus_client.get_price_metrics(
-                origin=leg.origin_airport,
-                destination=leg.destination_airport,
-                departure_date=parsed_date,
-            )
-            if metrics:
-                percentile = None
-                percentile_label = None
-                if current_price and metrics.get("min") and metrics.get("max"):
-                    price_range = metrics["max"] - metrics["min"]
-                    if price_range > 0:
-                        percentile = round(((current_price - metrics["min"]) / price_range) * 100)
-                        percentile = max(0, min(100, percentile))
-                        if percentile <= 25:
-                            percentile_label = "excellent"
-                        elif percentile <= 50:
-                            percentile_label = "good"
-                        elif percentile <= 75:
-                            percentile_label = "average"
-                        else:
-                            percentile_label = "high"
-
-                response = {
-                    "available": True,
-                    "route": f"{leg.origin_airport}-{leg.destination_airport}",
-                    "date": target_date,
-                    "historical": metrics,
-                    "current_price": current_price,
-                    "percentile": percentile,
-                    "percentile_label": percentile_label,
-                }
-        except Exception as e:
-            logger.warning(f"Amadeus price metrics failed: {e}")
+        logger.warning(f"Price context failed: {e}")
 
     if not response:
         return {"available": False, "message": "Price data not available for this route"}

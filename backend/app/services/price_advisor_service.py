@@ -204,9 +204,8 @@ class PriceAdvisorService:
             seats_remaining=min_seats,
         )
 
-        # Historical price context — DB1B primary, Amadeus fallback
-        from app.services.db1b_client import db1b_client
-        from app.services.amadeus_client import amadeus_client
+        # Historical price context via configured provider
+        from app.services.flight_provider import flight_provider
 
         price_metrics = None
         price_percentile = None
@@ -224,45 +223,22 @@ class PriceAdvisorService:
                 price_percentile_label = cached_metrics.get("percentile_label")
                 price_assessment = cached_metrics.get("price_assessment")
             elif cached_metrics is None:
-                # Primary: DB1B historical data
-                db1b_context = await db1b_client.get_price_context(
+                context = await flight_provider.get_price_context(
                     origin=origin,
                     destination=destination,
                     departure_date=departure_date,
                     cabin_class=cabin_class,
                     current_price=price_stats["cheapest"],
                 )
-                if db1b_context and db1b_context.get("available"):
-                    price_metrics = db1b_context.get("historical")
-                    price_percentile = db1b_context.get("percentile")
-                    price_percentile_label = db1b_context.get("percentile_label")
+                if context and context.get("available"):
+                    price_metrics = context.get("historical")
+                    price_percentile = context.get("percentile")
+                    price_percentile_label = context.get("percentile_label")
                     # Cache it
                     await cache_service.set_price_metrics(
                         origin, destination, departure_date.isoformat(),
-                        cabin_class, db1b_context,
+                        cabin_class, context,
                     )
-                else:
-                    # Fallback: Amadeus (no cabin-specific metrics available)
-                    raw_metrics = await amadeus_client.get_price_metrics(
-                        origin=origin,
-                        destination=destination,
-                        departure_date=departure_date,
-                    )
-                    if raw_metrics:
-                        price_metrics = raw_metrics
-                        cheapest = price_stats["cheapest"]
-                        price_range = raw_metrics.get("max", 0) - raw_metrics.get("min", 0)
-                        if price_range > 0 and cheapest > 0:
-                            price_percentile = round(((cheapest - raw_metrics["min"]) / price_range) * 100)
-                            price_percentile = max(0, min(100, price_percentile))
-                            if price_percentile <= 25:
-                                price_percentile_label = "excellent"
-                            elif price_percentile <= 50:
-                                price_percentile_label = "good"
-                            elif price_percentile <= 75:
-                                price_percentile_label = "average"
-                            else:
-                                price_percentile_label = "high"
         except Exception as e:
             logger.warning(f"Failed to fetch price metrics: {e}")
 

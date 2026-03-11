@@ -9,7 +9,9 @@ from app.services.llm_client import llm_client
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are a travel itinerary parser. Given a natural language trip description,
-extract structured travel legs. Today's date is {today}.
+extract structured travel legs. Today's date is {today}. The current year is {year}.
+
+CRITICAL: All dates MUST use the current year ({year}) or later. NEVER output a date in the past. If the user says "April 15", that means {year}-04-15.
 
 Rules:
 - Resolve relative dates ("next Tuesday", "this Friday") against today's date
@@ -22,10 +24,10 @@ Rules:
 - This is a CORPORATE travel tool — all trips are business trips regardless of cabin class.
 - CORPORATE DATE LOGIC (applies to ALL cabin classes):
   - When dates are vague ("mid April", "early March"), shift the preferred_date to the nearest Sunday ON or BEFORE the anchor date, so the traveler arrives Monday for start of the business week.
-    Example: "mid April" anchor = Apr 15 (Wed) → shift to Sunday Apr 12. "Early March" anchor = Mar 3 (Tue) → shift to Sunday Mar 1.
+    Example: "mid April" anchor = {year}-04-15 (Wed) → shift to Sunday {year}-04-12. "Early March" anchor = {year}-03-03 (Tue) → shift to Sunday {year}-03-01.
   - For round trips with no explicit return: default to 5 WORKING DAYS (Mon–Fri), returning Saturday.
     If departing Sunday → return the following Saturday (6 calendar nights). If departing Monday → return Saturday (5 calendar nights).
-    Examples: depart Sun Apr 12 → return Sat Apr 18. Depart Mon Mar 2 → return Sat Mar 7.
+    Examples: depart Sun {year}-04-12 → return Sat {year}-04-18. Depart Mon {year}-03-02 → return Sat {year}-03-07.
     A typical corporate round trip covers one working week. NEVER suggest a trip longer than 7 days unless the user explicitly asks.
   - When the user gives a SPECIFIC date ("April 15"), respect it as-is (don't shift to Sunday).
 - Infer return legs if the trip implies returning home (e.g., "Toronto to NYC and back")
@@ -80,7 +82,7 @@ class NLPParser:
         On failure, returns a low-confidence result so the frontend can show
         the structured form for manual entry.
         """
-        system = SYSTEM_PROMPT.format(today=date.today().isoformat())
+        system = SYSTEM_PROMPT.format(today=date.today().isoformat(), year=date.today().year)
 
         raw = ""
         for attempt in range(max_retries + 1):
@@ -140,143 +142,4 @@ class NLPParser:
         }
 
 
-CHAT_SYSTEM_PROMPT = """You are a friendly, decisive travel planning assistant for a corporate travel tool. Today is {today}.
-
-Help users plan trips through brief conversation. Given the conversation history and any partial trip data, do TWO things:
-1. Generate a brief, friendly reply (1-2 sentences max)
-2. Update the structured trip data with any new information
-
-IMPORTANT — be decisive, not interrogative:
-- When the user gives enough info to act (origin, destination, rough timeframe), FILL IN sensible defaults and set trip_ready=true. Do NOT keep asking questions.
-- This is a CORPORATE travel tool — all trips are business trips regardless of cabin class.
-- Vague date anchors:
-  - "Mid [month]" → anchor = the 15th, flexibility_days = 5.
-  - "Early [month]" → anchor = the 3rd, flexibility_days = 4.
-  - "End of month" / "Late [month]" → anchor = the 25th, flexibility_days = 4.
-  - "Next week" → anchor = Monday of next week, flexibility_days = 3.
-  - When the user gives a SPECIFIC date ("March 20"), use that date as-is (don't shift), flexibility_days = 3.
-- "Business" → set cabin_class to business. If no class mentioned, default to economy.
-- CORPORATE DATE LOGIC (applies to ALL cabin classes since this is a corporate tool):
-  - When dates are vague ("mid April", "early March"), shift the preferred_date to the nearest Sunday ON or BEFORE the anchor date, so the traveler arrives Monday for start of the business week.
-    Example: "mid April" anchor = Apr 15 (Wed) → shift to Sunday Apr 12. "Early March" anchor = Mar 3 (Tue) → shift to Sunday Mar 1.
-  - For round trips with no explicit return: default to 5 WORKING DAYS (Mon–Fri), returning Saturday.
-    If departing Sunday → return the following Saturday (6 calendar nights). If departing Monday → return Saturday (5 calendar nights).
-    Examples: depart Sun Apr 12 → return Sat Apr 18. Depart Mon Mar 2 → return Sat Mar 7.
-    A typical corporate round trip covers one working week. NEVER exceed 7 days unless the user explicitly asks.
-  - In your reply, note this logic: "I've set departure to Sunday Apr 12 so you arrive Monday, with return Saturday Apr 18 after a full work week."
-- "Round trip" or "and back" → add a return leg matching the requested duration. If user says "for a week" → 7 days. NEVER exceed the requested duration.
-- In your reply, when dates are vague, briefly note the flexibility: e.g., "I've set departure around mid-April with a ±5 day window to find the best fares."
-- When the user says "book", "let's go", "search", or "find flights" — proceed immediately with what you have. Use defaults for anything missing.
-- Only ask a question if you truly cannot infer the origin OR destination.
-
-Edge cases:
-- "meeting on [date]" → set preferred_date to the day BEFORE (arrive evening before), return the day AFTER the meeting. Mention this in your reply: "I've set arrival for the evening before your meeting."
-- "day trip" or "same day return" → create two legs on the same date. Note: flexibility_days = 0 for day trips.
-- Multi-city (e.g., "Toronto to NYC then Boston then home") → create legs 1→2, 2→3, 3→1. Set appropriate dates with 2-3 days per city.
-- MULTI-AIRPORT CITIES: Use the primary airport. Toronto → YYZ, London → LHR, New York → JFK (international) or EWR (domestic), Paris → CDG, Washington → DCA (domestic) or IAD (international).
-- Ambiguous cities (e.g., "Portland") → use the more common one (PDX) and ask: "I'm assuming Portland, Oregon (PDX) — did you mean Portland, Maine?"
-
-Required fields before a trip is ready:
-- At least one leg with: origin_city, destination_city, preferred_date
-- If user implies round trip, add a return leg
-
-Respond ONLY with valid JSON, no markdown:
-{{
-    "reply": "Your brief message to the user",
-    "partial_trip": {{
-        "confidence": 0.0-1.0,
-        "legs": [
-            {{
-                "sequence": 1,
-                "origin_city": "City Name",
-                "origin_airport": "IATA",
-                "destination_city": "City Name",
-                "destination_airport": "IATA",
-                "preferred_date": "YYYY-MM-DD",
-                "flexibility_days": 3,
-                "cabin_class": "economy",
-                "passengers": 1
-            }}
-        ],
-        "interpretation_notes": ""
-    }},
-    "trip_ready": false,
-    "missing_fields": ["return_date", "cabin_class"]
-}}"""
-
-
-class NLPChatParser:
-    """Multi-turn conversational trip planning parser."""
-
-    async def chat(
-        self,
-        message: str,
-        conversation_history: list[dict] | None = None,
-        partial_trip: dict | None = None,
-    ) -> dict:
-        """
-        Process a chat message in the trip planning conversation.
-
-        Returns dict with: reply, partial_trip, trip_ready, missing_fields.
-        """
-        system = CHAT_SYSTEM_PROMPT.format(today=date.today().isoformat())
-
-        if partial_trip:
-            system += f"\n\nCurrent partial trip data:\n{json.dumps(partial_trip, indent=2)}"
-
-        msgs = list(conversation_history or [])
-        msgs.append({"role": "user", "content": message})
-
-        try:
-            raw = await llm_client.complete(system=system, user="", messages=msgs, max_tokens=1000, temperature=0, json_mode=True)
-            if raw.startswith("```"):
-                lines = raw.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                raw = "\n".join(lines).strip()
-
-            parsed = json.loads(raw)
-
-            # Validate required fields
-            if "reply" not in parsed:
-                parsed["reply"] = "I can help you plan that trip. What are the details?"
-            if "partial_trip" not in parsed:
-                parsed["partial_trip"] = partial_trip
-            if "trip_ready" not in parsed:
-                parsed["trip_ready"] = False
-            if "missing_fields" not in parsed:
-                parsed["missing_fields"] = []
-
-            # Snap dates
-            pt = parsed.get("partial_trip")
-            if pt and isinstance(pt, dict):
-                for leg in pt.get("legs", []):
-                    raw_date = leg.get("preferred_date")
-                    if raw_date:
-                        try:
-                            d = date.fromisoformat(raw_date)
-                            leg["preferred_date"] = d.isoformat()
-                        except (ValueError, TypeError):
-                            pass
-
-            return parsed
-
-        except json.JSONDecodeError as e:
-            logger.warning(f"Chat parse error: {e}")
-            return {
-                "reply": "I understand. Could you tell me where you'd like to travel, when, and from where?",
-                "partial_trip": partial_trip,
-                "trip_ready": False,
-                "missing_fields": ["origin", "destination", "date"],
-            }
-        except Exception as e:
-            logger.error(f"Chat parse unexpected error: {e}", exc_info=True)
-            return {
-                "reply": "I understand. Could you tell me where you'd like to travel, when, and from where?",
-                "partial_trip": partial_trip,
-                "trip_ready": False,
-                "missing_fields": ["origin", "destination", "date"],
-            }
-
-
 nlp_parser = NLPParser()
-nlp_chat_parser = NLPChatParser()

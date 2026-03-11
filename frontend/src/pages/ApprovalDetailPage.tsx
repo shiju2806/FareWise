@@ -30,6 +30,7 @@ interface ApprovalDetail {
       preferred_date: string;
       cabin_class: string;
       passengers: number;
+      companion_preferred_date: string | null;
     }>;
     total_estimated_cost: number | null;
   };
@@ -87,6 +88,33 @@ interface ApprovalDetail {
       original_total_price: number;
       proposals: TripWindowProposal[];
       different_month?: TripWindowProposal[];
+    } | null;
+    companion_snapshot?: {
+      companions_count: number;
+      companion_cabin_class: string;
+      employee_total: number;
+      companion_total: number;
+      combined_total: number;
+      per_leg: Array<{
+        leg_id: string;
+        route: string;
+        date: string;
+        cabin_class: string;
+        airline_code: string;
+        airline_name: string;
+        per_person: number;
+        total: number;
+        stops: number;
+      }>;
+      nearby_date_savings: Array<{
+        leg_id: string;
+        route: string;
+        date: string;
+        date_diff_days: number;
+        savings_vs_selected: number;
+        per_person: number;
+      }>;
+      error?: string;
     } | null;
   } | null;
   history: Array<{
@@ -306,6 +334,46 @@ export default function ApprovalDetailPage() {
                 ))}
               </div>
             </div>
+
+            {/* Companion Travel */}
+            {sr.companion_snapshot && !sr.companion_snapshot.error && (
+              <div className="p-3 bg-violet-50 rounded-lg space-y-2">
+                <h4 className="text-sm font-semibold">
+                  Companion Travel ({sr.companion_snapshot.companions_count} companion{sr.companion_snapshot.companions_count > 1 ? "s" : ""})
+                </h4>
+                <p className="text-xs text-muted-foreground">
+                  Cabin: {sr.companion_snapshot.companion_cabin_class}
+                </p>
+                {sr.companion_snapshot.per_leg.map((leg, i) => (
+                  <div key={i} className="flex items-center justify-between text-sm py-1 border-b last:border-0 border-violet-200">
+                    <div>
+                      <span className="font-medium">{leg.route}</span>
+                      <span className="text-xs text-muted-foreground ml-2">{leg.airline_name}</span>
+                    </div>
+                    <div className="text-right text-xs">
+                      <span className="font-medium">{formatPrice(leg.total, sr.currency || "USD")}</span>
+                      <span className="text-muted-foreground ml-1">({formatPrice(leg.per_person, sr.currency || "USD")}/person)</span>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between pt-1 border-t border-violet-200">
+                  <span className="text-xs font-medium text-muted-foreground">Combined Total (employee + companions)</span>
+                  <span className="text-sm font-bold text-violet-700">
+                    {formatPrice(sr.companion_snapshot.combined_total, sr.currency || "USD")}
+                  </span>
+                </div>
+                {sr.companion_snapshot.nearby_date_savings.length > 0 && (
+                  <div className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-1.5 mt-1">
+                    <p className="text-[10px] font-semibold text-emerald-700">Companion date savings available</p>
+                    {sr.companion_snapshot.nearby_date_savings.slice(0, 3).map((n, i) => (
+                      <p key={i} className="text-[10px] text-emerald-600">
+                        {n.route}: {formatPrice(n.savings_vs_selected, sr.currency || "USD")} less on {n.date} ({n.date_diff_days > 0 ? `+${n.date_diff_days}` : n.date_diff_days}d)
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -460,6 +528,11 @@ export default function ApprovalDetailPage() {
                 <div className="text-sm text-muted-foreground">
                   {leg.preferred_date} · {leg.cabin_class} ·{" "}
                   {leg.passengers} pax
+                  {leg.companion_preferred_date && leg.companion_preferred_date !== leg.preferred_date && (
+                    <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700">
+                      Companions: {leg.companion_preferred_date}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}

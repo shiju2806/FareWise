@@ -24,6 +24,7 @@ export interface SearchResult {
   };
   price_calendar: PriceCalendar;
   recommendation: FlightOption & { reason: string };
+  anchor?: (FlightOption & { anchor_reason: string }) | null;
   alternatives: {
     same_airline_cheaper: FlightOption[];
     cheaper_dates: FlightOption[];

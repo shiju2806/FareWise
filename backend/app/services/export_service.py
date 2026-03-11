@@ -63,16 +63,36 @@ class ExportService:
         elements.append(Spacer(1, 12))
 
         # Legs table
+        has_companion_dates = any(
+            leg.companion_preferred_date and leg.companion_preferred_date != leg.preferred_date
+            for leg in trip.legs
+        )
         if trip.legs:
             elements.append(Paragraph("<b>Itinerary</b>", styles["Heading2"]))
-            leg_data = [["Route", "Date", "Cabin"]]
-            for leg in trip.legs:
-                leg_data.append([
-                    f"{leg.origin_airport} -> {leg.destination_airport}",
-                    str(leg.preferred_date),
-                    leg.cabin_class,
-                ])
-            table = Table(leg_data, colWidths=[3 * inch, 1.5 * inch, 1.5 * inch])
+            if has_companion_dates:
+                leg_data = [["Route", "Date", "Companion Date", "Cabin"]]
+                for leg in trip.legs:
+                    comp_date = (
+                        str(leg.companion_preferred_date)
+                        if leg.companion_preferred_date and leg.companion_preferred_date != leg.preferred_date
+                        else "Same"
+                    )
+                    leg_data.append([
+                        f"{leg.origin_airport} -> {leg.destination_airport}",
+                        str(leg.preferred_date),
+                        comp_date,
+                        leg.cabin_class,
+                    ])
+                table = Table(leg_data, colWidths=[2.5 * inch, 1.2 * inch, 1.2 * inch, 1.1 * inch])
+            else:
+                leg_data = [["Route", "Date", "Cabin"]]
+                for leg in trip.legs:
+                    leg_data.append([
+                        f"{leg.origin_airport} -> {leg.destination_airport}",
+                        str(leg.preferred_date),
+                        leg.cabin_class,
+                    ])
+                table = Table(leg_data, colWidths=[3 * inch, 1.5 * inch, 1.5 * inch])
             table.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
@@ -94,6 +114,11 @@ class ExportService:
                 ["Savings vs Expensive", f"${float(sr.savings_vs_expensive):,.2f}"],
                 ["Policy Status", sr.policy_status or "N/A"],
             ]
+            if sr.companion_snapshot and not sr.companion_snapshot.get("error"):
+                cs = sr.companion_snapshot
+                cost_data.append(["Companions", f"{cs['companions_count']} ({cs['companion_cabin_class']})"])
+                cost_data.append(["Companion Total", f"${cs['companion_total']:,.2f}"])
+                cost_data.append(["Combined Total", f"${cs['combined_total']:,.2f}"])
             table = Table(cost_data, colWidths=[3 * inch, 3 * inch])
             table.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4F46E5")),

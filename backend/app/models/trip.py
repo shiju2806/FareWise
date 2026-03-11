@@ -30,6 +30,8 @@ class Trip(Base):
     rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rejection_reason: Mapped[str | None] = mapped_column(Text)
     analysis_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+    companions: Mapped[int] = mapped_column(Integer, default=0)
+    companion_cabin_class: Mapped[str | None] = mapped_column(String(20))
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -61,6 +63,8 @@ class TripLeg(Base):
     hotel_check_out: Mapped[date | None] = mapped_column(Date)
     hotel_guests: Mapped[int] = mapped_column(Integer, default=1)
     hotel_max_stars: Mapped[Decimal | None] = mapped_column(Numeric(2, 1))
+    # Phase G — companion date flexibility
+    companion_preferred_date: Mapped[date | None] = mapped_column(Date)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

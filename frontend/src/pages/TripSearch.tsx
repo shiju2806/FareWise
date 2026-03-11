@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { JustificationModal } from "@/components/search/JustificationModal";
 import { TripCostBar } from "@/components/search/TripCostBar";
 import { MonthPriceTrend } from "@/components/search/MonthPriceTrend";
 import { HotelSearch } from "@/components/hotel/HotelSearch";
+import { useHotelStore } from "@/stores/hotelStore";
 import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
 import { LegCard } from "@/components/trip/LegCard";
 import { formatPrice } from "@/lib/currency";
@@ -57,6 +58,33 @@ export default function TripSearch() {
   const [hasSwitched, setHasSwitched] = useState(false);
   const [excludedAirlines, setExcludedAirlines] = useState<string[]>([]);
   const [elapsed, setElapsed] = useState(0);
+  const { selections: hotelSelections, results: hotelResults } = useHotelStore();
+  const hotelSectionRef = useRef<HTMLDivElement>(null);
+
+  // Compute hotel check-in/check-out from selected flights
+  const hotelDates = useMemo(() => {
+    if (!currentTrip || currentTrip.legs.length < 2) return null;
+    const outLeg = currentTrip.legs[0];
+    const retLeg = currentTrip.legs[currentTrip.legs.length - 1];
+    const outFlight = selectedFlights[outLeg.id];
+    if (!outFlight) return null;
+    return {
+      checkIn: toDateStr(outFlight.departure_time),
+      checkOut: retLeg.preferred_date,
+    };
+  }, [selectedFlights, currentTrip]);
+
+  // Compute selected hotel total price
+  const selectedHotelTotal = useMemo(() => {
+    if (!currentTrip || currentTrip.legs.length < 2) return null;
+    const outLegId = currentTrip.legs[0].id;
+    const hotelOptionId = hotelSelections[outLegId];
+    if (!hotelOptionId) return null;
+    const hotelResult = hotelResults[outLegId];
+    if (!hotelResult) return null;
+    const hotel = hotelResult.all_options.find((h) => h.id === hotelOptionId);
+    return hotel ? { total: hotel.total_rate, nightly: hotel.nightly_rate, nights: hotelResult.nights, name: hotel.hotel_name, currency: hotel.currency } : null;
+  }, [currentTrip, hotelSelections, hotelResults]);
 
   // Elapsed timer for search
   useEffect(() => {
@@ -100,6 +128,16 @@ export default function TripSearch() {
   const selectedCount = Object.keys(selectedFlights).length;
   const totalLegs = currentTrip?.legs.length || 0;
   const allLegsSelected = selectedCount === totalLegs && totalLegs > 0;
+
+  // Auto-scroll to hotel section when all legs are selected
+  useEffect(() => {
+    if (allLegsSelected && hotelDates && hotelSectionRef.current) {
+      const timer = setTimeout(() => {
+        hotelSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 400);
+      return () => clearTimeout(timer);
+    }
+  }, [allLegsSelected, hotelDates]);
 
   // Auto-search all legs on initial load (skips legs with cached results)
   const [autoSearched, setAutoSearched] = useState(false);
@@ -519,6 +557,54 @@ export default function TripSearch() {
         <LegCard leg={activeLeg} index={activeLegIndex} />
       )}
 
+      {/* Companion date picker — shown when trip has companions */}
+      {currentTrip.companions > 0 && activeLeg && (
+        <div className="rounded-md border border-violet-200 bg-violet-50/50 p-3 space-y-2">
+          <h4 className="text-sm font-semibold text-violet-700">
+            Companion Travel ({currentTrip.companions} companion{currentTrip.companions > 1 ? "s" : ""})
+          </h4>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name={`companion-date-${activeLeg.id}`}
+                checked={!activeLeg.companion_preferred_date}
+                onChange={() => {
+                  patchLeg(activeLeg.id, { companion_preferred_date: null as unknown as string });
+                }}
+              />
+              Same as employee ({activeLeg.preferred_date})
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name={`companion-date-${activeLeg.id}`}
+                checked={!!activeLeg.companion_preferred_date}
+                onChange={() => {
+                  patchLeg(activeLeg.id, { companion_preferred_date: activeLeg.preferred_date });
+                }}
+              />
+              Different date
+            </label>
+            {activeLeg.companion_preferred_date && (
+              <Input
+                type="date"
+                className="w-40 h-8 text-sm"
+                value={activeLeg.companion_preferred_date}
+                onChange={(e) => {
+                  if (e.target.value) {
+                    patchLeg(activeLeg.id, { companion_preferred_date: e.target.value });
+                  }
+                }}
+              />
+            )}
+          </div>
+          <p className="text-[10px] text-violet-600">
+            Companion pricing will be recalculated based on this date.
+          </p>
+        </div>
+      )}
+
       {/* Search button */}
       {!searchResult && !searchLoading && (
         <Button onClick={handleSearch}>
@@ -636,19 +722,28 @@ export default function TripSearch() {
         />
       )}
 
+      {/* Hotel search — shows when outbound flight is selected (uses outbound destination) */}
+      {searchResult && !searchLoading && hotelDates && currentTrip && currentTrip.legs.length >= 2 && (
+        <div ref={hotelSectionRef} className="space-y-2">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">2</span>
+            Find Your Hotel in {currentTrip.legs[0].destination_city}
+          </div>
+          <HotelSearch
+            legId={currentTrip.legs[0].id}
+            destinationCity={currentTrip.legs[0].destination_city}
+            preferredDate={currentTrip.legs[0].preferred_date}
+            initialCheckIn={hotelDates.checkIn}
+            initialCheckOut={hotelDates.checkOut}
+            autoSearch
+          />
+        </div>
+      )}
+
       {/* Month Price Trend — shows price comparison across months */}
       {searchResult && !searchLoading && activeLeg && (
         <MonthPriceTrend
           legId={activeLeg.id}
-          preferredDate={activeLeg.preferred_date}
-        />
-      )}
-
-      {/* Hotel search — shown after flight search */}
-      {searchResult && !searchLoading && activeLeg && (
-        <HotelSearch
-          legId={activeLeg.id}
-          destinationCity={activeLeg.destination_city}
           preferredDate={activeLeg.preferred_date}
         />
       )}
@@ -723,14 +818,27 @@ export default function TripSearch() {
                       </div>
                     );
                   })}
-                  <div className="border-l border-border pl-3">
-                    <span className="text-sm font-bold">
-                      Total: ${Math.round(
-                        Object.values(selectedFlights).reduce((s, f) => s + f.price, 0)
-                      ).toLocaleString()}
-                    </span>
+                  <div className="border-l border-border pl-3 space-y-0.5">
+                    {(() => {
+                      const flightTotal = Math.round(Object.values(selectedFlights).reduce((s, f) => s + f.price, 0));
+                      const hotelTotal = selectedHotelTotal ? Math.round(selectedHotelTotal.total) : 0;
+                      const grandTotal = flightTotal + hotelTotal;
+                      return (
+                        <>
+                          <div className="text-[10px] text-muted-foreground leading-tight">
+                            Flights: ${flightTotal.toLocaleString()}
+                            {selectedHotelTotal && (
+                              <> · Hotel: ${hotelTotal.toLocaleString()} <span className="text-muted-foreground/70">({selectedHotelTotal.nights}n)</span></>
+                            )}
+                          </div>
+                          <div className="text-sm font-bold leading-tight">
+                            {selectedHotelTotal ? `Trip Total: $${grandTotal.toLocaleString()}` : `Total: $${flightTotal.toLocaleString()}`}
+                          </div>
+                        </>
+                      );
+                    })()}
                     {!allLegsSelected && (
-                      <span className="text-[10px] text-muted-foreground ml-1">
+                      <span className="text-[10px] text-muted-foreground">
                         ({selectedCount}/{totalLegs} legs)
                       </span>
                     )}
@@ -777,6 +885,20 @@ export default function TripSearch() {
                     : `${formatPrice(justificationAnalysis.savings.amount)} more than cheapest`
                   }
                 </span>
+              )}
+
+              {/* Hotel booking status badge */}
+              {hotelDates && (
+                hotelSelections[currentTrip.legs[0]?.id]
+                  ? <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700">
+                      &#10003; {selectedHotelTotal?.name || "Hotel booked"}
+                    </span>
+                  : <span
+                      className="text-xs font-medium px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 cursor-pointer hover:bg-blue-200 transition-colors"
+                      onClick={() => hotelSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+                    >
+                      Hotel not selected
+                    </span>
               )}
             </div>
             <div className="flex gap-2 items-center">
@@ -835,6 +957,7 @@ export default function TripSearch() {
           activeLeg={activeLeg}
           legsCount={currentTrip.legs.length}
           onTripUpdated={handleTripUpdated}
+          searchResults={results}
         />
       )}
 

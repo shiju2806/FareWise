@@ -26,6 +26,8 @@ interface Props {
   activeAirline?: string | null;
   /** All flight options from search results (for airline-specific pricing) */
   allOptions?: FlightOption[];
+  /** Route label e.g. "YYZ → LHR" for the calendar header */
+  route?: string;
 }
 
 /** Get year/month for the Nth month offset from a base. */
@@ -46,6 +48,7 @@ export function MonthCalendar({
   onMonthChange,
   activeAirline,
   allOptions,
+  route,
 }: Props) {
   const prefDate = new Date(preferredDate + "T00:00:00");
   const [viewYear, setViewYear] = useState(prefDate.getFullYear());
@@ -200,6 +203,11 @@ export function MonthCalendar({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold">
           {activeAirline ? `${activeAirline} Prices` : "Price Calendar"}
+          {route && (
+            <span className="text-xs font-normal text-muted-foreground ml-1.5">
+              ({route})
+            </span>
+          )}
         </h3>
         {initialCalendar.savings_if_flexible > 0 && (
           <span className="text-xs text-emerald-600 font-medium">

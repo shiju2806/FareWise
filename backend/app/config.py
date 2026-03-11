@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # Price Intelligence
     price_intelligence_enabled: bool = True
 
+    # Flight Data Provider ("db1b" | "amadeus" | "composite")
+    flight_data_provider: str = "db1b"
+
     # DB1B Historical Data (MVP primary flight data source)
     db1b_enabled: bool = True
     db1b_database_url: str = "postgresql://farewise:farewise@localhost:5432/farewise"

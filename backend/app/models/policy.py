@@ -106,6 +106,8 @@ class SavingsReport(Base):
     alternatives_snapshot: Mapped[dict | None] = mapped_column(JSONB)
     trip_window_snapshot: Mapped[dict | None] = mapped_column(JSONB)
     cheaper_months_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+    # Phase G — companion pricing snapshot for audit trail
+    companion_snapshot: Mapped[dict | None] = mapped_column(JSONB)
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

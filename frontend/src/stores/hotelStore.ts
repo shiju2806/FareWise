@@ -4,6 +4,7 @@ import apiClient from "@/api/client";
 
 interface HotelState {
   results: Record<string, HotelSearchResult>; // keyed by leg_id
+  selections: Record<string, string>; // legId → hotelOptionId (tracks selected hotels)
   loading: boolean;
   error: string | null;
 
@@ -30,6 +31,7 @@ interface HotelState {
 
 export const useHotelStore = create<HotelState>((set, _get) => ({
   results: {},
+  selections: {},
   loading: false,
   error: null,
 
@@ -64,6 +66,9 @@ export const useHotelStore = create<HotelState>((set, _get) => ({
         check_out: checkOut,
         justification_note: note,
       });
+      set((state) => ({
+        selections: { ...state.selections, [legId]: hotelOptionId },
+      }));
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { detail?: string } } })?.response?.data
@@ -72,5 +77,5 @@ export const useHotelStore = create<HotelState>((set, _get) => ({
     }
   },
 
-  clearResults: () => set({ results: {}, error: null }),
+  clearResults: () => set({ results: {}, selections: {}, error: null }),
 }));

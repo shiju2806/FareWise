@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.search_log import FlightOption, SearchLog
 from app.models.trip import Trip, TripLeg
-from app.services.amadeus_client import amadeus_client
 from app.services.airport_service import airport_service
 from app.services.cache_service import cache_service
 from app.services.scoring_engine import Weights, score_flights, slider_to_weights
@@ -138,6 +137,11 @@ class SearchOrchestrator:
         # 5. Score all flights
         scored_flights = score_flights(all_flights, weights)
 
+        # 5b. Tag layover quality on all flights
+        from app.services.db1b_client import is_valid_layover
+        for f in scored_flights:
+            f["valid_layover"] = is_valid_layover(f)
+
         # 6. Apply user preference filters & boosts
         if user_preferences:
             max_stops = user_preferences.get("max_stops")
@@ -194,6 +198,12 @@ class SearchOrchestrator:
                 "reason": self._generate_reason(best, scored_flights, leg),
             }
 
+        # 9b. Select anchor flight (budget envelope) for business/first class searches
+        anchor = None
+        if leg.cabin_class in ("business", "first"):
+            from app.services.anchor_selector import select_anchor_flight
+            anchor = select_anchor_flight(scored_flights, cabin_class=leg.cabin_class)
+
         # Collect all unique flights for DB persistence
         response_flights: list[dict] = []
         seen_ids = set()
@@ -226,7 +236,7 @@ class SearchOrchestrator:
             d.isoformat() for _, _, d, *_ in search_tasks
         ))
 
-        return {
+        result = {
             "search_id": str(search_log.id) if search_log else str(uuid.uuid4()),
             "leg": {
                 "origin": leg.origin_airport,
@@ -245,6 +255,9 @@ class SearchOrchestrator:
                 "search_time_ms": elapsed_ms,
             },
         }
+        if anchor:
+            result["anchor"] = anchor
+        return result
 
     async def rescore_leg(
         self,
@@ -385,8 +398,7 @@ class SearchOrchestrator:
     ) -> list[dict]:
         """Search all dates for a single route pair using one batch DB1B query.
 
-        Falls back to individual Amadeus queries ONLY for the primary pair
-        (not alternate airports) when DB1B has no data.
+        Uses DB1B historical data. Returns empty for dates outside DB1B range.
         """
         # Check cache for each date first
         cached_flights: list[dict] = []
@@ -406,25 +418,22 @@ class SearchOrchestrator:
         if not uncached_dates:
             return cached_flights
 
-        # Batch DB1B query for all uncached dates (one SQL query)
+        # Batch query for all uncached dates (one SQL query for DB1B)
         batch_results: dict[str, list[dict]] = {}
         try:
-            from app.services.db1b_client import db1b_client
-            batch_results = await db1b_client.search_flights_date_range(
+            from app.services.flight_provider import flight_provider
+            batch_results = await flight_provider.search_flights_date_range(
                 origin, destination,
                 min(d for d, _, _ in uncached_dates),
                 max(d for d, _, _ in uncached_dates),
                 cabin_class,
             )
         except Exception as e:
-            logger.warning(f"DB1B batch search failed for {origin}-{destination}: {e}")
+            logger.warning(f"Flight provider batch search failed for {origin}-{destination}: {e}")
 
         flights: list[dict] = list(cached_flights)
 
-        # Process each uncached date: use DB1B result, or fall back to Amadeus
-        amadeus_fallback_coros = []
-        amadeus_fallback_info = []
-
+        # Process each uncached date from DB1B results
         for d, is_alt_ap, is_alt_dt in uncached_dates:
             date_str = d.isoformat()
             date_flights = batch_results.get(date_str, [])
@@ -436,29 +445,8 @@ class SearchOrchestrator:
                 flights.extend(date_flights)
                 await cache_service.set_flights(origin, destination, date_str, cabin_class, date_flights)
             else:
-                # Queue Amadeus fallback
-                amadeus_fallback_coros.append(
-                    amadeus_client.search_flight_offers(
-                        origin, destination, d, cabin_class, passengers
-                    )
-                )
-                amadeus_fallback_info.append((d, is_alt_ap, is_alt_dt))
-
-        # Execute Amadeus fallbacks in parallel (typically few or zero)
-        if amadeus_fallback_coros:
-            amadeus_results = await asyncio.gather(*amadeus_fallback_coros, return_exceptions=True)
-            for idx, result in enumerate(amadeus_results):
-                d, is_alt_ap, is_alt_dt = amadeus_fallback_info[idx]
-                date_str = d.isoformat()
-                if isinstance(result, Exception):
-                    logger.warning(f"Amadeus fallback failed for {origin}-{destination} on {d}: {result}")
-                    continue
-                for f in result:
-                    f["is_alternate_airport"] = is_alt_ap
-                    f["is_alternate_date"] = is_alt_dt
-                flights.extend(result)
-                if result:
-                    await cache_service.set_flights(origin, destination, date_str, cabin_class, result)
+                # No DB1B data for this date — cache empty to avoid re-querying
+                await cache_service.set_flights(origin, destination, date_str, cabin_class, [])
 
         return flights
 
@@ -495,7 +483,7 @@ class SearchOrchestrator:
         is_alt_airport: bool,
         is_alt_date: bool,
     ) -> list[dict]:
-        """Search with cache layer. DB1B primary, Amadeus fallback."""
+        """Search with cache layer. DB1B only."""
         date_str = departure_date.isoformat()
 
         # Check cache
@@ -506,21 +494,15 @@ class SearchOrchestrator:
                 f["is_alternate_date"] = is_alt_date
             return cached
 
-        # Primary: DB1B historical fare data (real pricing, reliable)
+        # Primary flight data (DB1B / Amadeus / Composite — configured via env)
         flights = []
         try:
-            from app.services.db1b_client import db1b_client
-            flights = await db1b_client.search_flights(
+            from app.services.flight_provider import flight_provider
+            flights = await flight_provider.search_flights(
                 origin, destination, departure_date, cabin_class
             )
         except Exception as e:
-            logger.warning(f"DB1B search failed for {origin}-{destination}: {e}")
-
-        # Fallback: Amadeus (if DB1B has no data for this route)
-        if not flights:
-            flights = await amadeus_client.search_flight_offers(
-                origin, destination, departure_date, cabin_class, adults
-            )
+            logger.warning(f"Flight search failed for {origin}-{destination}: {e}")
 
         # Tag with flags
         for f in flights:
@@ -595,13 +577,7 @@ class SearchOrchestrator:
         cabin_class: str,
         existing_dates: dict | None = None,
     ) -> dict:
-        """Fetch cheapest prices for every day in a month.
-
-        Uses Amadeus Flight Cheapest Date Search — single API call for the
-        entire month instead of 30 individual flight-offers calls.
-        Merges with existing_dates from the initial search (which have
-        accurate stop info and live prices).
-        """
+        """Fetch cheapest prices for every day in a month from DB1B."""
         # Check month calendar cache
         cached = await cache_service.get_month_calendar(origin, destination, year, month, cabin_class)
         if cached:
@@ -612,54 +588,26 @@ class SearchOrchestrator:
         if existing_dates:
             dates_data.update(existing_dates)
 
-        # Primary: DB1B historical data
-        db1b_ok = False
+        # Historical month prices from configured provider
+        provider_ok = False
         try:
-            from app.services.db1b_client import db1b_client
-            db1b_data = await db1b_client.search_month_prices(
+            from app.services.flight_provider import flight_provider
+            provider_data = await flight_provider.search_month_prices(
                 origin=origin,
                 destination=destination,
                 year=year,
                 month=month,
                 cabin_class=cabin_class,
             )
-            for d, entry in db1b_data.items():
+            for d, entry in provider_data.items():
                 # Never overwrite prices from the initial flight search —
                 # those are authoritative (same flights user sees in listing)
                 if d not in dates_data:
                     dates_data[d] = entry
-            if db1b_data:
-                db1b_ok = True
+            if provider_data:
+                provider_ok = True
         except Exception as e:
-            logger.warning(f"DB1B calendar failed for {origin}-{destination}: {e}")
-
-        # Fallback: Amadeus Flight Cheapest Date Search
-        if not db1b_ok and not dates_data:
-            today = date.today()
-            first_of_month = date(year, month, 1)
-            anchor_date = max(first_of_month, today)
-
-            try:
-                cheapest_dates = await amadeus_client.search_cheapest_dates(
-                    origin=origin,
-                    destination=destination,
-                    departure_date=anchor_date,
-                )
-
-                month_prefix = f"{year}-{month:02d}"
-                for entry in cheapest_dates:
-                    d = entry.get("date", "")
-                    if not d.startswith(month_prefix):
-                        continue
-                    if d not in dates_data:
-                        dates_data[d] = {
-                            "min_price": round(entry["price"], 2),
-                            "has_direct": False,
-                            "option_count": 1,
-                            "source": "cheapest_dates",
-                        }
-            except Exception as e:
-                logger.warning(f"Amadeus cheapest dates failed for {origin}-{destination}: {e}")
+            logger.warning(f"Month prices failed for {origin}-{destination}: {e}")
 
         # Compute month stats
         all_prices = [v["min_price"] for v in dates_data.values() if v.get("min_price", 0) > 0]
@@ -788,10 +736,7 @@ class SearchOrchestrator:
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             prices = [f["price"] for f in flights] if flights else [0]
 
-            # Determine which provider supplied data
             provider = "db1b_historical"
-            if flights and flights[0].get("source") == "amadeus":
-                provider = "amadeus"
 
             search_log = SearchLog(
                 trip_leg_id=leg.id,

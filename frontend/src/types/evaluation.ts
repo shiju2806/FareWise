@@ -51,6 +51,12 @@ export interface ReviewAlternative {
   flight_option_id: string;
   departure_time?: string;
   duration_minutes?: number;
+  hotel_impact?: {
+    nights_added: number;
+    cost_change: number | null;
+    status: "known" | "estimated" | "unknown";
+  } | null;
+  stop_airports?: string;
 }
 
 export interface ReviewLeg {
@@ -84,6 +90,38 @@ export interface ReviewAnalysis {
   } | null;
 }
 
+export interface CompanionLegPricing {
+  leg_id: string;
+  route: string;
+  date: string;
+  cabin_class: string;
+  airline_code: string;
+  airline_name: string;
+  per_person: number;
+  total: number;
+  stops: number;
+}
+
+export interface CompanionNearbyDate {
+  leg_id: string;
+  route: string;
+  date: string;
+  date_diff_days: number;
+  savings_vs_selected: number;
+  per_person: number;
+}
+
+export interface CompanionSnapshot {
+  companions_count: number;
+  companion_cabin_class: string;
+  employee_total: number;
+  companion_total: number;
+  combined_total: number;
+  per_leg: CompanionLegPricing[];
+  nearby_date_savings: CompanionNearbyDate[];
+  error?: string;
+}
+
 export interface SavingsReport {
   currency?: string;
   selected_total: number;
@@ -99,6 +137,7 @@ export interface SavingsReport {
   hotel_cheapest_total?: number | null;
   events_context?: string[] | null;
   slider_positions?: Record<string, number | null>;
+  companion_snapshot?: CompanionSnapshot | null;
 }
 
 export interface EvalResult {

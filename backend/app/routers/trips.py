@@ -21,7 +21,7 @@ from app.schemas.trip import (
 )
 from pydantic import BaseModel as PydanticBaseModel
 from app.services.airport_service import airport_service
-from app.services.nlp_parser import nlp_parser, nlp_chat_parser
+from app.services.nlp_parser import nlp_parser
 
 router = APIRouter()
 
@@ -38,6 +38,18 @@ class ChatResponse(PydanticBaseModel):
     partial_trip: dict | None
     trip_ready: bool
     missing_fields: list[str]
+    blocks: list[dict] = []
+
+
+class CompanionPricingRequest(PydanticBaseModel):
+    companions: int = 1
+    companion_cabin_class: str = "economy"
+
+
+class CabinBudgetRequest(PydanticBaseModel):
+    total_travelers: int  # employee + companions (>= 2)
+    anchor_prices: dict[str, float]  # {leg_id: anchor_price}
+
 
 
 def _build_title(legs: list[dict]) -> str:
@@ -57,24 +69,32 @@ async def trip_chat(
     req: ChatRequest,
     user: User = Depends(get_current_user),
 ):
-    """Multi-turn conversational trip planning."""
-    result = await nlp_chat_parser.chat(
-        message=req.message,
+    """Multi-agent conversational trip planning."""
+    from app.services.agents.trip_coordinator import TripCoordinator
+    from app.services.agents.conversation_state import ConversationState
+
+    state = ConversationState.from_partial_trip(req.partial_trip)
+
+    coordinator = TripCoordinator()
+    response = await coordinator.process(
+        user_message=req.message,
+        state=state,
         conversation_history=req.conversation_history,
-        partial_trip=req.partial_trip,
     )
 
-    # Build updated conversation history
+    final_state = response.state or state
+
     updated_history = list(req.conversation_history)
     updated_history.append({"role": "user", "content": req.message})
-    updated_history.append({"role": "assistant", "content": result["reply"]})
+    updated_history.append({"role": "assistant", "content": response.content})
 
     return ChatResponse(
-        reply=result["reply"],
+        reply=response.content,
         conversation_history=updated_history,
-        partial_trip=result.get("partial_trip"),
-        trip_ready=result.get("trip_ready", False),
-        missing_fields=result.get("missing_fields", []),
+        partial_trip=final_state.to_partial_trip(),
+        trip_ready=response.trip_ready,
+        missing_fields=final_state.missing_fields,
+        blocks=response.blocks,
     )
 
 
@@ -395,10 +415,84 @@ async def patch_leg(
             raise HTTPException(status_code=400, detail="Flexibility days must be non-negative")
         leg.flexibility_days = req.flexibility_days
 
+    if "companion_preferred_date" in req.model_fields_set:
+        leg.companion_preferred_date = req.companion_preferred_date
+
     await db.commit()
     await db.refresh(leg)
 
     return TripLegResponse.model_validate(leg)
+
+
+@router.post("/{trip_id}/companion-pricing")
+async def companion_pricing(
+    trip_id: uuid.UUID,
+    req: CompanionPricingRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Get companion/family pricing for an existing trip's selected flights."""
+    from app.services.companion_pricing_service import companion_pricing_service
+    from dataclasses import asdict
+
+    # Verify ownership
+    result = await db.execute(
+        select(Trip).where(Trip.id == trip_id, Trip.traveler_id == user.id)
+    )
+    trip = result.scalar_one_or_none()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    if req.companions < 1:
+        raise HTTPException(status_code=400, detail="Companions must be at least 1")
+
+    valid_cabins = {"economy", "premium_economy"}
+    if req.companion_cabin_class not in valid_cabins:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Companion cabin must be one of: {', '.join(sorted(valid_cabins))}",
+        )
+
+    # Update trip companion fields
+    trip.companions = req.companions
+    trip.companion_cabin_class = req.companion_cabin_class
+    await db.commit()
+
+    pricing = await companion_pricing_service.get_companion_pricing(
+        str(trip_id), req.companions, req.companion_cabin_class, db,
+    )
+    return asdict(pricing)
+
+
+@router.post("/{trip_id}/cabin-budget")
+async def cabin_budget_recommendation(
+    trip_id: uuid.UUID,
+    req: CabinBudgetRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Recommend which cabin class fits all travelers within the anchor budget."""
+    from app.services.companion_pricing_service import companion_pricing_service
+    from dataclasses import asdict
+
+    # Verify ownership
+    result = await db.execute(
+        select(Trip).where(Trip.id == trip_id, Trip.traveler_id == user.id)
+    )
+    trip = result.scalar_one_or_none()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    if req.total_travelers < 2:
+        raise HTTPException(status_code=400, detail="Total travelers must be at least 2")
+
+    if not req.anchor_prices:
+        raise HTTPException(status_code=400, detail="Anchor prices required")
+
+    result = await companion_pricing_service.get_cabin_budget_recommendation(
+        str(trip_id), req.total_travelers, req.anchor_prices, db,
+    )
+    return asdict(result)
 
 
 @router.delete("/{trip_id}", status_code=204)

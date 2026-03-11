@@ -1,18 +1,12 @@
-import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "@/stores/authStore";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { ThemeToggle } from "@/components/shared/ThemeToggle";
-import { KeyboardShortcutsModal } from "@/components/shared/KeyboardShortcutsModal";
-import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 
 export function AppShell() {
   const location = useLocation();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
-  const [showShortcuts, setShowShortcuts] = useState(false);
-
-  useKeyboardShortcuts(() => setShowShortcuts((v) => !v));
 
   const navItems = [
     { label: "Trips", path: "/trips", primary: true, roles: null },
@@ -86,10 +80,6 @@ export function AppShell() {
         </div>
       </main>
 
-      <KeyboardShortcutsModal
-        open={showShortcuts}
-        onClose={() => setShowShortcuts(false)}
-      />
     </div>
   );
 }

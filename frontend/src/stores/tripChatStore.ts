@@ -2,9 +2,16 @@ import { create } from "zustand";
 import apiClient from "@/api/client";
 import type { Trip } from "@/types/trip";
 
+export interface Block {
+  type: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: Record<string, any>;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  blocks?: Block[];
 }
 
 interface PartialTrip {
@@ -20,7 +27,10 @@ interface PartialTrip {
     cabin_class: string;
     passengers: number;
   }[];
+  companions?: number;
+  companion_cabin_class?: string;
   interpretation_notes?: string;
+  _agent_state?: Record<string, unknown>;
 }
 
 interface TripChatState {
@@ -33,18 +43,64 @@ interface TripChatState {
   error: string | null;
 
   sendMessage: (text: string) => Promise<void>;
+  injectAssistantMessage: (text: string) => void;
   createFromChat: () => Promise<Trip | null>;
   reset: () => void;
 }
 
+const STORAGE_KEY = "farewise-trip-chat";
+
+function _loadPersisted(): Partial<TripChatState> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    const saved = JSON.parse(raw);
+    return {
+      messages: saved.messages ?? [],
+      conversationHistory: saved.conversationHistory ?? [],
+      partialTrip: saved.partialTrip ?? null,
+      tripReady: saved.tripReady ?? false,
+      missingFields: saved.missingFields ?? [],
+    };
+  } catch {
+    return {};
+  }
+}
+
+function _persist(state: TripChatState) {
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        messages: state.messages,
+        conversationHistory: state.conversationHistory,
+        partialTrip: state.partialTrip,
+        tripReady: state.tripReady,
+        missingFields: state.missingFields,
+      }),
+    );
+  } catch { /* localStorage full — non-critical */ }
+}
+
+const persisted = _loadPersisted();
+
 export const useTripChatStore = create<TripChatState>((set, get) => ({
-  messages: [],
-  conversationHistory: [],
-  partialTrip: null,
-  tripReady: false,
-  missingFields: [],
+  messages: (persisted.messages as ChatMessage[]) ?? [],
+  conversationHistory: (persisted.conversationHistory as { role: string; content: string }[]) ?? [],
+  partialTrip: (persisted.partialTrip as PartialTrip | null) ?? null,
+  tripReady: persisted.tripReady ?? false,
+  missingFields: (persisted.missingFields as string[]) ?? [],
   loading: false,
   error: null,
+
+  injectAssistantMessage: (text: string) => {
+    const state = get();
+    const msg: ChatMessage = { role: "assistant", content: text };
+    set({
+      messages: [...state.messages, msg],
+      conversationHistory: [...state.conversationHistory, { role: "assistant", content: text }],
+    });
+  },
 
   sendMessage: async (text: string) => {
     const state = get();
@@ -64,9 +120,14 @@ export const useTripChatStore = create<TripChatState>((set, get) => ({
         partial_trip: PartialTrip | null;
         trip_ready: boolean;
         missing_fields: string[];
+        blocks?: Block[];
       };
 
-      const assistantMsg: ChatMessage = { role: "assistant", content: data.reply };
+      const assistantMsg: ChatMessage = {
+        role: "assistant",
+        content: data.reply,
+        blocks: data.blocks || [],
+      };
 
       set({
         messages: [...get().messages, assistantMsg],
@@ -76,6 +137,7 @@ export const useTripChatStore = create<TripChatState>((set, get) => ({
         missingFields: data.missing_fields,
         loading: false,
       });
+      _persist(get());
     } catch {
       set({ loading: false, error: "Failed to process message" });
     }
@@ -99,6 +161,16 @@ export const useTripChatStore = create<TripChatState>((set, get) => ({
       const res = await apiClient.post("/trips/structured", { legs });
       const trip = res.data as Trip;
 
+      // If companion data exists, update the trip with it
+      if (partialTrip.companions && partialTrip.companions > 0) {
+        try {
+          await apiClient.post(`/trips/${trip.id}/companion-pricing`, {
+            companions: partialTrip.companions,
+            companion_cabin_class: partialTrip.companion_cabin_class || "economy",
+          });
+        } catch { /* companion pricing will be fetched later */ }
+      }
+
       // Persist the planning conversation so SearchAssistant can continue it
       try {
         sessionStorage.setItem(
@@ -115,7 +187,8 @@ export const useTripChatStore = create<TripChatState>((set, get) => ({
     }
   },
 
-  reset: () =>
+  reset: () => {
+    localStorage.removeItem(STORAGE_KEY);
     set({
       messages: [],
       conversationHistory: [],
@@ -124,5 +197,6 @@ export const useTripChatStore = create<TripChatState>((set, get) => ({
       missingFields: [],
       loading: false,
       error: null,
-    }),
+    });
+  },
 }));

@@ -144,33 +144,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Auto-seed skipped: {e}")
 
-    # Create DB1B asyncpg pool for historical fare data
-    db1b_pool = None
-    if settings.db1b_enabled:
-        try:
-            import asyncpg
-            from app.services.db1b_client import db1b_client
-
-            db1b_pool = await asyncpg.create_pool(
-                settings.db1b_database_url,
-                min_size=settings.db1b_pool_min,
-                max_size=settings.db1b_pool_max,
-                timeout=settings.db1b_pool_timeout,
-                command_timeout=settings.db1b_command_timeout,
-            )
-            db1b_client.pool = db1b_pool
-            app.state.db1b_pool = db1b_pool
-            logger.info("DB1B asyncpg pool created")
-        except Exception as e:
-            logger.warning(f"DB1B pool creation failed (search will use Amadeus fallback): {e}")
-            app.state.db1b_pool = None
+    # Initialize flight data provider (DB1B, Amadeus, or Composite)
+    from app.services.flight_provider import flight_provider
+    try:
+        await flight_provider.initialize()
+    except Exception as e:
+        logger.error(f"Flight provider initialization failed — search will not work: {e}")
 
     yield
 
     # Shutdown
-    if db1b_pool:
-        await db1b_pool.close()
-        logger.info("DB1B asyncpg pool closed")
+    await flight_provider.shutdown()
     if scheduler:
         scheduler.shutdown(wait=False)
         logger.info("Background scheduler stopped")

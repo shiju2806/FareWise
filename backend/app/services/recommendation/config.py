@@ -20,6 +20,8 @@ class JustificationThresholds:
     """When to trigger a justification nudge."""
     min_savings_amount: float = 100.0    # $100 over cheapest
     min_savings_percent: float = 10.0    # 10% over cheapest
+    optimize_amount: float = 500.0       # >= this $ = "optimize" recommendation
+    optimize_percent: float = 30.0       # >= this % = "optimize" recommendation
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,7 @@ class SearchRanges:
     price_calendar_days: int = 7      # ±7 days for price matrix
     max_trip_duration_flex: int = 2    # ±2 days from original trip duration
     min_trip_duration: int = 3         # minimum trip duration in days
+    layer_split_days: int = 14        # ≤14 days = Layer 2 (trip_window), >14 = Layer 3 (different_month)
 
 
 @dataclass(frozen=True)
@@ -66,7 +69,12 @@ class AlternativeLimits:
     layer2_max: int = 4    # date shifts
     layer3_max: int = 4    # different month / trip-window
     layer4_max: int = 2    # cabin/routing
-    total_max: int = 13    # absolute cap
+    total_max: int = 5     # absolute cap — forces curation to always run
+    trip_window_max_raw: int = 15          # max raw trip-window proposals before curation
+    trip_window_user_reserved: int = 4     # reserved slots for user's airline in trip-window
+    same_airline_cap: int = 2              # max same-airline in fill-remaining curation step
+    llm_pool_max: int = 6                 # per-leg candidates sent to LLM for veto
+    llm_pool_tw_max: int = 6              # trip-window candidates sent to LLM per category
 
 
 @dataclass(frozen=True)
@@ -83,6 +91,11 @@ class TradeOffWeights:
     # Derived values
     min_layover_minutes: int = 90            # below this = unsafe connection
     loyalty_premium_cap: float = 150.0       # max $ value of airline preference
+
+    # Disruption score mapping
+    disruption_low: float = 1.0
+    disruption_medium: float = 0.6
+    disruption_high: float = 0.2
 
 
 CABIN_DOWNGRADE_MAP: dict[str, str] = {
@@ -103,9 +116,14 @@ class LLMParams:
     """Parameters for the advisor LLM call."""
     model_primary: str = "gpt-4o-mini"
     model_fallback: str = "claude-sonnet-4-5-20250929"
-    max_tokens: int = 1000
+    max_tokens: int = 2000
     temperature: float = 0.1
-    json_mode: bool = True
+    json_mode: bool = False
+    reason_max_chars: int = 120
+    trip_summary_max_chars: int = 300
+    key_insight_max_chars: int = 200
+    manager_narrative_max_chars: int = 600
+    justification_prompt_max_chars: int = 300
 
 
 @dataclass(frozen=True)
@@ -122,6 +140,16 @@ class AirlinePreferenceScores:
 class CurationGuarantees:
     """Slots reserved during curation for diversity."""
     same_alliance_slots: int = 1     # reserve 1 slot for alliance partner
+    user_airline_extra: int = 1      # extra slots for user's airline (beyond the one-per-type)
+
+
+@dataclass(frozen=True)
+class TierFilterConfig:
+    """Tier-based hard filtering for premium cabin travelers."""
+    premium_cabins: tuple = ("business", "first")
+    allowed_tiers_for_premium: tuple = ("full_service",)
+    budget_exception_savings_pct: float = 60.0
+    budget_exception_max_per_leg: int = 1
 
 
 @dataclass(frozen=True)
@@ -151,6 +179,32 @@ class RedEyeConfig:
 
 
 @dataclass(frozen=True)
+class WorkHoursConfig:
+    """Corporate work-hours penalty for date-shift alternatives.
+
+    Mon-Thu 9am-5pm departures penalized — traveler loses a work day.
+    Friday, Saturday, Sunday exempt.
+    """
+    start_hour: int = 9       # 9am
+    end_hour: int = 17        # 5pm
+    weekdays: tuple = (0, 1, 2, 3)  # Mon=0..Thu=3 (Fri/Sat/Sun exempt)
+    penalty: float = 0.3     # disruption multiplier (same scale as red-eye)
+
+    def is_work_hours(self, departure_time: str) -> bool:
+        """True if departure is Mon-Thu 9am-5pm."""
+        if not departure_time or len(departure_time) < 16:
+            return False
+        try:
+            from datetime import datetime as _dt
+            dt = _dt.fromisoformat(departure_time)
+            if dt.weekday() in self.weekdays:
+                return self.start_hour <= dt.hour < self.end_hour
+            return False
+        except (ValueError, TypeError):
+            return False
+
+
+@dataclass(frozen=True)
 class RecommendationConfig:
     """Top-level config aggregating all sub-configs."""
     policy_budgets: PolicyBudgets = field(default_factory=PolicyBudgets)
@@ -165,6 +219,8 @@ class RecommendationConfig:
     airline_preferences: AirlinePreferenceScores = field(default_factory=AirlinePreferenceScores)
     curation: CurationGuarantees = field(default_factory=CurationGuarantees)
     red_eye: RedEyeConfig = field(default_factory=RedEyeConfig)
+    work_hours: WorkHoursConfig = field(default_factory=WorkHoursConfig)
+    tier_filter: TierFilterConfig = field(default_factory=TierFilterConfig)
 
 
 # Singleton — import this everywhere

@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.events import PriceWatch, PriceWatchHistory
 from app.models.policy import Notification
-from app.services.amadeus_client import amadeus_client
+from app.services.flight_provider import flight_provider
 
 logger = logging.getLogger(__name__)
 
@@ -132,13 +132,11 @@ class PriceWatchService:
         from datetime import date
 
         if watch.watch_type == "flight" and watch.origin and watch.destination:
-            flights = await amadeus_client.search_flight_offers(
+            flights = await flight_provider.search_flights(
                 origin=watch.origin,
                 destination=watch.destination,
                 departure_date=watch.target_date,
                 cabin_class=watch.cabin_class,
-                adults=1,
-                max_results=5,
             )
             if flights:
                 current = min(f["price"] for f in flights)

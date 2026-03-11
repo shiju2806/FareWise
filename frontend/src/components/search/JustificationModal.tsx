@@ -1,4 +1,5 @@
 import { useState } from "react";
+import * as Popover from "@radix-ui/react-popover";
 import { Button } from "@/components/ui/button";
 import { formatPrice } from "@/lib/currency";
 import { formatShortDate as fmtDate } from "@/lib/dates";
@@ -19,6 +20,8 @@ interface Alternative {
   origin_airport?: string;
   destination_airport?: string;
   departure_time?: string;
+  stop_airports?: string;
+  cabin_class?: string;
   /** LLM-curated explanation for why this alternative is suggested */
   reason?: string;
 }
@@ -534,9 +537,9 @@ export function JustificationModal({
         onClick={onCancel}
       />
 
-      <div className="relative bg-card rounded-xl shadow-2xl border border-border max-w-5xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+      <div className="relative bg-card rounded-xl shadow-2xl border border-border max-w-5xl w-full mx-4 max-h-[90vh] flex flex-col overflow-hidden">
         {/* Header — full width */}
-        <div className="px-5 pt-5 pb-3">
+        <div className="px-5 pt-5 pb-3 shrink-0">
           <div className="flex items-start justify-between">
             <div>
               <h3 className="text-base font-semibold">
@@ -653,14 +656,14 @@ export function JustificationModal({
           <>
             {/* LLM prompt — full width above the grid */}
             {analysis.justification_prompt && (
-              <div className="mx-5 mb-4 rounded-lg border border-blue-200 bg-blue-50/80 p-3 text-sm text-blue-800 leading-relaxed">
+              <div className="shrink-0 mx-5 mb-4 rounded-lg border border-blue-200 bg-blue-50/80 p-3 text-sm text-blue-800 leading-relaxed">
                 {analysis.justification_prompt}
               </div>
             )}
 
             {/* Cabin downgrade suggestion — full width */}
             {hasCabinDowngrade && analysis.cabin_downgrade_suggestion && (
-              <div className="mx-5 mb-4 flex items-center justify-between rounded-lg border border-violet-200 bg-violet-50/80 px-4 py-2.5">
+              <div className="shrink-0 mx-5 mb-4 flex items-center justify-between rounded-lg border border-violet-200 bg-violet-50/80 px-4 py-2.5">
                 <div className="text-sm text-violet-800">
                   <span className="font-medium">{cabinLabel(analysis.cabin_downgrade_suggestion.suggested_cabin)}</span>
                   {" on the same flights would save "}
@@ -682,9 +685,9 @@ export function JustificationModal({
               </div>
             )}
 
-            <div className={`grid grid-cols-1 ${hasAlternatives ? "lg:grid-cols-5" : ""} gap-4 px-5`}>
+            <div className={`flex-1 min-h-0 overflow-hidden grid grid-cols-1 ${hasAlternatives ? "lg:grid-cols-5" : ""} gap-4 px-5 pb-4`}>
               {/* LEFT COLUMN — Your selections + justification */}
-              <div className={`${hasAlternatives ? "lg:col-span-3 lg:sticky lg:top-0 lg:self-start" : ""} space-y-4`}>
+              <div className={`${hasAlternatives ? "lg:col-span-3" : ""} space-y-4 overflow-y-auto pr-1`}>
                 {/* Multi-leg comparison tables */}
                 {isMultiLeg ? (
                   <div className="space-y-5">
@@ -751,16 +754,16 @@ export function JustificationModal({
 
               {/* RIGHT COLUMN — Alternatives */}
               {hasAlternatives && (
-                <div className="lg:col-span-2 space-y-4">
+                <div className="lg:col-span-2 space-y-4 overflow-y-auto pr-1">
                   {/* Trip-window alternatives — shift entire trip */}
                   {hasTripWindow && (
                     <div className="rounded-lg border border-blue-200 bg-blue-50/30">
                       <div className="px-3 py-2 border-b border-blue-100">
                         <h4 className="text-xs font-semibold uppercase tracking-wide text-blue-700">
-                          Shift Your Entire Trip
+                          Alternative Trip Dates
                         </h4>
                         <p className="text-[10px] text-blue-600 mt-0.5">
-                          {analysis.trip_window_alternatives!.original_trip_duration}-day trip (flexible ±2d), different dates
+                          {analysis.trip_window_alternatives!.original_trip_duration}-day trip, nearby dates with savings
                         </p>
                       </div>
                       {(expandedProposals
@@ -878,7 +881,7 @@ export function JustificationModal({
                           Consider a Different Month
                         </h4>
                         <p className="text-[10px] text-purple-600 mt-0.5">
-                          Your airline on significantly different dates
+                          Same airline options with different travel months
                         </p>
                       </div>
                       {(expandedDiffMonth
@@ -1019,17 +1022,79 @@ export function JustificationModal({
                                       )}
                                       <span className="text-sm font-medium">{alt.airline}</span>
                                     </div>
-                                    <div className="text-xs text-muted-foreground">
-                                      {alt.label} &middot; {fmtDate(alt.date)}
+                                    <div className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1">
+                                      <span>{alt.label} &middot; {fmtDate(alt.date)}</span>
                                       {fmtTime(alt.departure_time) && (
-                                        <> &middot; {fmtTime(alt.departure_time)}</>
+                                        <span>&middot; {fmtTime(alt.departure_time)}</span>
                                       )}
-                                      {" "}&middot;{" "}
-                                      {alt.stops === 0
-                                        ? "Nonstop"
-                                        : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
-                                      {alt.duration_minutes > 0 &&
-                                        ` \u00b7 ${fmtDuration(alt.duration_minutes)}`}
+                                      <span>&middot;</span>
+                                      <Popover.Root>
+                                        <Popover.Trigger asChild>
+                                          <button
+                                            type="button"
+                                            className="inline-flex items-center gap-0.5 cursor-pointer hover:bg-muted/50 rounded px-0.5 -mx-0.5 transition-colors underline decoration-dotted underline-offset-2"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            {alt.stops === 0
+                                              ? "Nonstop"
+                                              : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}${alt.stop_airports ? ` via ${alt.stop_airports}` : ""}`}
+                                            {alt.duration_minutes > 0 && ` \u00b7 ${fmtDuration(alt.duration_minutes)}`}
+                                            <svg className="inline-block w-3 h-3 text-muted-foreground/60" viewBox="0 0 16 16" fill="none">
+                                              <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                                              <path d="M8 7v4M8 5.5v0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                                            </svg>
+                                          </button>
+                                        </Popover.Trigger>
+                                        <Popover.Portal>
+                                          <Popover.Content
+                                            className="z-[100] w-56 rounded-lg border border-border bg-card shadow-lg p-3 text-sm"
+                                            sideOffset={5}
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            <div className="font-semibold text-xs text-foreground mb-2">
+                                              {alt.stops > 0 ? "Connection Details" : "Flight Details"}
+                                            </div>
+                                            <div className="space-y-1.5 text-xs text-muted-foreground">
+                                              <div className="flex justify-between">
+                                                <span>Route</span>
+                                                <span className="font-medium text-foreground">
+                                                  {alt.origin_airport || ""}
+                                                  {alt.stops > 0 && alt.stop_airports && ` \u2192 ${alt.stop_airports.replace(/,/g, " \u2192")}`}
+                                                  {alt.destination_airport && ` \u2192 ${alt.destination_airport}`}
+                                                </span>
+                                              </div>
+                                              <div className="flex justify-between">
+                                                <span>{alt.stops > 0 ? "Stops" : "Type"}</span>
+                                                <span className="font-medium text-foreground">
+                                                  {alt.stops > 0
+                                                    ? `${alt.stops}${alt.stop_airports ? ` (via ${alt.stop_airports})` : ""}`
+                                                    : "Nonstop"}
+                                                </span>
+                                              </div>
+                                              {alt.duration_minutes > 0 && (
+                                                <div className="flex justify-between">
+                                                  <span>Total duration</span>
+                                                  <span className="font-medium text-foreground">{fmtDuration(alt.duration_minutes)}</span>
+                                                </div>
+                                              )}
+                                              {alt.cabin_class && (
+                                                <div className="flex justify-between">
+                                                  <span>Cabin</span>
+                                                  <span className="font-medium text-foreground capitalize">{alt.cabin_class}</span>
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div className="mt-2 pt-2 border-t border-border">
+                                              <p className="text-[10px] text-muted-foreground italic leading-snug">
+                                                {alt.stops > 0
+                                                  ? "Layover times and terminal details available with live booking API."
+                                                  : "Terminal and gate details available with live booking API."}
+                                              </p>
+                                            </div>
+                                            <Popover.Arrow className="fill-card" />
+                                          </Popover.Content>
+                                        </Popover.Portal>
+                                      </Popover.Root>
                                     </div>
                                     {alt.reason && (
                                       <div className="text-[10px] text-blue-600 italic mt-0.5">
@@ -1050,9 +1115,13 @@ export function JustificationModal({
                                           {formatPrice(alt.price)}
                                         </span>
                                       </div>
-                                      <div className="text-[10px] text-emerald-600">
-                                        {formatPrice(alt.savings)} less
-                                      </div>
+                                      {alt.hotel_impact && alt.hotel_impact.nights_added !== 0 && (
+                                        <div className={`text-[9px] ${alt.hotel_impact.nights_added > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                                          {alt.hotel_impact.nights_added > 0
+                                            ? `+${alt.hotel_impact.nights_added} extra night${alt.hotel_impact.nights_added > 1 ? "s" : ""}`
+                                            : `${Math.abs(alt.hotel_impact.nights_added)} fewer night${Math.abs(alt.hotel_impact.nights_added) > 1 ? "s" : ""}`}
+                                        </div>
+                                      )}
                                     </div>
                                     <Button
                                       size="sm"
@@ -1097,17 +1166,79 @@ export function JustificationModal({
                           >
                             <div>
                               <div className="text-sm font-medium">{alt.airline}</div>
-                              <div className="text-xs text-muted-foreground">
-                                {alt.label} &middot; {fmtDate(alt.date)}
+                              <div className="text-xs text-muted-foreground flex items-center flex-wrap gap-x-1">
+                                <span>{alt.label} &middot; {fmtDate(alt.date)}</span>
                                 {fmtTime(alt.departure_time) && (
-                                  <> &middot; {fmtTime(alt.departure_time)}</>
+                                  <span>&middot; {fmtTime(alt.departure_time)}</span>
                                 )}
-                                {" "}&middot;{" "}
-                                {alt.stops === 0
-                                  ? "Nonstop"
-                                  : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}`}
-                                {alt.duration_minutes > 0 &&
-                                  ` \u00b7 ${fmtDuration(alt.duration_minutes)}`}
+                                <span>&middot;</span>
+                                <Popover.Root>
+                                  <Popover.Trigger asChild>
+                                    <button
+                                      type="button"
+                                      className="inline-flex items-center gap-0.5 cursor-pointer hover:bg-muted/50 rounded px-0.5 -mx-0.5 transition-colors underline decoration-dotted underline-offset-2"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      {alt.stops === 0
+                                        ? "Nonstop"
+                                        : `${alt.stops} stop${alt.stops > 1 ? "s" : ""}${alt.stop_airports ? ` via ${alt.stop_airports}` : ""}`}
+                                      {alt.duration_minutes > 0 && ` \u00b7 ${fmtDuration(alt.duration_minutes)}`}
+                                      <svg className="inline-block w-3 h-3 text-muted-foreground/60" viewBox="0 0 16 16" fill="none">
+                                        <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                                        <path d="M8 7v4M8 5.5v0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                                      </svg>
+                                    </button>
+                                  </Popover.Trigger>
+                                  <Popover.Portal>
+                                    <Popover.Content
+                                      className="z-[100] w-56 rounded-lg border border-border bg-card shadow-lg p-3 text-sm"
+                                      sideOffset={5}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <div className="font-semibold text-xs text-foreground mb-2">
+                                        {alt.stops > 0 ? "Connection Details" : "Flight Details"}
+                                      </div>
+                                      <div className="space-y-1.5 text-xs text-muted-foreground">
+                                        <div className="flex justify-between">
+                                          <span>Route</span>
+                                          <span className="font-medium text-foreground">
+                                            {alt.origin_airport || ""}
+                                            {alt.stops > 0 && alt.stop_airports && ` \u2192 ${alt.stop_airports.replace(/,/g, " \u2192")}`}
+                                            {alt.destination_airport && ` \u2192 ${alt.destination_airport}`}
+                                          </span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                          <span>{alt.stops > 0 ? "Stops" : "Type"}</span>
+                                          <span className="font-medium text-foreground">
+                                            {alt.stops > 0
+                                              ? `${alt.stops}${alt.stop_airports ? ` (via ${alt.stop_airports})` : ""}`
+                                              : "Nonstop"}
+                                          </span>
+                                        </div>
+                                        {alt.duration_minutes > 0 && (
+                                          <div className="flex justify-between">
+                                            <span>Total duration</span>
+                                            <span className="font-medium text-foreground">{fmtDuration(alt.duration_minutes)}</span>
+                                          </div>
+                                        )}
+                                        {alt.cabin_class && (
+                                          <div className="flex justify-between">
+                                            <span>Cabin</span>
+                                            <span className="font-medium text-foreground capitalize">{alt.cabin_class}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="mt-2 pt-2 border-t border-border">
+                                        <p className="text-[10px] text-muted-foreground italic leading-snug">
+                                          {alt.stops > 0
+                                            ? "Layover times and terminal details available with live booking API."
+                                            : "Terminal and gate details available with live booking API."}
+                                        </p>
+                                      </div>
+                                      <Popover.Arrow className="fill-card" />
+                                    </Popover.Content>
+                                  </Popover.Portal>
+                                </Popover.Root>
                               </div>
                               {alt.reason && (
                                 <div className="text-[10px] text-blue-600 italic mt-0.5">
@@ -1120,9 +1251,13 @@ export function JustificationModal({
                                 <div className="text-sm font-bold text-emerald-700">
                                   {formatPrice(alt.price)}
                                 </div>
-                                <div className="text-[10px] text-emerald-600">
-                                  save {formatPrice(alt.savings)}
-                                </div>
+                                {alt.hotel_impact && alt.hotel_impact.nights_added !== 0 && (
+                                  <div className={`text-[9px] ${alt.hotel_impact.nights_added > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                                    {alt.hotel_impact.nights_added > 0
+                                      ? `+${alt.hotel_impact.nights_added} extra night${alt.hotel_impact.nights_added > 1 ? "s" : ""}`
+                                      : `${Math.abs(alt.hotel_impact.nights_added)} fewer night${Math.abs(alt.hotel_impact.nights_added) > 1 ? "s" : ""}`}
+                                  </div>
+                                )}
                               </div>
                               <Button
                                 size="sm"
@@ -1143,8 +1278,8 @@ export function JustificationModal({
               )}
             </div>
 
-            {/* Sticky bottom action bar */}
-            <div className="sticky bottom-0 bg-card border-t border-border px-5 py-3 flex items-center justify-between">
+            {/* Bottom action bar */}
+            <div className="shrink-0 bg-card border-t border-border px-5 py-3 flex items-center justify-between">
               <Button variant="ghost" size="sm" onClick={onCancel}>
                 Cancel
               </Button>

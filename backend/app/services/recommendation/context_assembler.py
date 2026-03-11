@@ -14,6 +14,7 @@ from app.models.trip import Trip, TripLeg
 from app.models.user import User
 from app.models.policy import Selection
 from app.services.recommendation.hotel_rate_service import HotelRateResult, hotel_rate_service
+from app.services.recommendation.config import recommendation_config as cfg
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,10 @@ class ContextAssembler:
             )
             leg_contexts.append(leg_ctx)
 
-        # 5. Load events context
+        # 5. Enrich with premium economy options for cabin downgrade
+        await self._enrich_cabin_downgrade_options(leg_contexts)
+
+        # 6. Load events context
         events = await self._load_events(db, legs_sorted)
 
         return TripContext(
@@ -279,6 +283,22 @@ class ContextAssembler:
                 leg_ctx.selected_flight = self._find_selected(
                     leg_ctx.all_options, str(sel.flight_option_id)
                 )
+                selected_id = str(sel.flight_option_id)
+
+        # Fallback: if selected flight not in latest search, look up directly
+        if selected_id and not leg_ctx.selected_flight:
+            from uuid import UUID
+            fo_result = await db.execute(
+                select(FlightOption).where(FlightOption.id == UUID(selected_id))
+            )
+            fo = fo_result.scalar_one_or_none()
+            if fo:
+                fd = self._flight_to_data(fo, "search")
+                leg_ctx.selected_flight = fd
+                logger.info(
+                    f"Selected flight {selected_id[:8]} found in older search, "
+                    f"not in latest SearchLog for leg {leg.id}"
+                )
 
         # Lookup corporate hotel rate at destination
         leg_ctx.hotel_rate = await hotel_rate_service.get_preferred_rate(
@@ -333,6 +353,54 @@ class ContextAssembler:
             source=source,
         )
 
+    async def _enrich_cabin_downgrade_options(
+        self,
+        leg_contexts: list[LegContext],
+    ) -> None:
+        """Fetch premium economy prices from DB1B for the user's airline.
+
+        For business-class trips, queries DB1B for premium_economy fares
+        on the selected date for the selected airline. Adds them to
+        leg.all_options so _layer4_cabin_downgrade can find them.
+        """
+        from app.services.recommendation.config import CABIN_DOWNGRADE_MAP
+        from app.services.flight_provider import flight_provider
+
+        if not flight_provider.is_available():
+            return
+
+        for leg in leg_contexts:
+            lower_cabin = CABIN_DOWNGRADE_MAP.get(leg.cabin_class)
+            if not lower_cabin or not leg.selected_flight:
+                continue
+
+            sel = leg.selected_flight
+            sel_date_str = sel.departure_time[:10] if sel.departure_time else None
+            if not sel_date_str:
+                continue
+
+            try:
+                sel_date = date.fromisoformat(sel_date_str)
+                results = await flight_provider.search_flights(
+                    leg.origin_airport,
+                    leg.destination_airport,
+                    sel_date,
+                    lower_cabin,
+                )
+                # Only add the user's airline options to keep the pool focused
+                pe_options = [
+                    self._dict_to_flight_data(f) for f in results
+                    if f.get("airline_code") == sel.airline_code
+                ]
+                if pe_options:
+                    leg.all_options.extend(pe_options)
+                    logger.info(
+                        f"Cabin downgrade: added {len(pe_options)} {lower_cabin} "
+                        f"options for {sel.airline_name} on leg {leg.leg_id}"
+                    )
+            except Exception as e:
+                logger.warning(f"Cabin downgrade query failed for leg {leg.leg_id}: {e}")
+
     async def load_trip_window_options(
         self,
         db: AsyncSession,
@@ -358,18 +426,18 @@ class ContextAssembler:
 
         if out_date and ret_date:
             try:
-                from app.services.db1b_client import db1b_client
+                from app.services.flight_provider import flight_provider
 
-                if db1b_client.pool:
+                if flight_provider.is_available():
                     import asyncio
                     out_range, ret_range = await asyncio.gather(
-                        db1b_client.search_flights_date_range(
+                        flight_provider.search_flights_date_range(
                             outbound.origin_airport, outbound.destination_airport,
-                            out_date - timedelta(days=60), out_date + timedelta(days=60), cabin,
+                            out_date - timedelta(days=cfg.search_ranges.trip_window_days), out_date + timedelta(days=cfg.search_ranges.trip_window_days), cabin,
                         ),
-                        db1b_client.search_flights_date_range(
+                        flight_provider.search_flights_date_range(
                             return_leg.origin_airport, return_leg.destination_airport,
-                            ret_date - timedelta(days=60), ret_date + timedelta(days=60), cabin,
+                            ret_date - timedelta(days=cfg.search_ranges.trip_window_days), ret_date + timedelta(days=cfg.search_ranges.trip_window_days), cabin,
                         ),
                     )
                     for flights in out_range.values():
@@ -381,11 +449,11 @@ class ContextAssembler:
                             self._dict_to_flight_data(f) for f in flights
                         )
                     logger.info(
-                        f"Trip-window: DB1B loaded out={len(context.outbound_options)}, "
+                        f"Trip-window: loaded out={len(context.outbound_options)}, "
                         f"ret={len(context.return_options)}"
                     )
             except Exception as e:
-                logger.warning(f"DB1B trip-window query failed: {e}")
+                logger.warning(f"Trip-window query failed: {e}")
 
         # Fallback: use saved search results already loaded per-leg
         if not context.outbound_options:

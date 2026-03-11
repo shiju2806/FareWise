@@ -30,6 +30,9 @@ CARRIER_NAMES = {
     "FJ": "Fiji Airways",
     "HA": "Hawaiian Airlines",
     "KE": "Korean Air",
+    "KL": "KLM",
+    "LH": "Lufthansa",
+    "AF": "Air France",
     "NK": "Spirit Airlines",
     "PR": "Philippine Airlines",
     "QF": "Qantas",
@@ -70,6 +73,9 @@ CARRIER_HUBS = {
     "CZ": ["CAN"],
     "DE": ["FRA"],
     "DL": ["ATL", "MSP", "DTW", "JFK", "LAX", "SEA"],
+    "LH": ["FRA", "MUC"],
+    "AF": ["CDG"],
+    "KL": ["AMS"],
     "EI": ["DUB"],
     "FI": ["KEF"],
     "FJ": ["NAN"],
@@ -113,6 +119,9 @@ CARRIER_CABIN_MULTIPLIERS: dict[str, dict[str, float]] = {
     "UA": {"premium_economy": 1.9, "business": 4.3, "first": 7.2},
     "DL": {"premium_economy": 2.0, "business": 4.8, "first": 7.5},
     "VS": {"premium_economy": 2.0, "business": 4.5},  # no first class
+    "LH": {"premium_economy": 2.0, "business": 4.8, "first": 8.0},
+    "AF": {"premium_economy": 1.9, "business": 4.5},
+    "KL": {"premium_economy": 1.8, "business": 4.3},
 
     # Asian/Pacific premium carriers
     "QF": {"premium_economy": 2.2, "business": 6.0, "first": 10.0},
@@ -214,16 +223,23 @@ def _synthesize_duration(distance_nm: int, stops: int) -> int:
 
 
 def _synthesize_stop_airports(carrier_code: str, origin: str, dest: str, stops: int) -> str | None:
-    """Generate plausible connecting airports based on carrier hubs."""
+    """Generate plausible connecting airports based on carrier hubs.
+
+    Returns None for nonstop flights or when carrier has no defined hubs
+    (unknown hub connections are honestly reported as low-quality).
+    """
     if stops == 0:
         return None
 
-    hubs = CARRIER_HUBS.get(carrier_code, ["JFK", "ORD", "LAX"])
+    hubs = CARRIER_HUBS.get(carrier_code)
+    if not hubs:
+        # Carrier has no defined hubs — don't fabricate stop airports
+        return None
+
     # Filter out origin/dest from possible stops
     candidates = [h for h in hubs if h != origin and h != dest]
     if not candidates:
-        candidates = ["JFK", "ORD", "LAX"]
-        candidates = [h for h in candidates if h != origin and h != dest]
+        return None
 
     seed = _seed_int(f"stop-{carrier_code}-{origin}-{dest}")
     selected = []
@@ -232,6 +248,28 @@ def _synthesize_stop_airports(carrier_code: str, origin: str, dest: str, stops: 
         selected.append(candidates[idx])
 
     return ", ".join(selected) if selected else None
+
+
+def is_valid_layover(flight: dict) -> bool:
+    """Check if a flight's layover connects through the carrier's own hub(s).
+
+    Returns True for nonstop flights.
+    Returns True if all stop airports are in the carrier's CARRIER_HUBS.
+    Returns False if stop airports are unknown or at non-hub airports.
+    """
+    if flight.get("stops", 0) == 0:
+        return True
+
+    carrier = flight.get("airline_code", "")
+    stop_str = flight.get("stop_airports")
+    if not stop_str:
+        return False
+
+    hubs = CARRIER_HUBS.get(carrier)
+    if not hubs:
+        return False
+
+    return all(s.strip() in hubs for s in stop_str.split(","))
 
 
 class DB1BClient:

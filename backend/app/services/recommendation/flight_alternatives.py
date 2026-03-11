@@ -265,7 +265,7 @@ class FlightAlternativesGenerator:
         preferred_out = ""
         preferred_ret = ""
 
-        if context.is_round_trip:
+        if context.is_round_trip and len(context.legs) == 2:
             outbound = context.legs[0]
             return_leg = context.legs[-1]
             preferred_out = outbound.preferred_date
@@ -470,6 +470,7 @@ class FlightAlternativesGenerator:
         routing_options = [
             o for o in options
             if o.airline_code == selected.airline_code
+            and o.cabin_class == cabin  # same cabin — PE is handled by cabin_downgrade
             and _extract_date(o.departure_time) == sel_date
             and not o.is_alternate_airport
             and o.price < sel_price
@@ -535,18 +536,13 @@ class FlightAlternativesGenerator:
 
         Computes hotel impact for each date shift.
         """
-        if leg.flexibility_days == 0:
-            logger.debug(
-                f"Leg {leg.leg_id}: flexibility_days=0, skipping date-shift alternatives"
-            )
-            return []
-
         min_savings = cfg.alternatives.layer2_min_savings
         cabin = leg.cabin_class
 
         same_airline_diff_date = [
             o for o in options
             if o.airline_code == selected.airline_code
+            and not o.is_alternate_airport
             and _extract_date(o.departure_time) != sel_date
             and o.price < sel_price
             and (sel_price - o.price) >= min_savings
@@ -558,6 +554,45 @@ class FlightAlternativesGenerator:
 
         # Determine leg position for trip-aware constraints
         is_outbound = leg.sequence == 1
+
+        # Corporate day constraints
+        if is_outbound:
+            # Outbound: Fri/Sat/Sun only
+            same_airline_diff_date = [
+                o for o in same_airline_diff_date
+                if _extract_date(o.departure_time)
+                and _corporate_days_ok_single(
+                    date.fromisoformat(_extract_date(o.departure_time)),
+                    is_outbound,
+                )
+            ]
+            if not same_airline_diff_date:
+                return []
+        elif context.is_round_trip:
+            # Return: Fri/Sat/Sun always OK, Thu conditional on outbound day
+            # Thu return OK only if outbound departs Fri/Sat (arrives Sat/Sun)
+            # — gives a full work week at destination before Thu evening return.
+            # If outbound departs Sun (arrives Mon), Thu = only 3 work days — not enough.
+            outbound_date_str = context.legs[0].preferred_date
+            outbound_weekday = (
+                date.fromisoformat(outbound_date_str).weekday()
+                if outbound_date_str else None
+            )
+            # Fri=4, Sat=5 → traveler arrives Sat/Sun → Thu return OK
+            thu_ok = outbound_weekday in (4, 5) if outbound_weekday is not None else False
+            allowed_return_days = {4, 5, 6}  # Fri, Sat, Sun
+            if thu_ok:
+                allowed_return_days.add(3)  # Thursday
+
+            same_airline_diff_date = [
+                o for o in same_airline_diff_date
+                if _extract_date(o.departure_time)
+                and date.fromisoformat(_extract_date(o.departure_time)).weekday()
+                    in allowed_return_days
+            ]
+            if not same_airline_diff_date:
+                return []
+
         other_leg_date = None
         original_duration = None
 
@@ -590,18 +625,9 @@ class FlightAlternativesGenerator:
                     return False
                 if not ((original_duration - max_flex) <= duration <= (original_duration + max_flex)):
                     return False
-                return _corporate_days_ok_single(alt_dt, is_outbound)
+                return True
 
             same_airline_diff_date = [o for o in same_airline_diff_date if _trip_ok(o)]
-        else:
-            # Single-leg or no cross-leg context — only enforce corporate days
-            same_airline_diff_date = [
-                o for o in same_airline_diff_date
-                if _corporate_days_ok_single(
-                    date.fromisoformat(_extract_date(o.departure_time)),
-                    is_outbound,
-                )
-            ]
 
         if not same_airline_diff_date:
             return []
@@ -683,6 +709,10 @@ class FlightAlternativesGenerator:
             and not cfg.red_eye.is_excluded(o.departure_time, cabin)
         ]
 
+        # For premium cabins, only offer cabin downgrade on user's airline
+        if leg.cabin_class in ("business", "first"):
+            lower_options = [o for o in lower_options if o.airline_code == selected.airline_code]
+
         if not lower_options:
             return []
 
@@ -692,7 +722,12 @@ class FlightAlternativesGenerator:
             if o.airline_code not in by_airline or o.price < by_airline[o.airline_code].price:
                 by_airline[o.airline_code] = o
 
-        sorted_opts = sorted(by_airline.values(), key=lambda o: o.price)[:cfg.limits.layer4_max]
+        # Prioritize user's airline — put it first, then others
+        user_code = selected.airline_code
+        sorted_opts = sorted(
+            by_airline.values(),
+            key=lambda o: (0 if o.airline_code == user_code else 1, o.price),
+        )[:cfg.limits.layer4_max]
 
         alternatives: list[Alternative] = []
         for o in sorted_opts:
@@ -701,10 +736,13 @@ class FlightAlternativesGenerator:
             if o.airline_code != selected.airline_code:
                 changes.append("airline")
 
+            # User's airline cabin downgrade = medium disruption (same airline, same schedule)
+            disruption = "medium" if o.airline_code == user_code else "high"
+
             alternatives.append(Alternative(
                 alt_type="cabin_downgrade",
                 layer=4,
-                disruption_level="high",
+                disruption_level=disruption,
                 what_changes=changes,
                 flight_option_id=o.id,
                 label=f"{lower_cabin.replace('_', ' ').title()} on {o.airline_name}",
@@ -722,6 +760,7 @@ class FlightAlternativesGenerator:
                 savings_amount=round(savings, 2),
                 savings_percent=round(savings / sel_price * 100, 1) if sel_price > 0 else 0,
                 stop_airports=o.stop_airports or "",
+                is_user_airline=(o.airline_code == user_code),
             ))
 
         return alternatives
@@ -745,8 +784,9 @@ class FlightAlternativesGenerator:
         outbound_leg = context.legs[0]
         return_leg = context.legs[-1]
 
-        outbound_options = outbound_leg.all_options
-        return_options = return_leg.all_options
+        # Use ±60-day DB1B data when available, fall back to search results
+        outbound_options = context.outbound_options or outbound_leg.all_options
+        return_options = context.return_options or return_leg.all_options
 
         if not outbound_options or not return_options:
             return []
@@ -767,8 +807,9 @@ class FlightAlternativesGenerator:
             if leg.selected_flight:
                 selected_codes.add(leg.selected_flight.airline_code)
 
-        # Reference price for savings computation
-        original_total = context.selected_total if context.selected_total > 0 else 0.0
+        # Reference price for savings computation (per-passenger, matching proposal prices)
+        passengers = max(outbound_leg.passengers, 1)
+        original_total = (context.selected_total / passengers) if context.selected_total > 0 else 0.0
 
         # Build cheapest flight per date
         out_by_date = _cheapest_per_date(outbound_options)
@@ -784,15 +825,8 @@ class FlightAlternativesGenerator:
             ret_f = ret_by_date.get(preferred_return)
             original_total = (out_f.price if out_f else 0) + (ret_f.price if ret_f else 0)
 
-        # User airline reference total
+        # User airline baseline = actual selected total (per-passenger)
         selected_original_total = original_total
-        if selected_codes:
-            for code in selected_codes:
-                out_f = out_by_airline_date.get((code, preferred_outbound))
-                ret_f = ret_by_airline_date.get((code, preferred_return))
-                if out_f and ret_f:
-                    selected_original_total = out_f.price + ret_f.price
-                    break
 
         duration_offsets = range(
             -cfg.search_ranges.max_trip_duration_flex,
@@ -801,9 +835,14 @@ class FlightAlternativesGenerator:
 
         raw_proposals: list[TripWindowProposal] = []
 
+        # Only consider future dates (no proposals in the past)
+        today = date.today()
+
         # === Pass 1: Cheapest overall per date ===
         for out_date_str, out_flight in out_by_date.items():
             out_date = date.fromisoformat(out_date_str)
+            if out_date < today:
+                continue
             for offset in duration_offsets:
                 cand_duration = original_duration + offset
                 if cand_duration < cfg.search_ranges.min_trip_duration:
@@ -816,6 +855,9 @@ class FlightAlternativesGenerator:
                     continue
                 ret_flight = ret_by_date.get(ret_date_str)
                 if not ret_flight:
+                    continue
+                if (self._is_same_flight(out_flight, outbound_leg.selected_flight)
+                        and self._is_same_flight(ret_flight, return_leg.selected_flight)):
                     continue
 
                 p = self._make_proposal(
@@ -833,6 +875,8 @@ class FlightAlternativesGenerator:
                 if airline != code:
                     continue
                 out_date = date.fromisoformat(out_date_str)
+                if out_date < today:
+                    continue
                 for offset in duration_offsets:
                     cand_duration = original_duration + offset
                     if cand_duration < cfg.search_ranges.min_trip_duration:
@@ -845,6 +889,9 @@ class FlightAlternativesGenerator:
                         continue
                     ret_flight = ret_by_airline_date.get((code, ret_date_str))
                     if not ret_flight:
+                        continue
+                    if (self._is_same_flight(out_flight, outbound_leg.selected_flight)
+                            and self._is_same_flight(ret_flight, return_leg.selected_flight)):
                         continue
 
                     p = self._make_proposal(
@@ -861,6 +908,8 @@ class FlightAlternativesGenerator:
             if airline in selected_codes:
                 continue
             out_date = date.fromisoformat(out_date_str)
+            if out_date < today:
+                continue
             for offset in duration_offsets:
                 cand_duration = original_duration + offset
                 if cand_duration < cfg.search_ranges.min_trip_duration:
@@ -873,6 +922,9 @@ class FlightAlternativesGenerator:
                     continue
                 ret_flight = ret_by_airline_date.get((airline, ret_date_str))
                 if not ret_flight:
+                    continue
+                if (self._is_same_flight(out_flight, outbound_leg.selected_flight)
+                        and self._is_same_flight(ret_flight, return_leg.selected_flight)):
                     continue
 
                 p = self._make_proposal(
@@ -900,8 +952,8 @@ class FlightAlternativesGenerator:
         user_airline_proposals = [p for p in all_sorted if p.is_user_airline]
         non_user_proposals = [p for p in all_sorted if not p.is_user_airline]
 
-        reserved_ua = user_airline_proposals[:4]
-        remaining_slots = 15 - len(reserved_ua)
+        reserved_ua = user_airline_proposals[:cfg.limits.trip_window_user_reserved]
+        remaining_slots = cfg.limits.trip_window_max_raw - len(reserved_ua)
         raw_candidates = reserved_ua + non_user_proposals[:remaining_slots]
         raw_candidates.sort(key=lambda p: p.savings_amount, reverse=True)
 
@@ -912,6 +964,22 @@ class FlightAlternativesGenerator:
         )
 
         return raw_candidates
+
+    @staticmethod
+    def _is_same_flight(proposal_flight: FlightData, selected_flight: FlightData | None) -> bool:
+        """Check if a proposed flight matches the selected flight.
+
+        Matches on airline + route + stops (not flight_numbers, which are
+        synthesized by DB1B and don't represent real flight identifiers).
+        """
+        if not selected_flight:
+            return False
+        return (
+            proposal_flight.airline_code == selected_flight.airline_code
+            and proposal_flight.stops == selected_flight.stops
+            and proposal_flight.origin_airport == selected_flight.origin_airport
+            and proposal_flight.destination_airport == selected_flight.destination_airport
+        )
 
     def _make_proposal(
         self,
@@ -933,10 +1001,10 @@ class FlightAlternativesGenerator:
 
         same_airline = out_flight.airline_code == ret_flight.airline_code
 
-        # Determine layer: ≤21 days shift = Layer 2 (medium), >21 = Layer 3 (high)
+        # Determine layer based on date distance from preferred
         days_shift = abs((date.fromisoformat(out_date_str) - pref_out).days)
 
-        if days_shift <= 21:
+        if days_shift <= cfg.search_ranges.layer_split_days:
             layer = 2
             disruption = "medium"
         else:
@@ -1035,9 +1103,9 @@ def fallback_select_proposals(
             return abs((date.fromisoformat(p.outbound_date) - pref_out).days)
 
         if category == "different_month":
-            filtered = [p for p in proposals if _days_from_pref(p) > 21]
+            filtered = [p for p in proposals if _days_from_pref(p) > cfg.search_ranges.layer_split_days]
         else:
-            filtered = [p for p in proposals if _days_from_pref(p) <= 21]
+            filtered = [p for p in proposals if _days_from_pref(p) <= cfg.search_ranges.layer_split_days]
         if filtered:
             proposals = filtered
 

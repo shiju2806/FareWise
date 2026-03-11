@@ -1,3 +1,4 @@
+import { Popover } from "radix-ui";
 import type { FlightOption } from "@/types/flight";
 import type { FlightPolicyStatus } from "@/types/search";
 import { formatPrice } from "@/lib/currency";
@@ -170,31 +171,100 @@ export function FlightOptionCard({
 
         {/* ---- Duration + Stops ---- */}
         <div className="w-[120px] shrink-0 text-center">
-          <div className="text-xs text-foreground leading-tight">
-            {formatDuration(flight.duration_minutes)}
-            <span className="mx-1 text-muted-foreground">·</span>
-            <span
-              className={
-                flight.stops === 0
-                  ? "text-emerald-600 font-medium"
-                  : flight.duration_minutes > 720
-                  ? "text-amber-600 font-medium"
-                  : "text-muted-foreground"
-              }
-            >
-              {stopsLabel}
-            </span>
-          </div>
-          {flight.stop_airports && (
-            <div className="text-[10px] text-muted-foreground leading-tight truncate">
-              via {flight.stop_airports}
-            </div>
-          )}
-          {flight.stops > 0 && flight.duration_minutes > 720 && (
-            <div className="text-[9px] text-amber-600 font-medium leading-tight">
-              Long layover
-            </div>
-          )}
+          <Popover.Root>
+            <Popover.Trigger asChild>
+              <button
+                type="button"
+                className="w-full text-center cursor-pointer hover:bg-muted/50 rounded px-1 -mx-1 transition-colors"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="text-xs text-foreground leading-tight">
+                  {formatDuration(flight.duration_minutes)}
+                  <span className="mx-1 text-muted-foreground">·</span>
+                  <span
+                    className={
+                      flight.stops === 0
+                        ? "text-emerald-600 font-medium"
+                        : flight.duration_minutes > 720
+                        ? "text-amber-600 font-medium"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    {stopsLabel}
+                  </span>
+                  <svg className="inline-block w-3 h-3 ml-0.5 text-muted-foreground" viewBox="0 0 16 16" fill="none">
+                    <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M8 7v4M8 5.5v0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </div>
+                {flight.stops > 0 && flight.stop_airports && (
+                  <div className="text-[10px] text-muted-foreground leading-tight truncate">
+                    via {flight.stop_airports}
+                  </div>
+                )}
+                {flight.stops > 0 && flight.duration_minutes > 720 && (
+                  <div className="text-[9px] text-amber-600 font-medium leading-tight">
+                    Long layover
+                  </div>
+                )}
+              </button>
+            </Popover.Trigger>
+            <Popover.Portal>
+              <Popover.Content
+                className="z-50 w-64 rounded-lg border border-border bg-card shadow-lg p-3 text-sm"
+                sideOffset={5}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="font-semibold text-xs text-foreground mb-2">
+                  {flight.stops > 0 ? "Connection Details" : "Flight Details"}
+                </div>
+                <div className="space-y-1.5 text-xs text-muted-foreground">
+                  <div className="flex justify-between">
+                    <span>Route</span>
+                    <span className="font-medium text-foreground">
+                      {flight.origin_airport}
+                      {flight.stops > 0 && flight.stop_airports && ` → ${flight.stop_airports.replace(/,/g, " →")}`}
+                      {` → ${flight.destination_airport}`}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>{flight.stops > 0 ? "Stops" : "Type"}</span>
+                    <span className="font-medium text-foreground">
+                      {flight.stops > 0
+                        ? `${flight.stops}${flight.stop_airports ? ` (via ${flight.stop_airports})` : ""}`
+                        : "Nonstop"
+                      }
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Total duration</span>
+                    <span className="font-medium text-foreground">{formatDuration(flight.duration_minutes)}</span>
+                  </div>
+                  {flight.cabin_class && (
+                    <div className="flex justify-between">
+                      <span>Cabin</span>
+                      <span className="font-medium text-foreground capitalize">{flight.cabin_class}</span>
+                    </div>
+                  )}
+                  {flight.flight_numbers && (
+                    <div className="flex justify-between">
+                      <span>Flight</span>
+                      <span className="font-medium text-foreground">{flight.flight_numbers}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="mt-3 pt-2 border-t border-border">
+                  <p className="text-[10px] text-muted-foreground italic leading-snug">
+                    {flight.stops > 0
+                      ? "Detailed layover times, terminals, and gate information will be available when connected to a live booking API."
+                      : "Terminal, gate, and aircraft details will be available when connected to a live booking API."
+                    }
+                  </p>
+                </div>
+                <Popover.Arrow className="fill-card" />
+              </Popover.Content>
+            </Popover.Portal>
+          </Popover.Root>
         </div>
 
         {/* ---- Badges ---- */}
@@ -231,6 +301,11 @@ export function FlightOptionCard({
           {flight.stops > 0 && flight.duration_minutes > 720 && (
             <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 whitespace-nowrap">
               {formatDuration(flight.duration_minutes)} total
+            </span>
+          )}
+          {flight.stops > 0 && flight.valid_layover === false && (
+            <span className="text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 whitespace-nowrap">
+              Non-hub connection
             </span>
           )}
           {flight.seats_remaining != null && flight.seats_remaining <= 5 && (

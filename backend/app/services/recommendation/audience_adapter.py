@@ -18,7 +18,7 @@ Output shapes (matching frontend TypeScript interfaces):
 from datetime import datetime, timezone
 
 from app.services.recommendation.advisor import AdvisorOutput
-from app.services.recommendation.config import CABIN_DOWNGRADE_MAP
+from app.services.recommendation.config import CABIN_DOWNGRADE_MAP, recommendation_config as cfg
 from app.services.recommendation.context_assembler import TripContext
 from app.services.recommendation.cost_driver_analyzer import CostDriverReport
 from app.services.recommendation.trade_off_resolver import (
@@ -208,6 +208,9 @@ class AudienceAdapter:
             "savings_percent": alt.savings_percent,
             "departure_time": alt.departure_time,
             "duration_minutes": alt.duration_minutes,
+            "stop_airports": alt.stop_airports,
+            "origin_airport": alt.origin_airport,
+            "destination_airport": alt.destination_airport,
         }
         if sa.reason:
             d["reason"] = sa.reason
@@ -359,7 +362,7 @@ class AudienceAdapter:
 
         savings = current_total - suggested_total
         savings_pct = round(savings / current_total * 100, 1)
-        if savings < 200 or savings_pct < 15:
+        if savings < cfg.cabin_downgrade.min_savings_amount or savings_pct < cfg.cabin_downgrade.min_savings_percent:
             return None
 
         return {

@@ -17,5 +17,6 @@ export interface FlightOption {
   is_alternate_airport: boolean;
   is_alternate_date: boolean;
   within_flexibility?: boolean;
+  valid_layover?: boolean;
   score?: number;
 }

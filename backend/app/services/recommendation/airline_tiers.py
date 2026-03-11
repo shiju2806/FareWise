@@ -129,3 +129,26 @@ def same_alliance(code_a: str, code_b: str) -> bool:
     a = get_alliance(code_a)
     b = get_alliance(code_b)
     return a is not None and a == b
+
+
+def is_tier_compatible(
+    alt_code: str, selected_code: str, cabin_class: str,
+    savings_pct: float = 0.0, alt_stops: int = 0, selected_stops: int = 0,
+) -> tuple[bool, bool]:
+    """Check if an alternative's tier is compatible with the selected flight.
+
+    Returns (allowed, is_budget_exception).
+
+    For business/first: only full_service or same airline allowed.
+    Budget exception: mid_tier/low_cost with >60% savings and same-or-fewer stops.
+    Economy/PE: all tiers allowed.
+    """
+    if cabin_class not in ("business", "first"):
+        return True, False
+    if alt_code == selected_code:
+        return True, False
+    if get_tier(alt_code) == "full_service":
+        return True, False
+    if savings_pct >= 60.0 and alt_stops <= selected_stops:
+        return True, True
+    return False, False
