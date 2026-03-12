@@ -57,8 +57,12 @@ class CompanionBudgetAgent(TripAgent):
 
     async def _search_cabin_leg(
         self, cabin: str, leg_origin: str, leg_dest: str, leg_date, leg_seq: int,
+        employee_airline: str = "",
     ) -> tuple[str, int, float]:
-        """Search cheapest flight for a cabin x leg combo. Returns (cabin, seq, price)."""
+        """Search cheapest flight for a cabin x leg combo. Returns (cabin, seq, price).
+
+        Prefers the same airline as the employee's anchor selection.
+        """
         try:
             flights = await flight_provider.search_flights(
                 origin=leg_origin,
@@ -72,6 +76,11 @@ class CompanionBudgetAgent(TripAgent):
 
         if flights:
             flights.sort(key=lambda f: f.get("price", float("inf")))
+            # Prefer same airline as employee's selection
+            if employee_airline:
+                same_airline = [f for f in flights if f.get("airline_code") == employee_airline]
+                if same_airline:
+                    return cabin, leg_seq, same_airline[0]["price"]
             return cabin, leg_seq, flights[0]["price"]
         return cabin, leg_seq, 0
 
@@ -92,10 +101,12 @@ class CompanionBudgetAgent(TripAgent):
             for leg in state.legs:
                 if not leg.preferred_date:
                     continue
+                # Extract employee's airline from anchor flight for same-airline preference
+                emp_airline = (leg.anchor_flight or {}).get("airline_code", "")
                 tasks.append(
                     self._search_cabin_leg(
                         cabin, leg.origin_airport, leg.destination_airport,
-                        leg.preferred_date, leg.sequence,
+                        leg.preferred_date, leg.sequence, emp_airline,
                     )
                 )
 

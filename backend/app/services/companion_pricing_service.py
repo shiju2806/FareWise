@@ -292,6 +292,8 @@ class CompanionPricingService:
         from uuid import UUID
 
         from app.models.trip import Trip
+        from app.models.policy import Selection
+        from app.models.search_log import FlightOption
 
         # Load trip legs
         result = await db.execute(
@@ -302,6 +304,21 @@ class CompanionPricingService:
             raise ValueError(f"Trip {trip_id} not found")
 
         legs_sorted = sorted(trip.legs, key=lambda l: l.sequence)
+
+        # Load employee's selected airline per leg for same-airline preference
+        employee_airline_per_leg: dict[str, str] = {}
+        for leg in legs_sorted:
+            sel_result = await db.execute(
+                select(Selection).where(Selection.trip_leg_id == leg.id)
+            )
+            sel = sel_result.scalar_one_or_none()
+            if sel:
+                fo_result = await db.execute(
+                    select(FlightOption).where(FlightOption.id == sel.flight_option_id)
+                )
+                fo = fo_result.scalar_one_or_none()
+                if fo and fo.airline_code:
+                    employee_airline_per_leg[str(leg.id)] = fo.airline_code
 
         # Budget = sum of anchor prices across legs
         budget = sum(anchor_prices.values())
@@ -335,11 +352,10 @@ class CompanionPricingService:
                 # Sort by price
                 flights.sort(key=lambda f: f.get("price", float("inf")))
 
-                # Prefer same airline as anchor if available
-                anchor_flight_id = anchor_prices.get(leg_id)
-                # Find a reasonable option (cheapest, preferring nonstop)
-                nonstops = [f for f in flights if f.get("stops", 0) == 0]
-                best = nonstops[0] if nonstops else flights[0]
+                # Prefer same airline as employee's selection, fall back to cheapest
+                emp_airline = employee_airline_per_leg.get(leg_id, "")
+                same_airline = [f for f in flights if f.get("airline_code") == emp_airline] if emp_airline else []
+                best = same_airline[0] if same_airline else flights[0]
 
                 per_person_per_leg.append(best["price"])
                 airline_codes.append(best.get("airline_code", ""))
