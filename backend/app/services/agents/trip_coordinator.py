@@ -59,15 +59,21 @@ RULES:
    airline or loyalty program. Do NOT search yet.
 6. For business/first class WITH an airline preference (or user said "no
    preference"): call update_trip then search_flights immediately.
-7. For business/first class: when calling search_flights, ALSO call ask_user
+7. When calling search_flights (ANY cabin class), ALSO call ask_user
    with block_type="companion_prompt" in the SAME response to ask about
    companions — UNLESS the user already mentioned companions or has been
    asked before (companions asked=true in state).
+7b. After companions are confirmed (count > 0) and dates_asked=false in state,
+   ask about travel dates using ask_user with block_type="companion_dates_prompt".
+   Also call update_trip with companions_same_dates=true or false based on the
+   user's answer. This determines if companions fly on the same dates or different.
 8. CRITICAL: Only update fields the user actually mentioned. If the user says
    "Air Canada" answering an airline question, update preferred_airline ONLY.
    Do NOT infer companions_count from that answer. Do NOT change fields the
    user did not address.
-9. Economy/premium_economy with complete legs: call update_trip then mark_complete.
+9. Economy/premium_economy with complete legs AND companions resolved (count=0
+   or budget_calculated): call update_trip then mark_complete. Do NOT mark
+   complete if companions are unknown (count=-1) — ask about companions first.
 10. "meeting on [date]" -> arrive day before, return day after.
 11. "day trip" / "same day return" -> two legs, same date, flexibility_days=0.
 12. Multi-city -> create sequential legs, 2-3 days per city.
@@ -139,6 +145,14 @@ TRIP_TOOLS = [
                         "Only change this when the user explicitly mentions companions."
                     ),
                 },
+                "companions_same_dates": {
+                    "type": "boolean",
+                    "description": (
+                        "True if companions travel on the same dates as the employee, "
+                        "false if they have different travel dates. Only set when the "
+                        "user explicitly answers the companion dates question."
+                    ),
+                },
                 "confidence": {"type": "number"},
                 "interpretation_notes": {"type": "string"},
             },
@@ -167,7 +181,8 @@ TRIP_TOOLS = [
         "name": "ask_user",
         "description": (
             "Ask the user a question when you need information you cannot infer. "
-            "Set block_type to 'companion_prompt' to show a structured UI picker."
+            "Set block_type to 'companion_prompt' for companion picker, "
+            "'companion_dates_prompt' for date preference question."
         ),
         "parameters": {
             "type": "object",
@@ -178,9 +193,10 @@ TRIP_TOOLS = [
                 },
                 "block_type": {
                     "type": "string",
-                    "enum": ["companion_prompt", "text"],
+                    "enum": ["companion_prompt", "companion_dates_prompt", "text"],
                     "description": (
                         "'companion_prompt' shows structured companion picker. "
+                        "'companion_dates_prompt' shows same/different dates picker. "
                         "'text' is a plain question."
                     ),
                 },
@@ -192,10 +208,11 @@ TRIP_TOOLS = [
         "name": "mark_complete",
         "description": (
             "Mark the trip as ready. Call when: "
-            "(a) economy/premium_economy: immediately after update_trip when legs complete. "
+            "(a) economy/premium_economy + solo (companions_count=0): after update_trip. "
             "(b) business/first + solo: when user says 'just me'/'solo', call update_trip "
             "with companions_count=0 AND mark_complete in the same response. "
-            "(c) business/first + companions: after calculate_budget completes."
+            "(c) any cabin + companions: after calculate_budget completes. "
+            "Do NOT call mark_complete if companions_count is -1 (unknown)."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -306,6 +323,12 @@ class TripCoordinator:
                         "data": {"question": question},
                     })
                     state.companions.asked = True
+                elif block_type == "companion_dates_prompt":
+                    blocks.append({
+                        "type": "companion_dates_prompt",
+                        "data": {"question": question},
+                    })
+                    state.companions.dates_asked = True
 
             elif name == "mark_complete":
                 state.stage = "ready"
@@ -353,6 +376,18 @@ class TripCoordinator:
                 reply = self._append_content(reply, budget_resp.content)
                 blocks.extend(budget_resp.blocks)
                 state = budget_resp.state or state
+
+        # Safety net: if companions > 0 but dates question not asked, ask it
+        if (state.companions.count > 0
+                and not state.companions.dates_asked
+                and not any(b.get("type") == "companion_dates_prompt" for b in blocks)):
+            q = "Will your companions be traveling on the same dates as you, or different dates?"
+            reply = self._append_content(reply, q)
+            blocks.append({
+                "type": "companion_dates_prompt",
+                "data": {"question": q},
+            })
+            state.companions.dates_asked = True
 
         # Apply budget recommendation to legs — the recommendation IS the state
         if state.companions.budget_calculated and state.companions.recommended_cabin:
@@ -449,6 +484,10 @@ class TripCoordinator:
                 state.companions.count = cc
                 state.companions.asked = True
 
+        if "companions_same_dates" in args:
+            state.companions.same_dates = args["companions_same_dates"]
+            state.companions.dates_asked = True
+
         if "confidence" in args:
             state.confidence = args["confidence"]
         if "interpretation_notes" in args:
@@ -524,15 +563,19 @@ class TripCoordinator:
         )
         if not all_have_data:
             return False
-        cabin = state.legs[0].cabin_class.lower()
-        if cabin not in ("business", "first"):
-            return True  # Economy is ready when legs are complete
-        # Business/first: need search + companions resolved
-        all_searched = all(leg.searched for leg in state.legs)
+
+        # Companions must be resolved for ALL cabin classes
         companions_resolved = (
             state.companions.count == 0  # Solo confirmed
             or state.companions.budget_calculated  # Budget done for companions
         )
+
+        cabin = state.legs[0].cabin_class.lower()
+        if cabin not in ("business", "first"):
+            # Economy/premium: ready when legs complete + companions resolved
+            return companions_resolved
+        # Business/first: also need search completed
+        all_searched = all(leg.searched for leg in state.legs)
         return all_searched and companions_resolved
 
     @staticmethod

@@ -219,6 +219,49 @@ function CompanionPrompt({ block, onSendMessage }: { block: Block; onSendMessage
 }
 
 /* ------------------------------------------------------------------ */
+/*  CompanionDatesPrompt — same dates or different?                   */
+/* ------------------------------------------------------------------ */
+
+function CompanionDatesPrompt({ block, onSendMessage }: { block: Block; onSendMessage: (text: string) => void }) {
+  const [answered, setAnswered] = useState(false);
+
+  const { question } = block.data;
+
+  if (answered) return null;
+
+  function send(text: string) {
+    setAnswered(true);
+    onSendMessage(text);
+  }
+
+  return (
+    <div className="my-2 rounded-lg border border-border bg-card p-3 space-y-2">
+      {question && <p className="text-sm">{question}</p>}
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => send("companions traveling on same dates as me")}
+          className="text-xs px-3 py-1.5 rounded-md border border-primary/30 text-primary hover:bg-primary/10 transition-colors flex items-center gap-1">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round">
+            <rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/>
+            <line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/>
+          </svg>
+          Same dates as me
+        </button>
+        <button type="button" onClick={() => send("companions have different travel dates")}
+          className="text-xs px-3 py-1.5 rounded-md border border-primary/30 text-primary hover:bg-primary/10 transition-colors flex items-center gap-1">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/>
+            <path d="M3 10h18"/><path d="m14 14-4 4"/><path d="m10 14 4 4"/>
+          </svg>
+          Different dates
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  BlockRenderer — renders structured blocks inline in chat          */
 /* ------------------------------------------------------------------ */
 
@@ -229,8 +272,13 @@ function BlockRenderer({ block, onSendMessage }: { block: Block; onSendMessage: 
     return <CompanionPrompt block={block} onSendMessage={onSendMessage} />;
   }
 
+  if (block.type === "companion_dates_prompt") {
+    return <CompanionDatesPrompt block={block} onSendMessage={onSendMessage} />;
+  }
+
   if (block.type === "budget_card") {
-    const { anchor_total, total_travelers, recommended_cabin, reason, cabin_options } = block.data;
+    const { anchor_total, total_travelers, recommended_cabin, reason, cabin_options,
+            near_miss_note, savings_note, source } = block.data;
 
     return (
       <div className="my-2 rounded-lg border border-green-200 bg-green-50/80 dark:bg-green-950/20 dark:border-green-800 p-3 space-y-2">
@@ -238,9 +286,16 @@ function BlockRenderer({ block, onSendMessage }: { block: Block; onSendMessage: 
           <p className="text-xs font-semibold text-green-800 dark:text-green-300">
             Cabin Budget for {total_travelers} Travelers
           </p>
-          <p className="text-xs text-green-600 dark:text-green-400">
-            Budget: ${Number(anchor_total).toLocaleString()}
-          </p>
+          <div className="flex items-center gap-1.5">
+            {source === "llm" && (
+              <span className="text-[9px] bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 px-1.5 py-0.5 rounded-full">
+                AI recommended
+              </span>
+            )}
+            <p className="text-xs text-green-600 dark:text-green-400">
+              Budget: ${Number(anchor_total).toLocaleString()}
+            </p>
+          </div>
         </div>
 
         <div className="space-y-1">
@@ -264,6 +319,15 @@ function BlockRenderer({ block, onSendMessage }: { block: Block; onSendMessage: 
         </div>
 
         <p className="text-[11px] text-green-700 dark:text-green-400 italic">{reason}</p>
+
+        {near_miss_note && (
+          <div className="text-[10px] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 px-2 py-1 rounded">
+            {near_miss_note}
+          </div>
+        )}
+        {savings_note && (
+          <p className="text-[10px] text-green-600 dark:text-green-400">{savings_note}</p>
+        )}
       </div>
     );
   }

@@ -362,16 +362,6 @@ export default function ApprovalDetailPage() {
                     {formatPrice(sr.companion_snapshot.combined_total, sr.currency || "USD")}
                   </span>
                 </div>
-                {sr.companion_snapshot.nearby_date_savings.length > 0 && (
-                  <div className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-1.5 mt-1">
-                    <p className="text-[10px] font-semibold text-emerald-700">Companion date savings available</p>
-                    {sr.companion_snapshot.nearby_date_savings.slice(0, 3).map((n, i) => (
-                      <p key={i} className="text-[10px] text-emerald-600">
-                        {n.route}: {formatPrice(n.savings_vs_selected, sr.currency || "USD")} less on {n.date} ({n.date_diff_days > 0 ? `+${n.date_diff_days}` : n.date_diff_days}d)
-                      </p>
-                    ))}
-                  </div>
-                )}
               </div>
             )}
           </CardContent>

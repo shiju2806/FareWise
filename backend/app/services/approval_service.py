@@ -58,15 +58,7 @@ class ApprovalService:
                     }
                     for o in comp_result.companion_options
                 ],
-                "nearby_date_savings": [
-                    {
-                        "leg_id": n.leg_id, "route": n.route, "date": n.date,
-                        "date_diff_days": n.date_diff_days,
-                        "savings_vs_selected": n.savings_vs_selected,
-                        "per_person": n.per_person,
-                    }
-                    for n in comp_result.nearby_date_options
-                ],
+                "nearby_date_savings": [],  # Removed — LLM advisor handles date suggestions
             }
         except Exception as e:
             logger.warning("Companion pricing failed for trip %s: %s", trip.id, e)

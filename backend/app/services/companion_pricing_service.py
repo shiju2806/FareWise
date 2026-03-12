@@ -2,12 +2,10 @@
 
 Given an employee's confirmed flight selections, queries DB1B for economy
 and premium_economy fares on the same routes and dates for N companions.
-Also checks ±2 day shifts for cheaper companion fares.
 """
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +78,9 @@ class CabinBudgetResult:
     recommendation_reason: str
     cabin_options: list[CabinOption] = field(default_factory=list)
     economy_savings: float = 0.0
+    near_miss_note: str | None = None
+    savings_note: str | None = None
+    source: str = "fallback"
 
 
 class CompanionPricingService:
@@ -159,7 +160,6 @@ class CompanionPricingService:
             )
 
         companion_options = []
-        nearby_date_options = []
 
         for leg, fo in leg_selections:
             route = f"{leg.origin_airport} → {leg.destination_airport}"
@@ -193,54 +193,9 @@ class CompanionPricingService:
                     duration_minutes=cheapest.get("duration_minutes", 0),
                 ))
 
-                # Check ±2 days for cheaper options
-                for day_offset in range(-2, 3):
-                    if day_offset == 0:
-                        continue
-                    alt_date = sel_date + timedelta(days=day_offset)
-                    alt_flights = await flight_provider.search_flights(
-                        leg.origin_airport,
-                        leg.destination_airport,
-                        alt_date,
-                        companion_cabin,
-                    )
-                    alt_same = [f for f in alt_flights if f.get("airline_code") == airline_code]
-                    alt_best = alt_same[0] if alt_same else (alt_flights[0] if alt_flights else None)
-
-                    if alt_best and alt_best["price"] < per_person:
-                        nearby_date_options.append(NearbyDateOption(
-                            leg_id=str(leg.id),
-                            route=route,
-                            date=alt_date.isoformat(),
-                            cabin_class=companion_cabin,
-                            airline_code=alt_best.get("airline_code", ""),
-                            airline_name=alt_best.get("airline_name", ""),
-                            per_person=alt_best["price"],
-                            total=alt_best["price"] * companions,
-                            stops=alt_best.get("stops", 0),
-                            date_diff_days=day_offset,
-                            savings_vs_selected=per_person - alt_best["price"],
-                        ))
-
-        # Sort nearby options by savings
-        nearby_date_options.sort(key=lambda x: x.savings_vs_selected, reverse=True)
-
         # Calculate combined totals
         companion_total = sum(o.total for o in companion_options)
-        combined_min = employee_total + companion_total
-        combined_max = combined_min
-
-        if nearby_date_options:
-            # Best possible companion total using cheapest date per leg
-            best_per_leg = {}
-            for opt in nearby_date_options:
-                if opt.leg_id not in best_per_leg or opt.per_person < best_per_leg[opt.leg_id]:
-                    best_per_leg[opt.leg_id] = opt.per_person
-            best_companion = sum(
-                best_per_leg.get(o.leg_id, o.per_person) * companions
-                for o in companion_options
-            )
-            combined_min = employee_total + best_companion
+        combined_total = employee_total + companion_total
 
         # Build summary
         comp_per_person = sum(o.per_person for o in companion_options)
@@ -252,22 +207,15 @@ class CompanionPricingService:
                 f"Family of {companions} in {companion_cabin}: "
                 f"~${comp_per_person:,.0f}/person (${companion_total:,.0f} total)."
             )
-            summary_parts.append(f"Combined: ${combined_min:,.0f}–${combined_max:,.0f}.")
-        if nearby_date_options:
-            best = nearby_date_options[0]
-            summary_parts.append(
-                f"Tip: shifting {best.route} by {abs(best.date_diff_days)} day(s) "
-                f"saves ${best.savings_vs_selected * companions:,.0f} for companions."
-            )
+            summary_parts.append(f"Combined: ${combined_total:,.0f}.")
 
         return CompanionPricingResult(
             employee_total=employee_total,
             companions_count=companions,
             companion_cabin_class=companion_cabin,
             companion_options=companion_options,
-            nearby_date_options=nearby_date_options[:6],  # Top 6 alternatives
-            combined_min=combined_min,
-            combined_max=combined_max,
+            combined_min=combined_total,
+            combined_max=combined_total,
             summary=" ".join(summary_parts),
         )
 
@@ -377,47 +325,55 @@ class CompanionPricingService:
                 airline_codes=airline_codes,
             ))
 
-        # Recommend highest cabin that fits
-        recommended = "economy"
-        for opt in cabin_options:
-            if opt.fits_budget:
-                recommended = opt.cabin_class
-                break
+        # Build route summary for advisor context
+        route_parts = []
+        for leg in legs_sorted:
+            route_parts.append(f"{leg.origin_airport} \u2192 {leg.destination_airport}")
+        route_summary = ", ".join(route_parts)
 
-        # Build reason string
-        rec_opt = next((o for o in cabin_options if o.cabin_class == recommended), None)
+        # Determine employee's cabin and airline
+        employee_cabin = legs_sorted[0].cabin_class if legs_sorted else "business"
+        first_airline = next(iter(employee_airline_per_leg.values()), "")
+
+        # Convert CabinOption dataclasses to dicts for advisor
+        advisor_options = [
+            {
+                "cabin": opt.cabin_class,
+                "total_per_person": opt.total_per_person,
+                "total_all_travelers": opt.total_all_travelers,
+                "fits": opt.fits_budget,
+                "delta": opt.budget_delta,
+            }
+            for opt in cabin_options
+        ]
+
+        # LLM advisor for recommendation (with rule-based fallback)
+        from app.services.recommendation.companion_advisor import companion_budget_advisor
+
+        advisor_output = await companion_budget_advisor.advise(
+            cabin_options=advisor_options,
+            budget=budget,
+            total_travelers=total_travelers,
+            employee_cabin=employee_cabin,
+            employee_airline=first_airline,
+            route_summary=route_summary,
+        )
+
         econ_opt = next((o for o in cabin_options if o.cabin_class == "economy"), None)
         economy_savings = budget - (econ_opt.total_all_travelers if econ_opt else 0)
-
-        if recommended == "business":
-            reason = (
-                f"All {total_travelers} travelers can fly business class "
-                f"for ${rec_opt.total_all_travelers:,.0f} — within your ${budget:,.0f} budget."
-            )
-        elif recommended == "premium_economy":
-            biz_opt = next((o for o in cabin_options if o.cabin_class == "business"), None)
-            reason = (
-                f"Business for {total_travelers} would be ${biz_opt.total_all_travelers:,.0f} "
-                f"(over budget). Premium economy fits at ${rec_opt.total_all_travelers:,.0f} "
-                f"({abs(rec_opt.budget_delta_percent):.0f}% {'under' if rec_opt.budget_delta >= 0 else 'over'} budget)."
-            )
-        else:
-            pe_opt = next((o for o in cabin_options if o.cabin_class == "premium_economy"), None)
-            reason = (
-                f"Premium economy for {total_travelers} would be ${pe_opt.total_all_travelers:,.0f} "
-                f"(over budget). Economy fits at ${rec_opt.total_all_travelers:,.0f}, "
-                f"saving ${economy_savings:,.0f} vs your business class budget."
-            )
 
         return CabinBudgetResult(
             anchor_total=round(budget, 2),
             budget_envelope=round(budget, 2),
             budget_tolerance=tolerance,
             total_travelers=total_travelers,
-            recommended_cabin=recommended,
-            recommendation_reason=reason,
+            recommended_cabin=advisor_output.recommended_cabin,
+            recommendation_reason=advisor_output.reasoning,
             cabin_options=cabin_options,
             economy_savings=round(max(economy_savings, 0), 2),
+            near_miss_note=advisor_output.near_miss_note,
+            savings_note=advisor_output.savings_note,
+            source=advisor_output.source,
         )
 
 

@@ -1,4 +1,4 @@
-"""CompanionBudgetAgent — pure budget calculation for companion travel."""
+"""CompanionBudgetAgent — cabin budget calculation with LLM advisor for companion travel."""
 
 from __future__ import annotations
 
@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 class CompanionBudgetAgent(TripAgent):
     """Calculates cabin budget options for companion travel.
 
-    No LLM calls — this is a pure computation agent. The coordinator
-    calls this only when companions.count is known and > 0.
+    Gathers pricing data via parallel flight searches, then delegates the
+    recommendation decision to CompanionBudgetAdvisor (LLM-driven with
+    rule-based fallback).
     """
 
     requires: ClassVar[set[str]] = {"legs.anchor_price", "companions.count"}
@@ -143,28 +144,32 @@ class CompanionBudgetAgent(TripAgent):
                 "delta": round(anchor_total - total_all),
             })
 
-        # Pick highest cabin that fits
-        recommended = "economy"
-        for opt in cabin_options:
-            if opt["fits"]:
-                recommended = opt["cabin"]
-                break
+        # Build route summary for the advisor
+        route_parts = []
+        for leg in state.legs:
+            if leg.origin_airport and leg.destination_airport:
+                route_parts.append(f"{leg.origin_airport} \u2192 {leg.destination_airport}")
+        route_summary = ", ".join(route_parts)
 
-        rec_opt = next(o for o in cabin_options if o["cabin"] == recommended)
-        delta = abs(rec_opt["delta"])
-        delta_pct = round(delta / anchor_total * 100) if anchor_total else 0
-        over_under = "under" if rec_opt["delta"] >= 0 else "over"
+        # LLM advisor for recommendation (with rule-based fallback)
+        from app.services.recommendation.companion_advisor import companion_budget_advisor
 
-        reason = (
-            f"All {total_travelers} travelers can fly {recommended.replace('_', ' ').title()} "
-            f"for ${rec_opt['total_all_travelers']:,} — "
-            f"${delta:,} {over_under} your ${anchor_total:,.0f} business class budget."
+        advisor_output = await companion_budget_advisor.advise(
+            cabin_options=cabin_options,
+            budget=anchor_total,
+            total_travelers=total_travelers,
+            employee_cabin=state.legs[0].cabin_class if state.legs else "business",
+            employee_airline=state.legs[0].preferred_airline if state.legs else "",
+            route_summary=route_summary,
         )
 
         return {
             "anchor_total": round(anchor_total),
             "total_travelers": total_travelers,
-            "recommended_cabin": recommended,
-            "reason": reason,
+            "recommended_cabin": advisor_output.recommended_cabin,
+            "reason": advisor_output.reasoning,
+            "near_miss_note": advisor_output.near_miss_note,
+            "savings_note": advisor_output.savings_note,
             "cabin_options": cabin_options,
+            "source": advisor_output.source,
         }

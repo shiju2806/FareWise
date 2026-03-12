@@ -205,6 +205,16 @@ class WorkHoursConfig:
 
 
 @dataclass(frozen=True)
+class CompanionBudgetConfig:
+    """Thresholds for companion budget recommendations."""
+    budget_tolerance: float = 0.15          # 15% over anchor is acceptable
+    cabins: tuple = ("business", "premium_economy", "economy")
+    prefer_same_airline: bool = True
+    max_narrative_chars: int = 300
+    near_miss_threshold: float = 0.05       # within 5% of fitting = "near miss"
+
+
+@dataclass(frozen=True)
 class RecommendationConfig:
     """Top-level config aggregating all sub-configs."""
     policy_budgets: PolicyBudgets = field(default_factory=PolicyBudgets)
@@ -221,6 +231,7 @@ class RecommendationConfig:
     red_eye: RedEyeConfig = field(default_factory=RedEyeConfig)
     work_hours: WorkHoursConfig = field(default_factory=WorkHoursConfig)
     tier_filter: TierFilterConfig = field(default_factory=TierFilterConfig)
+    companion_budget: CompanionBudgetConfig = field(default_factory=CompanionBudgetConfig)
 
 
 # Singleton — import this everywhere

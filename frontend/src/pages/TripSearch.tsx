@@ -61,6 +61,19 @@ export default function TripSearch() {
   const { selections: hotelSelections, results: hotelResults } = useHotelStore();
   const hotelSectionRef = useRef<HTMLDivElement>(null);
 
+  // Read companions_same_dates from chat session data
+  const companionsSameDates = useMemo(() => {
+    if (!tripId) return null;
+    try {
+      const raw = sessionStorage.getItem(`farewise-assistant-${tripId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return parsed.companions_same_dates ?? null;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [tripId]);
+
   // Compute hotel check-in/check-out from selected flights
   const hotelDates = useMemo(() => {
     if (!currentTrip || currentTrip.legs.length < 2) return null;
@@ -557,48 +570,75 @@ export default function TripSearch() {
         <LegCard leg={activeLeg} index={activeLegIndex} />
       )}
 
-      {/* Companion date picker — shown when trip has companions */}
-      {currentTrip.companions > 0 && activeLeg && (
+      {/* Companion date picker — shown when trip has companions and dates differ */}
+      {currentTrip.companions > 0 && activeLeg && companionsSameDates !== true && (
         <div className="rounded-md border border-violet-200 bg-violet-50/50 p-3 space-y-2">
           <h4 className="text-sm font-semibold text-violet-700">
             Companion Travel ({currentTrip.companions} companion{currentTrip.companions > 1 ? "s" : ""})
           </h4>
-          <div className="flex items-center gap-3">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name={`companion-date-${activeLeg.id}`}
-                checked={!activeLeg.companion_preferred_date}
-                onChange={() => {
-                  patchLeg(activeLeg.id, { companion_preferred_date: null as unknown as string });
-                }}
-              />
-              Same as employee ({activeLeg.preferred_date})
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name={`companion-date-${activeLeg.id}`}
-                checked={!!activeLeg.companion_preferred_date}
-                onChange={() => {
-                  patchLeg(activeLeg.id, { companion_preferred_date: activeLeg.preferred_date });
-                }}
-              />
-              Different date
-            </label>
-            {activeLeg.companion_preferred_date && (
+          {companionsSameDates === false ? (
+            /* Companions have different dates — show date picker directly */
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-violet-600">Companion date:</span>
               <Input
                 type="date"
                 className="w-40 h-8 text-sm"
-                value={activeLeg.companion_preferred_date}
+                value={activeLeg.companion_preferred_date || activeLeg.preferred_date}
                 onChange={(e) => {
                   if (e.target.value) {
                     patchLeg(activeLeg.id, { companion_preferred_date: e.target.value });
                   }
                 }}
               />
-            )}
-          </div>
+              {activeLeg.companion_preferred_date && (
+                <button
+                  type="button"
+                  className="text-xs text-violet-500 underline"
+                  onClick={() => patchLeg(activeLeg.id, { companion_preferred_date: null as unknown as string })}
+                >
+                  Reset to employee date
+                </button>
+              )}
+            </div>
+          ) : (
+            /* Not yet decided or null — show radio toggle */
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={`companion-date-${activeLeg.id}`}
+                  checked={!activeLeg.companion_preferred_date}
+                  onChange={() => {
+                    patchLeg(activeLeg.id, { companion_preferred_date: null as unknown as string });
+                  }}
+                />
+                Same as employee ({activeLeg.preferred_date})
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="radio"
+                  name={`companion-date-${activeLeg.id}`}
+                  checked={!!activeLeg.companion_preferred_date}
+                  onChange={() => {
+                    patchLeg(activeLeg.id, { companion_preferred_date: activeLeg.preferred_date });
+                  }}
+                />
+                Different date
+              </label>
+              {activeLeg.companion_preferred_date && (
+                <Input
+                  type="date"
+                  className="w-40 h-8 text-sm"
+                  value={activeLeg.companion_preferred_date}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      patchLeg(activeLeg.id, { companion_preferred_date: e.target.value });
+                    }
+                  }}
+                />
+              )}
+            </div>
+          )}
           <p className="text-[10px] text-violet-600">
             Companion pricing will be recalculated based on this date.
           </p>

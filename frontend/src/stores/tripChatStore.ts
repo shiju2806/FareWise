@@ -29,6 +29,7 @@ interface PartialTrip {
   }[];
   companions?: number;
   companion_cabin_class?: string;
+  companions_same_dates?: boolean | null;
   interpretation_notes?: string;
   _agent_state?: Record<string, unknown>;
 }
@@ -175,7 +176,11 @@ export const useTripChatStore = create<TripChatState>((set, get) => ({
       try {
         sessionStorage.setItem(
           `farewise-assistant-${trip.id}`,
-          JSON.stringify({ messages, history: conversationHistory }),
+          JSON.stringify({
+            messages,
+            history: conversationHistory,
+            companions_same_dates: partialTrip.companions_same_dates,
+          }),
         );
       } catch { /* sessionStorage full */ }
 

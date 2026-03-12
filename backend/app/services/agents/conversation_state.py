@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal
 
-STATE_VERSION = 4
+STATE_VERSION = 5
 
 
 @dataclass
@@ -43,6 +43,9 @@ class CompanionState:
     asked: bool = False
     recommended_cabin: str | None = None
     budget_calculated: bool = False
+    # Phase H — companion date tracking
+    same_dates: bool | None = None    # None=not asked, True=same dates, False=different
+    dates_asked: bool = False         # whether we've asked the date question
 
 
 @dataclass
@@ -81,6 +84,8 @@ class ConversationState:
         lines += f"\nCompanions: count={self.companions.count}"
         lines += " (-1=unknown, 0=solo confirmed, 1+=count)"
         lines += f", asked={self.companions.asked}"
+        lines += f", dates_asked={self.companions.dates_asked}"
+        lines += f", same_dates={self.companions.same_dates}"
         lines += f", budget_calculated={self.companions.budget_calculated}"
         lines += f"\nStage: {self.stage}"
         return lines
@@ -109,6 +114,7 @@ class ConversationState:
             ],
             "companions": max(0, self.companions.count),
             "companion_cabin_class": self.companions.recommended_cabin or "economy",
+            "companions_same_dates": self.companions.same_dates,
             "interpretation_notes": self.interpretation_notes,
             # Agent-specific state that needs to survive round-trips
             "_agent_state": {
@@ -116,6 +122,8 @@ class ConversationState:
                 "stage": self.stage,
                 "companions_count": self.companions.count,
                 "companions_asked": self.companions.asked,
+                "companions_same_dates": self.companions.same_dates,
+                "companions_dates_asked": self.companions.dates_asked,
                 "companions_budget_calculated": self.companions.budget_calculated,
                 "legs_searched": [
                     {
@@ -172,6 +180,8 @@ class ConversationState:
                 asked=agent_state.get("companions_asked", False),
                 recommended_cabin=partial.get("companion_cabin_class"),
                 budget_calculated=agent_state.get("companions_budget_calculated", False),
+                same_dates=agent_state.get("companions_same_dates"),
+                dates_asked=agent_state.get("companions_dates_asked", False),
             ),
             stage=agent_state.get("stage", "planning"),
             confidence=partial.get("confidence", 0.0),

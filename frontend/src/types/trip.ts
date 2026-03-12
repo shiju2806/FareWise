@@ -85,4 +85,7 @@ export interface CabinBudgetResult {
   recommendation_reason: string;
   cabin_options: CabinOption[];
   economy_savings: number;
+  near_miss_note?: string | null;
+  savings_note?: string | null;
+  source: "llm" | "fallback";
 }

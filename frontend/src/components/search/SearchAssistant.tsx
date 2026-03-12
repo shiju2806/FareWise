@@ -318,8 +318,15 @@ export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated, s
 
         {cabinBudget && cabinBudget.cabin_options.length > 0 && (
           <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 rounded-lg p-2.5 text-xs space-y-2">
-            <div className="font-semibold text-emerald-900 dark:text-emerald-100">
-              Cabin Budget Recommendation
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-emerald-900 dark:text-emerald-100">
+                Cabin Budget Recommendation
+              </span>
+              {cabinBudget.source === "llm" && (
+                <span className="text-[9px] bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 px-1.5 py-0.5 rounded-full">
+                  AI recommended
+                </span>
+              )}
             </div>
             <div className="space-y-1 text-emerald-800 dark:text-emerald-200">
               <div className="flex justify-between">
@@ -354,7 +361,20 @@ export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated, s
                 </div>
               ))}
             </div>
-            {cabinBudget.economy_savings > 0 && (
+            <p className="text-[11px] text-emerald-700 dark:text-emerald-300 italic">
+              {cabinBudget.recommendation_reason}
+            </p>
+            {cabinBudget.near_miss_note && (
+              <div className="text-[10px] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 px-2 py-1 rounded">
+                {cabinBudget.near_miss_note}
+              </div>
+            )}
+            {cabinBudget.savings_note && (
+              <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                {cabinBudget.savings_note}
+              </p>
+            )}
+            {!cabinBudget.savings_note && cabinBudget.economy_savings > 0 && (
               <div className="text-[10px] text-emerald-600 dark:text-emerald-400">
                 Economy saves ${cabinBudget.economy_savings.toLocaleString()} vs your business class budget
               </div>
@@ -387,14 +407,6 @@ export function SearchAssistant({ tripId, activeLeg, legsCount, onTripUpdated, s
                 </span>
               </div>
             </div>
-            {companionPricing.nearby_date_options.length > 0 && (
-              <div className="text-[10px] text-blue-600 dark:text-blue-400">
-                Cheaper dates available — shift by{" "}
-                {Math.abs(companionPricing.nearby_date_options[0].date_diff_days)} day(s) saves $
-                {(companionPricing.nearby_date_options[0].savings_vs_selected *
-                  companionPricing.companions_count).toLocaleString()}
-              </div>
-            )}
           </div>
         )}
       </div>
