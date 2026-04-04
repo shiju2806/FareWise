@@ -363,21 +363,8 @@ class TripCoordinator:
                     blocks.extend(search_resp.blocks)
                     state = search_resp.state or state
 
-        # Safety net: if search ran + companions > 0 + budget not calculated,
-        # auto-trigger budget (LLM may not call it due to sequencing)
-        if (any(leg.searched for leg in state.legs)
-                and state.companions.count > 0
-                and not state.companions.budget_calculated
-                and not any(tc["name"] == "calculate_budget" for tc in tool_calls)):
-            budget_resp = await self._execute_agent(
-                "companion_budget", state, trimmed,
-            )
-            if budget_resp:
-                reply = self._append_content(reply, budget_resp.content)
-                blocks.extend(budget_resp.blocks)
-                state = budget_resp.state or state
-
-        # Safety net: if companions > 0 but dates question not asked, ask it
+        # Safety net: if companions > 0 but dates question not asked, ask it FIRST
+        # (must come before budget calculation so we know travel dates)
         if (state.companions.count > 0
                 and not state.companions.dates_asked
                 and not any(b.get("type") == "companion_dates_prompt" for b in blocks)):
@@ -388,6 +375,22 @@ class TripCoordinator:
                 "data": {"question": q},
             })
             state.companions.dates_asked = True
+
+        # Safety net: if search ran + companions > 0 + dates resolved + budget not calculated,
+        # auto-trigger budget (LLM may not call it due to sequencing)
+        dates_resolved = state.companions.same_dates is not None
+        if (any(leg.searched for leg in state.legs)
+                and state.companions.count > 0
+                and dates_resolved
+                and not state.companions.budget_calculated
+                and not any(tc["name"] == "calculate_budget" for tc in tool_calls)):
+            budget_resp = await self._execute_agent(
+                "companion_budget", state, trimmed,
+            )
+            if budget_resp:
+                reply = self._append_content(reply, budget_resp.content)
+                blocks.extend(budget_resp.blocks)
+                state = budget_resp.state or state
 
         # Apply budget recommendation to legs — the recommendation IS the state
         if state.companions.budget_calculated and state.companions.recommended_cabin:

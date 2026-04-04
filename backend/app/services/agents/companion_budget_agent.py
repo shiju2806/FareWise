@@ -59,9 +59,10 @@ class CompanionBudgetAgent(TripAgent):
     async def _search_cabin_leg(
         self, cabin: str, leg_origin: str, leg_dest: str, leg_date, leg_seq: int,
         employee_airline: str = "",
-    ) -> tuple[str, int, float]:
-        """Search cheapest flight for a cabin x leg combo. Returns (cabin, seq, price).
+    ) -> tuple[str, int, float, str]:
+        """Search cheapest flight for a cabin x leg combo.
 
+        Returns (cabin, seq, price, airline_code).
         Prefers the same airline as the employee's anchor selection.
         """
         try:
@@ -81,9 +82,11 @@ class CompanionBudgetAgent(TripAgent):
             if employee_airline:
                 same_airline = [f for f in flights if f.get("airline_code") == employee_airline]
                 if same_airline:
-                    return cabin, leg_seq, same_airline[0]["price"]
-            return cabin, leg_seq, flights[0]["price"]
-        return cabin, leg_seq, 0
+                    best = same_airline[0]
+                    return cabin, leg_seq, best["price"], best.get("airline_code", "")
+            best = flights[0]
+            return cabin, leg_seq, best["price"], best.get("airline_code", "")
+        return cabin, leg_seq, 0, ""
 
     async def _calculate_cabin_budget(
         self,
@@ -127,8 +130,12 @@ class CompanionBudgetAgent(TripAgent):
         cabin_prices: dict[str, list[float]] = {
             "business": [], "premium_economy": [], "economy": [],
         }
-        for cabin, _seq, price in results:
+        cabin_airlines: dict[str, list[str]] = {
+            "business": [], "premium_economy": [], "economy": [],
+        }
+        for cabin, _seq, price, airline_code in results:
             cabin_prices[cabin].append(price)
+            cabin_airlines[cabin].append(airline_code)
 
         cabin_options: list[dict] = []
         for cabin in ["business", "premium_economy", "economy"]:
@@ -142,6 +149,7 @@ class CompanionBudgetAgent(TripAgent):
                 "total_all_travelers": round(total_all),
                 "fits": fits,
                 "delta": round(anchor_total - total_all),
+                "airline_codes": cabin_airlines[cabin],
             })
 
         # Build route summary for the advisor

@@ -299,22 +299,31 @@ function BlockRenderer({ block, onSendMessage }: { block: Block; onSendMessage: 
         </div>
 
         <div className="space-y-1">
-          {(cabin_options as { cabin: string; total_all_travelers: number; fits: boolean }[])?.map(
-            (opt) => (
-              <div
-                key={opt.cabin}
-                className={`flex justify-between items-center text-xs px-2 py-1 rounded ${
-                  opt.cabin === recommended_cabin
-                    ? "bg-green-100 dark:bg-green-900/40 font-semibold"
-                    : ""
-                }`}
-              >
-                <span className="capitalize">{opt.cabin.replace("_", " ")}</span>
-                <span className={opt.fits ? "text-green-600 dark:text-green-400" : "text-red-500"}>
-                  ${Number(opt.total_all_travelers).toLocaleString()} {opt.fits ? "\u2713" : "\u2717"}
-                </span>
-              </div>
-            ),
+          {(cabin_options as { cabin: string; total_all_travelers: number; fits: boolean; airline_codes?: string[] }[])?.map(
+            (opt) => {
+              const airlines = opt.airline_codes?.filter(Boolean) ?? [];
+              const uniqueAirlines = [...new Set(airlines)];
+              return (
+                <div
+                  key={opt.cabin}
+                  className={`flex justify-between items-center text-xs px-2 py-1 rounded ${
+                    opt.cabin === recommended_cabin
+                      ? "bg-green-100 dark:bg-green-900/40 font-semibold"
+                      : ""
+                  }`}
+                >
+                  <span className="capitalize">
+                    {opt.cabin.replace("_", " ")}
+                    {uniqueAirlines.length > 0 && (
+                      <span className="text-[9px] text-muted-foreground ml-1">({uniqueAirlines.join(", ")})</span>
+                    )}
+                  </span>
+                  <span className={opt.fits ? "text-green-600 dark:text-green-400" : "text-red-500"}>
+                    ${Number(opt.total_all_travelers).toLocaleString()} {opt.fits ? "\u2713" : "\u2717"}
+                  </span>
+                </div>
+              );
+            },
           )}
         </div>
 
