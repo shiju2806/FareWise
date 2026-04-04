@@ -91,7 +91,7 @@ But let's be honest about what Skyscanner does well: flight search, price compar
 
 **The core value — transparency, policy enforcement, and accountability — could be built without AI.** Policy rules don't need LLMs. Savings calculations don't need LLMs. Approval workflows don't need LLMs. Audit trails don't need LLMs.
 
-**But the product would be significantly worse in three specific ways.**
+**~60% of FareWise's features are rule-based today.** The booking engine, budget math, policy checks, approval routing, and pricing comparisons are all traditional software engineering. But the 40% that uses LLMs is what makes FareWise usable and differentiated.
 
 ### What works without AI (and FareWise uses rules here intentionally)
 
@@ -137,7 +137,15 @@ The LLM ensures diversity (at least one same-airline, one cross-airline), filter
 
 **Could you approximate this with rules?** Partially. You could hard-code "1 same-airline, 1 different airline, 1 date-shift, 1 routing change, 1 cabin downgrade" and generate template reasons. But the reasons would be mechanical ("$340 cheaper") instead of contextual ("same Air Canada service, 1 day earlier, saves $340"). And the selection logic can't express "this red-eye isn't worth $400 savings for a 7-hour transatlantic flight" without hundreds of rules.
 
-#### 3. Approval narratives: 30-second decisions vs 10-minute investigations
+#### 3. Contextual companion budget reasoning
+
+Without AI: "Premium economy fits within budget. Business class exceeds budget by 87%." Template strings.
+
+With AI: "Premium economy keeps all 4 travelers within your $7,056 envelope while offering lie-flat-adjacent comfort on this 8-hour transatlantic route. Business is $6,108 over — worth requesting an exception if comfort is critical. Economy saves $2,313 but significantly reduces comfort for overnight travel."
+
+The reasoning considers route length, time of day, comfort tradeoffs, and family vs solo travel — things that would require hundreds of hand-coded rules per route type.
+
+#### 4. Approval narratives: 30-second decisions vs 10-minute investigations
 
 Without AI, the manager sees a table: selected price, cheapest price, policy status. They either rubber-stamp or spend 10 minutes clicking through details.
 
@@ -148,6 +156,32 @@ This is the difference between "here's the data, figure it out" and "here's what
 
 **Could you do this with templates?** For simple cases, yes: "Selected $X, cheapest was $Y, $Z premium." But templates can't handle companion travel narratives, near-miss budget situations, or multi-leg cost driver explanations. The LLM adapts to the specific trip context in ways that would require dozens of template branches.
 
+#### 5. Multi-turn conversation & error recovery
+
+Without AI: Fixed decision tree wizard. "Step 1: Where? Step 2: When? Step 3: Cabin?" Users must follow the script. Invalid input returns "Error: invalid format."
+
+With AI: Users can say anything in any order. "Actually, change it to premium economy and add a day." The coordinator handles re-routing, partial updates, corrections. "Did you mean London Heathrow or London City?" replaces "Error: ambiguous airport code."
+
+#### 6. Policy violation guidance
+
+Without AI: "DENIED: Exceeds $5,000 limit."
+
+With AI: "This booking exceeds your division's international travel ceiling by $1,200. This typically requires VP approval. Would you like to add a business justification? Previous approvals for similar routes cite client-facing meetings or conference attendance."
+
+Turns a rejection into actionable guidance — reduces support tickets and traveler frustration.
+
+### The side-by-side comparison
+
+| Capability | Rule-Based | With LLM | Delta |
+|---|---|---|---|
+| Trip creation | 12-field form, 3 pages | One sentence | Massive UX improvement |
+| Budget reasoning | "Fits/Doesn't fit" | Contextual narrative with tradeoffs | Trust & transparency |
+| Conversation flow | Fixed wizard | Freeform, handles corrections | User satisfaction |
+| Policy guidance | "Denied" | Explains why + suggests alternatives | Reduces support tickets |
+| Error recovery | "Invalid input" | "Did you mean London Heathrow?" | Fewer abandoned bookings |
+| Alternative curation | Top 5 by price | 3-5 with diverse tradeoffs and reasons | Better decisions |
+| Approval narrative | Data table | Contextual story | 30-second vs 10-minute reviews |
+
 ### The honest assessment
 
 **AI makes FareWise 3x better, but the core value proposition is deliverable without AI.**
@@ -157,6 +191,47 @@ A non-AI FareWise would be: a well-designed corporate travel tool with good sear
 AI turns it from "better Concur" into "travel advisor in software." The conversational interface drives adoption. The curation intelligence drives better decisions. The narratives drive faster approvals. But if you stripped the AI and kept the transparency architecture, you'd still have a useful product.
 
 **The AI is the moat, not the foundation.** The foundation is transparency. The AI makes it hard for someone to clone the transparency features and match the experience.
+
+---
+
+## Defending FareWise: The Objection Playbook
+
+### "We can just use Skyscanner / Google Flights"
+
+**Answer**: "Skyscanner is for individuals, not enterprises." It doesn't enforce travel policies, track budgets across companion groups, route approvals, or provide audit trails. Building that on top of Skyscanner is what SAP Concur does — and Concur costs $25+/user/month with a terrible UX.
+
+**The deeper point**: The AI isn't replacing the booking — it's replacing the travel coordinator. Large companies have human travel coordinators who interpret policies, suggest alternatives, and handle companion logistics. FareWise automates that role. Without LLMs, you'd need the same rigid forms that make Concur painful.
+
+### "This doesn't need AI — it's just rules"
+
+**Answer**: ~60% of FareWise IS rules. Policy enforcement, scoring, search, pricing — all deterministic. The AI handles the 40% that rules can't scale to: natural language understanding, contextual reasoning about tradeoffs, narrative generation, and freeform conversation flow.
+
+**The killer question**: "Could you build 80% of it without AI? Yes. Would anyone use it? That's the real question." The difference between a form-based travel tool and a conversational one is the difference between filing an expense report and texting your travel agent. Same outcome, completely different experience. Adoption rate is the #1 failure mode of corporate travel tools.
+
+### "Our travel spend isn't big enough to justify this"
+
+**Answer**: If your company spends less than $1M/year on travel, that's probably true. FareWise targets companies spending $2M-$30M/year where 15-20% overspend represents $300K-$6M in recoverable savings. The tool pays for itself if it captures even 5% of that.
+
+### "How is this different from Navan / Spotnana?"
+
+**Answer**: Navan and Spotnana are full TMC replacements — they handle booking, ticketing, expense management, the full stack. FareWise focuses narrowly on the decision layer: transparent alternatives, policy enforcement, and audit trails. It can sit on top of existing booking infrastructure rather than replacing it.
+
+**The transparency difference**: Navan tells the traveler "here's the best option." FareWise tells the traveler AND the manager "here are all the options, here's what we recommend and why, here's what you'd save with each alternative, and here's the permanent record." The audit trail is the product.
+
+### "Every travel tool will have AI soon"
+
+**Answer**: Correct. "We have AI" is not a moat — everyone will have AI. FareWise's moat is the transparency architecture: the full audit trail that captures what alternatives existed, what the traveler saw, why they chose what they chose, and what the organization could have saved. This is the data that makes travel optimization measurable instead of theoretical. AI makes the experience better; transparency makes the data actionable.
+
+### "Can it work if the AI goes down?"
+
+**Answer**: Yes. Every LLM call in FareWise has a deterministic fallback. If the AI provider is unavailable:
+- Trip creation falls back to a structured form
+- Alternative curation uses rule-based "top by savings" selection with template reasons
+- Budget recommendations use the waterfall logic (highest cabin that fits)
+- Approval narratives use template strings with key data points
+- Policy enforcement is 100% rule-based and never depends on AI
+
+The product degrades to "good corporate travel tool" instead of "AI-powered travel advisor." It always works.
 
 ---
 
