@@ -424,6 +424,7 @@ async def get_month_calendar(
             year=year,
             month=month,
             cabin_class=leg.cabin_class,
+            passengers=leg.passengers,
             existing_dates=existing_dates,
         )
     except Exception as e:

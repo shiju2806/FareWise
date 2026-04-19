@@ -78,8 +78,8 @@ class CacheService:
 
     # Typed helpers
 
-    def flight_key(self, origin: str, dest: str, date: str, cabin: str) -> str:
-        return f"flights:{origin}:{dest}:{date}:{cabin}"
+    def flight_key(self, origin: str, dest: str, date: str, cabin: str, passengers: int) -> str:
+        return f"flights:v2:{origin}:{dest}:{date}:{cabin}:p{passengers}"
 
     def calendar_key(self, origin: str, dest: str, center_date: str) -> str:
         return f"calendar:{origin}:{dest}:{center_date}"
@@ -87,11 +87,11 @@ class CacheService:
     def airport_key(self, city: str) -> str:
         return f"airports:{city.lower()}"
 
-    async def get_flights(self, origin: str, dest: str, date: str, cabin: str) -> list[dict] | None:
-        return await self.get(self.flight_key(origin, dest, date, cabin))
+    async def get_flights(self, origin: str, dest: str, date: str, cabin: str, passengers: int) -> list[dict] | None:
+        return await self.get(self.flight_key(origin, dest, date, cabin, passengers))
 
-    async def set_flights(self, origin: str, dest: str, date: str, cabin: str, data: list[dict]):
-        await self.set(self.flight_key(origin, dest, date, cabin), data, TTL_FLIGHT_PRICES)
+    async def set_flights(self, origin: str, dest: str, date: str, cabin: str, passengers: int, data: list[dict]):
+        await self.set(self.flight_key(origin, dest, date, cabin, passengers), data, TTL_FLIGHT_PRICES)
 
     async def get_calendar(self, origin: str, dest: str, center_date: str) -> list[dict] | None:
         return await self.get(self.calendar_key(origin, dest, center_date))
@@ -116,8 +116,8 @@ class CacheService:
     def advisor_key(self, search_id: str) -> str:
         return f"advisor:{search_id}"
 
-    def month_calendar_key(self, origin: str, dest: str, year: int, month: int, cabin: str) -> str:
-        return f"monthcal:{origin}:{dest}:{year}:{month:02d}:{cabin}"
+    def month_calendar_key(self, origin: str, dest: str, year: int, month: int, cabin: str, passengers: int) -> str:
+        return f"monthcal:v2:{origin}:{dest}:{year}:{month:02d}:{cabin}:p{passengers}"
 
     async def get_analytics(self, city_code: str, direction: str = "ARRIVING") -> dict | None:
         return await self.get(self.analytics_key(city_code, direction))
@@ -131,11 +131,11 @@ class CacheService:
     async def set_advisor(self, search_id: str, data: dict):
         await self.set(self.advisor_key(search_id), data, TTL_ADVISOR)
 
-    async def get_month_calendar(self, origin: str, dest: str, year: int, month: int, cabin: str) -> dict | None:
-        return await self.get(self.month_calendar_key(origin, dest, year, month, cabin))
+    async def get_month_calendar(self, origin: str, dest: str, year: int, month: int, cabin: str, passengers: int) -> dict | None:
+        return await self.get(self.month_calendar_key(origin, dest, year, month, cabin, passengers))
 
-    async def set_month_calendar(self, origin: str, dest: str, year: int, month: int, cabin: str, data: dict):
-        await self.set(self.month_calendar_key(origin, dest, year, month, cabin), data, TTL_MONTH_CALENDAR)
+    async def set_month_calendar(self, origin: str, dest: str, year: int, month: int, cabin: str, passengers: int, data: dict):
+        await self.set(self.month_calendar_key(origin, dest, year, month, cabin, passengers), data, TTL_MONTH_CALENDAR)
 
     # Price metrics (historical quartiles)
 

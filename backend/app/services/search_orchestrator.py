@@ -406,7 +406,7 @@ class SearchOrchestrator:
 
         for d, is_alt_ap, is_alt_dt in dates_info:
             date_str = d.isoformat()
-            cached = await cache_service.get_flights(origin, destination, date_str, cabin_class)
+            cached = await cache_service.get_flights(origin, destination, date_str, cabin_class, passengers)
             if cached is not None:
                 for f in cached:
                     f["is_alternate_airport"] = is_alt_ap
@@ -443,10 +443,10 @@ class SearchOrchestrator:
                     f["is_alternate_airport"] = is_alt_ap
                     f["is_alternate_date"] = is_alt_dt
                 flights.extend(date_flights)
-                await cache_service.set_flights(origin, destination, date_str, cabin_class, date_flights)
+                await cache_service.set_flights(origin, destination, date_str, cabin_class, passengers, date_flights)
             else:
                 # No DB1B data for this date — cache empty to avoid re-querying
-                await cache_service.set_flights(origin, destination, date_str, cabin_class, [])
+                await cache_service.set_flights(origin, destination, date_str, cabin_class, passengers, [])
 
         return flights
 
@@ -487,7 +487,7 @@ class SearchOrchestrator:
         date_str = departure_date.isoformat()
 
         # Check cache
-        cached = await cache_service.get_flights(origin, destination, date_str, cabin_class)
+        cached = await cache_service.get_flights(origin, destination, date_str, cabin_class, adults)
         if cached is not None:
             for f in cached:
                 f["is_alternate_airport"] = is_alt_airport
@@ -511,7 +511,7 @@ class SearchOrchestrator:
 
         # Cache results (only cache non-empty to avoid poisoning)
         if flights:
-            await cache_service.set_flights(origin, destination, date_str, cabin_class, flights)
+            await cache_service.set_flights(origin, destination, date_str, cabin_class, adults, flights)
 
         return flights
 
@@ -575,11 +575,12 @@ class SearchOrchestrator:
         year: int,
         month: int,
         cabin_class: str,
+        passengers: int,
         existing_dates: dict | None = None,
     ) -> dict:
         """Fetch cheapest prices for every day in a month from DB1B."""
         # Check month calendar cache
-        cached = await cache_service.get_month_calendar(origin, destination, year, month, cabin_class)
+        cached = await cache_service.get_month_calendar(origin, destination, year, month, cabin_class, passengers)
         if cached:
             return cached
 
@@ -622,7 +623,7 @@ class SearchOrchestrator:
         result = {"dates": dates_data, "month_stats": month_stats}
 
         # Cache the month calendar
-        await cache_service.set_month_calendar(origin, destination, year, month, cabin_class, result)
+        await cache_service.set_month_calendar(origin, destination, year, month, cabin_class, passengers, result)
 
         return result
 
