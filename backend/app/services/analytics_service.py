@@ -9,6 +9,7 @@ from sqlalchemy import func, select, and_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import AnalyticsSnapshot, TravelerScore
+from app.models.company import Company
 from app.models.policy import Approval, SavingsReport, Selection
 from app.models.trip import Trip, TripLeg
 from app.models.user import User
@@ -48,8 +49,16 @@ class AnalyticsService:
 
     # ─── Snapshots ───
 
+    async def _active_company_ids(self, db: AsyncSession) -> list[uuid.UUID]:
+        result = await db.execute(select(Company.id).where(Company.is_active == True))
+        return [row[0] for row in result.all()]
+
     async def generate_daily_snapshot(self, db: AsyncSession) -> None:
-        """Generate a daily analytics snapshot with key metrics."""
+        """Generate a daily analytics snapshot for every active company."""
+        for company_id in await self._active_company_ids(db):
+            await self._generate_daily_snapshot_for(db, company_id)
+
+    async def _generate_daily_snapshot_for(self, db: AsyncSession, company_id: uuid.UUID) -> None:
         today = date.today()
         yesterday = today - timedelta(days=1)
 
@@ -59,6 +68,7 @@ class AnalyticsService:
             result = await db.execute(
                 select(func.count(Trip.id)).where(
                     and_(
+                        Trip.company_id == company_id,
                         Trip.status == status,
                         func.date(Trip.created_at) <= today,
                     )
@@ -69,17 +79,19 @@ class AnalyticsService:
         # Total spend on approved trips
         spend_result = await db.execute(
             select(func.sum(Trip.total_estimated_cost)).where(
-                Trip.status == "approved"
+                and_(Trip.company_id == company_id, Trip.status == "approved")
             )
         )
         total_spend = float(spend_result.scalar() or 0)
 
-        # Total savings from savings reports
+        # Total savings from savings reports (joined via trip → company_id)
         savings_result = await db.execute(
             select(
                 func.sum(SavingsReport.savings_vs_expensive),
                 func.avg(SavingsReport.savings_vs_expensive),
             )
+            .join(Trip, Trip.id == SavingsReport.trip_id)
+            .where(Trip.company_id == company_id)
         )
         row = savings_result.one()
         total_savings = float(row[0] or 0)
@@ -87,24 +99,37 @@ class AnalyticsService:
 
         # Compliance rate
         compliance_result = await db.execute(
-            select(func.count(SavingsReport.id)).where(
-                SavingsReport.policy_status == "compliant"
+            select(func.count(SavingsReport.id))
+            .join(Trip, Trip.id == SavingsReport.trip_id)
+            .where(
+                and_(
+                    Trip.company_id == company_id,
+                    SavingsReport.policy_status == "compliant",
+                )
             )
         )
         compliant_count = compliance_result.scalar() or 0
-        total_reports_result = await db.execute(select(func.count(SavingsReport.id)))
+        total_reports_result = await db.execute(
+            select(func.count(SavingsReport.id))
+            .join(Trip, Trip.id == SavingsReport.trip_id)
+            .where(Trip.company_id == company_id)
+        )
         total_reports = total_reports_result.scalar() or 1
         compliance_rate = compliant_count / total_reports if total_reports > 0 else 1.0
 
         # Active users (trips created in last 30 days)
         active_result = await db.execute(
             select(func.count(func.distinct(Trip.traveler_id))).where(
-                Trip.created_at >= datetime.now(timezone.utc) - timedelta(days=30)
+                and_(
+                    Trip.company_id == company_id,
+                    Trip.created_at >= datetime.now(timezone.utc) - timedelta(days=30),
+                )
             )
         )
         active_users = active_result.scalar() or 0
 
         snapshot = AnalyticsSnapshot(
+            company_id=company_id,
             snapshot_type="daily",
             period_start=yesterday,
             period_end=today,
@@ -119,25 +144,31 @@ class AnalyticsService:
         )
         db.add(snapshot)
         await db.commit()
-        logger.info("Daily analytics snapshot generated")
+        logger.info("Daily snapshot generated for company %s", company_id)
 
     async def generate_weekly_snapshot(self, db: AsyncSession) -> None:
-        """Generate a weekly analytics snapshot."""
+        """Generate weekly analytics snapshots for every active company."""
+        for company_id in await self._active_company_ids(db):
+            await self._generate_weekly_snapshot_for(db, company_id)
+
+    async def _generate_weekly_snapshot_for(self, db: AsyncSession, company_id: uuid.UUID) -> None:
         today = date.today()
         week_start = today - timedelta(days=7)
 
-        # Trips created this week
         new_trips_result = await db.execute(
             select(func.count(Trip.id)).where(
-                func.date(Trip.created_at).between(week_start, today)
+                and_(
+                    Trip.company_id == company_id,
+                    func.date(Trip.created_at).between(week_start, today),
+                )
             )
         )
         new_trips = new_trips_result.scalar() or 0
 
-        # Trips approved this week
         approved_result = await db.execute(
             select(func.count(Trip.id)).where(
                 and_(
+                    Trip.company_id == company_id,
                     Trip.approved_at.isnot(None),
                     func.date(Trip.approved_at).between(week_start, today),
                 )
@@ -145,10 +176,10 @@ class AnalyticsService:
         )
         approved_trips = approved_result.scalar() or 0
 
-        # Week's spend
         spend_result = await db.execute(
             select(func.sum(Trip.total_estimated_cost)).where(
                 and_(
+                    Trip.company_id == company_id,
                     Trip.approved_at.isnot(None),
                     func.date(Trip.approved_at).between(week_start, today),
                 )
@@ -157,6 +188,7 @@ class AnalyticsService:
         week_spend = float(spend_result.scalar() or 0)
 
         snapshot = AnalyticsSnapshot(
+            company_id=company_id,
             snapshot_type="weekly",
             period_start=week_start,
             period_end=today,
@@ -168,16 +200,19 @@ class AnalyticsService:
         )
         db.add(snapshot)
         await db.commit()
-        logger.info("Weekly analytics snapshot generated")
+        logger.info("Weekly snapshot generated for company %s", company_id)
 
     async def generate_monthly_snapshot(self, db: AsyncSession) -> None:
-        """Generate a monthly analytics snapshot with department breakdowns."""
+        """Generate monthly analytics snapshots for every active company."""
+        for company_id in await self._active_company_ids(db):
+            await self._generate_monthly_snapshot_for(db, company_id)
+
+    async def _generate_monthly_snapshot_for(self, db: AsyncSession, company_id: uuid.UUID) -> None:
         today = date.today()
         month_start = today.replace(day=1)
         prev_month_end = month_start - timedelta(days=1)
         prev_month_start = prev_month_end.replace(day=1)
 
-        # Department spend breakdown
         dept_result = await db.execute(
             select(
                 User.department,
@@ -187,6 +222,7 @@ class AnalyticsService:
             .join(Trip, Trip.traveler_id == User.id)
             .where(
                 and_(
+                    Trip.company_id == company_id,
                     Trip.approved_at.isnot(None),
                     func.date(Trip.approved_at).between(prev_month_start, prev_month_end),
                 )
@@ -200,7 +236,6 @@ class AnalyticsService:
                 "spend": float(spend or 0),
             }
 
-        # Top routes
         route_result = await db.execute(
             select(
                 TripLeg.origin_airport,
@@ -210,6 +245,7 @@ class AnalyticsService:
             .join(Trip, Trip.id == TripLeg.trip_id)
             .where(
                 and_(
+                    Trip.company_id == company_id,
                     Trip.approved_at.isnot(None),
                     func.date(Trip.approved_at).between(prev_month_start, prev_month_end),
                 )
@@ -224,6 +260,7 @@ class AnalyticsService:
         ]
 
         snapshot = AnalyticsSnapshot(
+            company_id=company_id,
             snapshot_type="monthly",
             period_start=prev_month_start,
             period_end=prev_month_end,
@@ -234,66 +271,69 @@ class AnalyticsService:
         )
         db.add(snapshot)
         await db.commit()
-        logger.info("Monthly analytics snapshot generated")
+        logger.info("Monthly snapshot generated for company %s", company_id)
 
     # ─── Traveler Scores ───
 
     async def compute_traveler_scores(self, db: AsyncSession) -> None:
-        """Compute scores for all active travelers."""
+        """Compute scores for every active traveler, scoped per company for ranking."""
         today = date.today()
         period_start = today.replace(day=1)
         period = f"{today.year}-{today.month:02d}"
 
-        # Get all active users with traveler or manager role
-        users_result = await db.execute(
-            select(User).where(User.is_active == True)
-        )
-        users = users_result.scalars().all()
-
-        scores_to_upsert = []
-        for user in users:
-            score_data = await self._compute_user_score(db, user, period_start, today)
-            if score_data is None:
-                continue
-
-            # Check for existing score this period
-            existing = await db.execute(
-                select(TravelerScore).where(
-                    and_(
-                        TravelerScore.user_id == user.id,
-                        TravelerScore.period == period,
-                    )
+        total_upserted = 0
+        for company_id in await self._active_company_ids(db):
+            users_result = await db.execute(
+                select(User).where(
+                    User.company_id == company_id, User.is_active == True
                 )
             )
-            ts = existing.scalar_one_or_none()
-            if ts:
-                for k, v in score_data.items():
-                    setattr(ts, k, v)
-            else:
-                ts = TravelerScore(
-                    user_id=user.id,
-                    period=period,
-                    period_start=period_start,
-                    **score_data,
+            users = users_result.scalars().all()
+
+            for user in users:
+                score_data = await self._compute_user_score(db, user, period_start, today)
+                if score_data is None:
+                    continue
+
+                existing = await db.execute(
+                    select(TravelerScore).where(
+                        and_(
+                            TravelerScore.company_id == company_id,
+                            TravelerScore.user_id == user.id,
+                            TravelerScore.period == period,
+                        )
+                    )
                 )
-                db.add(ts)
-            scores_to_upsert.append(ts)
+                ts = existing.scalar_one_or_none()
+                if ts:
+                    for k, v in score_data.items():
+                        setattr(ts, k, v)
+                else:
+                    ts = TravelerScore(
+                        company_id=company_id,
+                        user_id=user.id,
+                        period=period,
+                        period_start=period_start,
+                        **score_data,
+                    )
+                    db.add(ts)
+                total_upserted += 1
 
-        await db.flush()
+            await db.flush()
+            await self._compute_ranks(db, company_id, period)
 
-        # Compute ranks
-        await self._compute_ranks(db, period)
         await db.commit()
-        logger.info(f"Computed scores for {len(scores_to_upsert)} travelers")
+        logger.info("Computed scores for %d travelers across all companies", total_upserted)
 
     async def _compute_user_score(
         self, db: AsyncSession, user: User, period_start: date, period_end: date
     ) -> dict | None:
         """Compute individual user score. Returns None if no trips."""
-        # Get user's approved trips
+        # Get user's approved trips (scoped to their company)
         trips_result = await db.execute(
             select(Trip).where(
                 and_(
+                    Trip.company_id == user.company_id,
                     Trip.traveler_id == user.id,
                     Trip.status == "approved",
                 )
@@ -426,7 +466,12 @@ class AnalyticsService:
         cities_result = await db.execute(
             select(func.count(func.distinct(TripLeg.destination_city)))
             .join(Trip, Trip.id == TripLeg.trip_id)
-            .where(Trip.traveler_id == user.id)
+            .where(
+                and_(
+                    Trip.company_id == user.company_id,
+                    Trip.traveler_id == user.id,
+                )
+            )
         )
         unique_cities = cities_result.scalar() or 0
         if unique_cities >= 5:
@@ -450,13 +495,16 @@ class AnalyticsService:
 
         return badges
 
-    async def _compute_streak(self, db: AsyncSession, user_id) -> int:
+    async def _compute_streak(
+        self, db: AsyncSession, company_id: uuid.UUID, user_id: uuid.UUID
+    ) -> int:
         """Count consecutive compliant trips (most recent first)."""
         result = await db.execute(
             select(SavingsReport)
             .join(Trip, Trip.id == SavingsReport.trip_id)
             .where(
                 and_(
+                    Trip.company_id == company_id,
                     Trip.traveler_id == user_id,
                     Trip.status.in_(["approved", "submitted"]),
                 )
@@ -472,13 +520,19 @@ class AnalyticsService:
                 break
         return streak
 
-    async def _compute_ranks(self, db: AsyncSession, period: str) -> None:
-        """Compute department and company ranks for the given period."""
-        # All scores for this period
+    async def _compute_ranks(
+        self, db: AsyncSession, company_id: uuid.UUID, period: str
+    ) -> None:
+        """Compute department and company ranks for the given period within a company."""
         result = await db.execute(
             select(TravelerScore, User.department)
             .join(User, User.id == TravelerScore.user_id)
-            .where(TravelerScore.period == period)
+            .where(
+                and_(
+                    TravelerScore.company_id == company_id,
+                    TravelerScore.period == period,
+                )
+            )
             .order_by(TravelerScore.score.desc())
         )
         rows = result.all()
@@ -499,12 +553,17 @@ class AnalyticsService:
 
     # ─── API Data Methods ───
 
-    async def get_overview(self, db: AsyncSession) -> dict:
-        """Get analytics overview for dashboard."""
+    async def get_overview(self, db: AsyncSession, company_id: uuid.UUID) -> dict:
+        """Get analytics overview for dashboard, scoped to the caller's company."""
         # Latest daily snapshot
         daily_result = await db.execute(
             select(AnalyticsSnapshot)
-            .where(AnalyticsSnapshot.snapshot_type == "daily")
+            .where(
+                and_(
+                    AnalyticsSnapshot.company_id == company_id,
+                    AnalyticsSnapshot.snapshot_type == "daily",
+                )
+            )
             .order_by(AnalyticsSnapshot.generated_at.desc())
             .limit(1)
         )
@@ -516,6 +575,7 @@ class AnalyticsService:
             select(AnalyticsSnapshot)
             .where(
                 and_(
+                    AnalyticsSnapshot.company_id == company_id,
                     AnalyticsSnapshot.snapshot_type == "weekly",
                     AnalyticsSnapshot.period_start >= twelve_weeks_ago,
                 )
@@ -534,23 +594,32 @@ class AnalyticsService:
 
         # Headline live metrics
         total_trips_result = await db.execute(
-            select(func.count(Trip.id)).where(Trip.status == "approved")
+            select(func.count(Trip.id)).where(
+                and_(Trip.company_id == company_id, Trip.status == "approved")
+            )
         )
         total_approved_trips = total_trips_result.scalar() or 0
 
         total_spend_result = await db.execute(
-            select(func.sum(Trip.total_estimated_cost)).where(Trip.status == "approved")
+            select(func.sum(Trip.total_estimated_cost)).where(
+                and_(Trip.company_id == company_id, Trip.status == "approved")
+            )
         )
         total_spend = float(total_spend_result.scalar() or 0)
 
         total_savings_result = await db.execute(
             select(func.sum(SavingsReport.savings_vs_expensive))
+            .join(Trip, Trip.id == SavingsReport.trip_id)
+            .where(Trip.company_id == company_id)
         )
         total_savings = float(total_savings_result.scalar() or 0)
 
         active_users_result = await db.execute(
             select(func.count(func.distinct(Trip.traveler_id))).where(
-                Trip.created_at >= datetime.now(timezone.utc) - timedelta(days=30)
+                and_(
+                    Trip.company_id == company_id,
+                    Trip.created_at >= datetime.now(timezone.utc) - timedelta(days=30),
+                )
             )
         )
         active_users = active_users_result.scalar() or 0
@@ -567,11 +636,15 @@ class AnalyticsService:
             "latest_snapshot": latest_daily.metrics if latest_daily else None,
         }
 
-    async def get_department_analytics(self, db: AsyncSession, department: str) -> dict:
-        """Get analytics for a specific department."""
-        # Department users
+    async def get_department_analytics(
+        self, db: AsyncSession, company_id: uuid.UUID, department: str
+    ) -> dict:
+        """Get analytics for a specific department within a company."""
+        # Department users (scoped to company)
         users_result = await db.execute(
-            select(User).where(User.department == department)
+            select(User).where(
+                and_(User.company_id == company_id, User.department == department)
+            )
         )
         dept_users = users_result.scalars().all()
         user_ids = [u.id for u in dept_users]
@@ -587,6 +660,7 @@ class AnalyticsService:
             )
             .where(
                 and_(
+                    Trip.company_id == company_id,
                     Trip.traveler_id.in_(user_ids),
                     Trip.status == "approved",
                 )
@@ -599,7 +673,11 @@ class AnalyticsService:
         # Savings
         trip_ids_result = await db.execute(
             select(Trip.id).where(
-                and_(Trip.traveler_id.in_(user_ids), Trip.status == "approved")
+                and_(
+                    Trip.company_id == company_id,
+                    Trip.traveler_id.in_(user_ids),
+                    Trip.status == "approved",
+                )
             )
         )
         trip_ids = trip_ids_result.scalars().all()
@@ -619,6 +697,7 @@ class AnalyticsService:
             .join(User, User.id == TravelerScore.user_id)
             .where(
                 and_(
+                    TravelerScore.company_id == company_id,
                     TravelerScore.period == period,
                     TravelerScore.user_id.in_(user_ids),
                 )
@@ -645,16 +724,20 @@ class AnalyticsService:
             "top_travelers": top_travelers,
         }
 
-    async def get_route_analytics(self, db: AsyncSession, origin: str, destination: str) -> dict:
-        """Get analytics for a specific route."""
+    async def get_route_analytics(
+        self, db: AsyncSession, company_id: uuid.UUID, origin: str, destination: str
+    ) -> dict:
+        """Get analytics for a specific route within a company."""
         result = await db.execute(
             select(
                 func.count(TripLeg.id),
                 func.avg(Selection.slider_position),
             )
+            .join(Trip, Trip.id == TripLeg.trip_id)
             .outerjoin(Selection, Selection.trip_leg_id == TripLeg.id)
             .where(
                 and_(
+                    Trip.company_id == company_id,
                     TripLeg.origin_airport == origin.upper(),
                     TripLeg.destination_airport == destination.upper(),
                 )
@@ -671,12 +754,15 @@ class AnalyticsService:
             "avg_slider_position": round(avg_slider, 1),
         }
 
-    async def get_my_stats(self, db: AsyncSession, user_id: uuid.UUID) -> dict:
-        """Get personal stats and badges for a user."""
+    async def get_my_stats(
+        self, db: AsyncSession, company_id: uuid.UUID, user_id: uuid.UUID
+    ) -> dict:
+        """Get personal stats and badges for a user within their company."""
         period = f"{date.today().year}-{date.today().month:02d}"
         result = await db.execute(
             select(TravelerScore).where(
                 and_(
+                    TravelerScore.company_id == company_id,
                     TravelerScore.user_id == user_id,
                     TravelerScore.period == period,
                 )
@@ -690,6 +776,7 @@ class AnalyticsService:
             select(TravelerScore)
             .where(
                 and_(
+                    TravelerScore.company_id == company_id,
                     TravelerScore.user_id == user_id,
                     TravelerScore.period_start >= six_months_ago,
                 )
@@ -716,7 +803,7 @@ class AnalyticsService:
         ]
 
         score_val = current.score if current else 0
-        streak = await self._compute_streak(db, user_id)
+        streak = await self._compute_streak(db, company_id, user_id)
 
         return {
             "current": {
@@ -740,14 +827,24 @@ class AnalyticsService:
             "history": history,
         }
 
-    async def get_leaderboard(self, db: AsyncSession, department: str | None = None) -> dict:
-        """Get leaderboard, optionally filtered by department."""
+    async def get_leaderboard(
+        self,
+        db: AsyncSession,
+        company_id: uuid.UUID,
+        department: str | None = None,
+    ) -> dict:
+        """Get leaderboard for a company, optionally filtered by department."""
         period = f"{date.today().year}-{date.today().month:02d}"
 
         query = (
             select(TravelerScore, User.first_name, User.last_name, User.department)
             .join(User, User.id == TravelerScore.user_id)
-            .where(TravelerScore.period == period)
+            .where(
+                and_(
+                    TravelerScore.company_id == company_id,
+                    TravelerScore.period == period,
+                )
+            )
         )
         if department:
             query = query.where(User.department == department)
@@ -777,8 +874,10 @@ class AnalyticsService:
             "entries": entries,
         }
 
-    async def get_savings_summary(self, db: AsyncSession) -> dict:
-        """Get company-wide savings summary."""
+    async def get_savings_summary(
+        self, db: AsyncSession, company_id: uuid.UUID
+    ) -> dict:
+        """Get savings summary scoped to a single company."""
         result = await db.execute(
             select(
                 func.count(SavingsReport.id),
@@ -788,6 +887,8 @@ class AnalyticsService:
                 func.sum(SavingsReport.savings_vs_expensive),
                 func.avg(SavingsReport.savings_vs_expensive),
             )
+            .join(Trip, Trip.id == SavingsReport.trip_id)
+            .where(Trip.company_id == company_id)
         )
         row = result.one()
         return {
@@ -799,8 +900,10 @@ class AnalyticsService:
             "avg_savings": float(row[5] or 0),
         }
 
-    async def get_savings_goal(self, db: AsyncSession) -> dict:
-        """Get company-wide savings progress for current quarter."""
+    async def get_savings_goal(
+        self, db: AsyncSession, company_id: uuid.UUID
+    ) -> dict:
+        """Get savings progress for the current quarter scoped to a company."""
         now = date.today()
         quarter_month = ((now.month - 1) // 3) * 3 + 1
         quarter_start = date(now.year, quarter_month, 1)
@@ -819,6 +922,7 @@ class AnalyticsService:
             .join(Trip, Trip.id == SavingsReport.trip_id)
             .where(
                 and_(
+                    Trip.company_id == company_id,
                     Trip.status.in_(["approved", "submitted"]),
                     Trip.updated_at >= quarter_start,
                     Trip.updated_at < quarter_end,
@@ -837,8 +941,10 @@ class AnalyticsService:
             "progress_pct": min(100, round(savings_float / target * 100, 1)) if target > 0 else 0,
         }
 
-    async def export_analytics_csv(self, db: AsyncSession) -> list[dict]:
-        """Export analytics data as CSV-ready rows."""
+    async def export_analytics_csv(
+        self, db: AsyncSession, company_id: uuid.UUID
+    ) -> list[dict]:
+        """Export analytics data as CSV-ready rows, scoped to a company."""
         result = await db.execute(
             select(
                 Trip.id,
@@ -852,6 +958,7 @@ class AnalyticsService:
                 User.department,
             )
             .join(User, User.id == Trip.traveler_id)
+            .where(Trip.company_id == company_id)
             .order_by(Trip.created_at.desc())
         )
         rows = []

@@ -379,7 +379,13 @@ class PolicyEngine:
 
     @classmethod
     async def evaluate_flight_options(
-        cls, db: AsyncSession, leg, flights: list[dict], user_role: str | None = None
+        cls,
+        db: AsyncSession,
+        leg,
+        flights: list[dict],
+        *,
+        company_id,
+        user_role: str | None = None,
     ) -> dict[str, list[dict]]:
         """Run per-leg policy checks against each flight option.
 
@@ -393,6 +399,7 @@ class PolicyEngine:
 
         result = await db.execute(
             select(Policy).where(
+                Policy.company_id == company_id,
                 Policy.is_active == True,
                 Policy.rule_type.in_(PER_LEG_RULES),
             )
@@ -496,8 +503,13 @@ class PolicyEngine:
         legs: list[TripLeg],
         user_role: str = "traveler",
     ) -> PolicyEvaluation:
-        # Load active policies
-        result = await db.execute(select(Policy).where(Policy.is_active == True))
+        # Load active policies scoped to the trip's company
+        result = await db.execute(
+            select(Policy).where(
+                Policy.company_id == trip.company_id,
+                Policy.is_active == True,
+            )
+        )
         policies = result.scalars().all()
 
         evaluation = PolicyEvaluation(overall_status="compliant")

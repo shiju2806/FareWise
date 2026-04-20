@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.models.company import Company
 from app.models.user import User
 from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest, UserResponse
 
@@ -28,11 +29,20 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
     if result.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Auto-assign manager: department manager first, then any admin
+    # All self-registered users land in the Default company until we add a
+    # proper onboarding/invite flow.
+    default_company = (
+        await db.execute(select(Company).where(Company.slug == "default"))
+    ).scalar_one_or_none()
+    if not default_company:
+        raise HTTPException(status_code=500, detail="Default company not initialized")
+
+    # Auto-assign manager: department manager first, then any admin — scoped to same company.
     manager_id = None
     if req.department:
         mgr = await db.execute(
             select(User).where(
+                User.company_id == default_company.id,
                 User.role == "manager",
                 User.department == req.department,
                 User.is_active == True,
@@ -43,13 +53,18 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
             manager_id = mgr_user.id
     if not manager_id:
         admin = await db.execute(
-            select(User).where(User.role.in_(["manager", "admin"]), User.is_active == True).limit(1)
+            select(User).where(
+                User.company_id == default_company.id,
+                User.role.in_(["manager", "admin"]),
+                User.is_active == True,
+            ).limit(1)
         )
         admin_user = admin.scalar_one_or_none()
         if admin_user:
             manager_id = admin_user.id
 
     user = User(
+        company_id=default_company.id,
         email=req.email,
         password_hash=pwd_context.hash(req.password),
         first_name=req.first_name,

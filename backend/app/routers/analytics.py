@@ -27,7 +27,7 @@ async def get_overview(
 ):
     """Analytics overview — headline metrics and trends."""
     _require_manager_or_admin(user)
-    return await analytics_service.get_overview(db)
+    return await analytics_service.get_overview(db, user.company_id)
 
 
 @router.get("/department/{department}")
@@ -38,7 +38,7 @@ async def get_department(
 ):
     """Department-level analytics."""
     _require_manager_or_admin(user)
-    return await analytics_service.get_department_analytics(db, department)
+    return await analytics_service.get_department_analytics(db, user.company_id, department)
 
 
 @router.get("/route/{origin}/{destination}")
@@ -50,7 +50,7 @@ async def get_route(
 ):
     """Route-level analytics."""
     _require_manager_or_admin(user)
-    return await analytics_service.get_route_analytics(db, origin, destination)
+    return await analytics_service.get_route_analytics(db, user.company_id, origin, destination)
 
 
 @router.get("/savings-report")
@@ -60,7 +60,7 @@ async def get_savings_report(
 ):
     """Company-wide savings summary."""
     _require_manager_or_admin(user)
-    return await analytics_service.get_savings_summary(db)
+    return await analytics_service.get_savings_summary(db, user.company_id)
 
 
 @router.get("/savings-goal")
@@ -69,7 +69,7 @@ async def get_savings_goal(
     user: User = Depends(get_current_user),
 ):
     """Company-wide quarterly savings goal — accessible to all users."""
-    return await analytics_service.get_savings_goal(db)
+    return await analytics_service.get_savings_goal(db, user.company_id)
 
 
 @router.get("/my-stats")
@@ -78,7 +78,7 @@ async def get_my_stats(
     user: User = Depends(get_current_user),
 ):
     """Personal stats, score, badges for the logged-in user."""
-    return await analytics_service.get_my_stats(db, user.id)
+    return await analytics_service.get_my_stats(db, user.company_id, user.id)
 
 
 @router.get("/leaderboard")
@@ -88,7 +88,7 @@ async def get_leaderboard(
     user: User = Depends(get_current_user),
 ):
     """Leaderboard — optionally filtered by department."""
-    return await analytics_service.get_leaderboard(db, department)
+    return await analytics_service.get_leaderboard(db, user.company_id, department)
 
 
 @router.get("/export/csv")
@@ -98,7 +98,7 @@ async def export_csv(
 ):
     """Export analytics data as CSV."""
     _require_manager_or_admin(user)
-    rows = await analytics_service.export_analytics_csv(db)
+    rows = await analytics_service.export_analytics_csv(db, user.company_id)
     if not rows:
         raise HTTPException(status_code=404, detail="No data to export")
 

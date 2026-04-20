@@ -252,9 +252,11 @@ async def get_approval_detail(
     if not approval:
         raise HTTPException(status_code=404, detail="Approval not found")
 
-    # Check access: approver or traveler
+    # Check access: approver or traveler (tenant-scoped even for admins)
     trip_result = await db.execute(
-        select(Trip).where(Trip.id == approval.trip_id).options(selectinload(Trip.legs))
+        select(Trip)
+        .where(Trip.id == approval.trip_id, Trip.company_id == user.company_id)
+        .options(selectinload(Trip.legs))
     )
     trip = trip_result.scalar_one_or_none()
     if not trip:
@@ -398,10 +400,16 @@ async def decide_approval(
     if approval.approver_id != user.id and user.role != "admin":
         raise HTTPException(status_code=403, detail="Only the assigned approver can decide")
 
-    # Cannot approve own trip
-    trip_result = await db.execute(select(Trip).where(Trip.id == approval.trip_id))
+    # Tenant scoping even for admins — cannot decide on another company's trip
+    trip_result = await db.execute(
+        select(Trip).where(
+            Trip.id == approval.trip_id, Trip.company_id == user.company_id
+        )
+    )
     trip = trip_result.scalar_one_or_none()
-    if trip and trip.traveler_id == user.id:
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if trip.traveler_id == user.id:
         raise HTTPException(status_code=403, detail="Cannot approve your own trip")
 
     if approval.status not in ("pending",):
@@ -439,8 +447,12 @@ async def add_comment(
     if not approval:
         raise HTTPException(status_code=404, detail="Approval not found")
 
-    # Check access
-    trip_result = await db.execute(select(Trip).where(Trip.id == approval.trip_id))
+    # Check access (tenant-scoped even for admins)
+    trip_result = await db.execute(
+        select(Trip).where(
+            Trip.id == approval.trip_id, Trip.company_id == user.company_id
+        )
+    )
     trip = trip_result.scalar_one_or_none()
     if not trip:
         raise HTTPException(status_code=404)

@@ -6,6 +6,7 @@ from passlib.context import CryptContext
 from sqlalchemy import select, text
 
 from app.database import async_session_factory, engine
+from app.models.company import Company
 from app.models.policy import NearbyAirport, Policy
 from app.models.user import User
 
@@ -134,8 +135,19 @@ async def seed():
             print("Database already seeded. Skipping.")
             return
 
+        # ── Default company ──
+        default_company = (
+            await db.execute(select(Company).where(Company.slug == "default"))
+        ).scalar_one_or_none()
+        if not default_company:
+            default_company = Company(name="Default", slug="default")
+            db.add(default_company)
+            await db.flush()
+        company_id = default_company.id
+
         # ── Users ──
         manager = User(
+            company_id=company_id,
             email=USERS[1]["email"],
             password_hash=pwd_context.hash(USERS[1]["password"]),
             first_name=USERS[1]["first_name"],
@@ -147,6 +159,7 @@ async def seed():
         await db.flush()  # get manager.id
 
         traveler = User(
+            company_id=company_id,
             email=USERS[0]["email"],
             password_hash=pwd_context.hash(USERS[0]["password"]),
             first_name=USERS[0]["first_name"],
@@ -157,6 +170,7 @@ async def seed():
         )
 
         admin = User(
+            company_id=company_id,
             email=USERS[2]["email"],
             password_hash=pwd_context.hash(USERS[2]["password"]),
             first_name=USERS[2]["first_name"],
@@ -182,7 +196,7 @@ async def seed():
 
         # ── Policies ──
         for p in POLICIES:
-            db.add(Policy(**p))
+            db.add(Policy(company_id=company_id, **p))
         print(f"Created {len(POLICIES)} policies")
 
         await db.commit()
