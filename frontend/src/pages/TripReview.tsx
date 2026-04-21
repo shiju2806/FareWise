@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import apiClient from "@/api/client";
 import { useTripStore } from "@/stores/tripStore";
+import { useToastStore } from "@/stores/toastStore";
 import { ExportButton } from "@/components/shared/ExportButton";
 import { formatPrice } from "@/lib/currency";
 import { formatShortDate } from "@/lib/dates";
@@ -16,6 +17,7 @@ export default function TripReview() {
   const { tripId } = useParams<{ tripId: string }>();
   const navigate = useNavigate();
   const { currentTrip, fetchTrip } = useTripStore();
+  const addToast = useToastStore((s) => s.addToast);
   const [evalResult, setEvalResult] = useState<EvalResult | null>(null);
   const [analysis, setAnalysis] = useState<ReviewAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
@@ -108,7 +110,7 @@ export default function TripReview() {
       setTimeout(() => navigate("/trips"), 2000);
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string } } };
-      alert(error.response?.data?.detail || "Submission failed");
+      addToast("error", error.response?.data?.detail || "Submission failed");
     } finally {
       setSubmitting(false);
     }

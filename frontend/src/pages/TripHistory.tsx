@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
+import { Plane } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTripStore } from "@/stores/tripStore";
 import { useAuthStore } from "@/stores/authStore";
@@ -60,10 +61,18 @@ export default function TripHistory() {
       )}
 
       {!loading && trips.length === 0 && (
-        <div className="text-center py-12 space-y-3">
-          <p className="text-muted-foreground">No trips yet.</p>
+        <div className="flex flex-col items-center text-center py-16 space-y-4">
+          <div className="h-14 w-14 rounded-full bg-primary/10 flex items-center justify-center">
+            <Plane className="h-7 w-7 text-primary" strokeWidth={1.5} />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-base font-semibold">No trips yet</h3>
+            <p className="text-sm text-muted-foreground max-w-sm">
+              Plan your first business trip to find the best fares and stay within policy.
+            </p>
+          </div>
           <Link to="/trips/new">
-            <Button variant="outline">Plan your first trip</Button>
+            <Button>Plan your first trip</Button>
           </Link>
         </div>
       )}

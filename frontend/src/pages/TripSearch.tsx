@@ -18,6 +18,7 @@ import { SearchAssistant } from "@/components/search/SearchAssistant";
 import type { FlightOption } from "@/types/flight";
 import type { TripWindowProposal } from "@/types/search";
 import apiClient from "@/api/client";
+import { useToastStore } from "@/stores/toastStore";
 
 /** Normalize any datetime string to YYYY-MM-DD */
 function toDateStr(dt: string): string {
@@ -60,6 +61,7 @@ export default function TripSearch() {
   const [elapsed, setElapsed] = useState(0);
   const { selections: hotelSelections, results: hotelResults } = useHotelStore();
   const hotelSectionRef = useRef<HTMLDivElement>(null);
+  const addToast = useToastStore((s) => s.addToast);
 
   // Read companions_same_dates from chat session data
   const companionsSameDates = useMemo(() => {
@@ -360,7 +362,7 @@ export default function TripSearch() {
       }
     } catch {
       setAnalyzing(false);
-      alert("Could not verify compliance. Please try again.");
+      addToast("error", "Could not verify compliance. Please try again.");
       return;
     }
     setAnalyzing(false);
@@ -420,7 +422,7 @@ export default function TripSearch() {
       // Navigate to the review & submit page for manager approval
       navigate(`/trips/${tripId}/review`);
     } catch {
-      alert("Failed to save your flight selection. Please try again.");
+      addToast("error", "Failed to save your flight selection. Please try again.");
     } finally {
       setConfirming(false);
     }

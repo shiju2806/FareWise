@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePolicyStore } from "@/stores/policyStore";
 import { useAuthStore } from "@/stores/authStore";
+import { useToastStore } from "@/stores/toastStore";
 
 const RULE_TYPES = [
   { value: "max_price", label: "Maximum Price" },
@@ -48,6 +49,7 @@ function PolicyForm({
   const [conditionsJson, setConditionsJson] = useState(
     JSON.stringify(initial?.conditions || {}, null, 2)
   );
+  const addToast = useToastStore((s) => s.addToast);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,7 +64,7 @@ function PolicyForm({
         conditions: JSON.parse(conditionsJson),
       });
     } catch {
-      alert("Invalid JSON in threshold or conditions");
+      addToast("error", "Invalid JSON in threshold or conditions");
     }
   };
 

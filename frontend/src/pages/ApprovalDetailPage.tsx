@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import apiClient from "@/api/client";
 import { useAuthStore } from "@/stores/authStore";
+import { useToastStore } from "@/stores/toastStore";
 import { formatPrice } from "@/lib/currency";
 import { statusIcons, statusColors } from "@/lib/policy";
 import { TripWindowCard } from "@/components/trip/TripWindowCard";
@@ -142,6 +143,7 @@ export default function ApprovalDetailPage() {
   const [loading, setLoading] = useState(true);
   const [comment, setComment] = useState("");
   const [acting, setActing] = useState(false);
+  const addToast = useToastStore((s) => s.addToast);
 
   useEffect(() => {
     if (!approvalId) return;
@@ -167,7 +169,7 @@ export default function ApprovalDetailPage() {
       setComment("");
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Action failed";
-      alert(message);
+      addToast("error", message);
     } finally {
       setActing(false);
     }
@@ -184,7 +186,7 @@ export default function ApprovalDetailPage() {
       setDetail(res.data);
       setComment("");
     } catch {
-      alert("Failed to add comment");
+      addToast("error", "Failed to add comment");
     } finally {
       setActing(false);
     }

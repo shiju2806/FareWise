@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import apiClient from "@/api/client";
+import { useToastStore } from "@/stores/toastStore";
 import { formatPrice } from "@/lib/currency";
 import { statusIcons, statusColors } from "@/lib/policy";
 import type { EvalResult } from "@/types/evaluation";
@@ -40,6 +41,7 @@ export function InlineReviewPanel({
   const [submitted, setSubmitted] = useState(false);
   const [violationAcks, setViolationAcks] = useState<Record<string, boolean>>({});
   const [violationNotes, setViolationNotes] = useState<Record<string, string>>({});
+  const addToast = useToastStore((s) => s.addToast);
 
   const hasMultiPax = legs.some((l) => l.passengers > 1);
 
@@ -81,7 +83,7 @@ export function InlineReviewPanel({
       onSubmitSuccess();
     } catch (err: unknown) {
       const error = err as { response?: { data?: { detail?: string } } };
-      alert(error.response?.data?.detail || "Submission failed");
+      addToast("error", error.response?.data?.detail || "Submission failed");
     } finally {
       setSubmitting(false);
     }

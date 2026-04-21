@@ -1,9 +1,16 @@
 import { useState, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { CalendarDays } from "lucide-react";
 import apiClient from "@/api/client";
+import { Button } from "@/components/ui/button";
 import { CalendarNav } from "./CalendarNav";
 import { TripBar, getBarColor } from "./TripBar";
 import type { CalendarTripData, BarSegment } from "./TripBar";
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -237,8 +244,19 @@ export function TripCalendar() {
       )}
 
       {!loading && trips.length === 0 && (
-        <div className="text-center py-8 text-sm text-muted-foreground">
-          No trips this month
+        <div className="flex flex-col items-center text-center py-10 space-y-3">
+          <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center">
+            <CalendarDays className="h-6 w-6 text-muted-foreground" strokeWidth={1.5} />
+          </div>
+          <div className="space-y-0.5">
+            <p className="text-sm font-medium">No trips in {MONTH_NAMES[viewMonth]} {viewYear}</p>
+            <p className="text-xs text-muted-foreground">
+              Plan a trip to see it on the calendar.
+            </p>
+          </div>
+          <Link to="/trips/new">
+            <Button size="sm" variant="outline">Plan a trip</Button>
+          </Link>
         </div>
       )}
     </div>
