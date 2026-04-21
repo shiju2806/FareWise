@@ -30,6 +30,8 @@ class SearchOrchestrator:
         weights: Weights | None = None,
         include_nearby: bool = True,
         user_preferences: dict | None = None,
+        *,
+        company_id: uuid.UUID | None = None,
     ) -> dict:
         """
         Execute full search for a trip leg.
@@ -93,6 +95,7 @@ class SearchOrchestrator:
         pair_coros = [
             self._batch_search_pair(
                 orig, dest, dates_info, leg.cabin_class, leg.passengers,
+                company_id=company_id,
             )
             for (orig, dest), dates_info in route_pairs.items()
         ]
@@ -395,6 +398,8 @@ class SearchOrchestrator:
         dates_info: list[tuple[date, bool, bool]],
         cabin_class: str,
         passengers: int,
+        *,
+        company_id: uuid.UUID | None = None,
     ) -> list[dict]:
         """Search all dates for a single route pair using one batch DB1B query.
 
@@ -427,6 +432,7 @@ class SearchOrchestrator:
                 min(d for d, _, _ in uncached_dates),
                 max(d for d, _, _ in uncached_dates),
                 cabin_class,
+                company_id=company_id,
             )
         except Exception as e:
             logger.warning(f"Flight provider batch search failed for {origin}-{destination}: {e}")
@@ -576,6 +582,8 @@ class SearchOrchestrator:
         month: int,
         cabin_class: str,
         existing_dates: dict | None = None,
+        *,
+        company_id: uuid.UUID | None = None,
     ) -> dict:
         """Fetch cheapest prices for every day in a month from DB1B."""
         # Check month calendar cache
@@ -598,6 +606,7 @@ class SearchOrchestrator:
                 year=year,
                 month=month,
                 cabin_class=cabin_class,
+                company_id=company_id,
             )
             for d, entry in provider_data.items():
                 # Never overwrite prices from the initial flight search —

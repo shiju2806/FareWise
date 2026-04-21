@@ -1,6 +1,7 @@
 """DB1B provider — wraps DB1BClient behind the FlightDataProvider protocol."""
 
 import logging
+import uuid
 from datetime import date
 
 from app.config import settings
@@ -43,22 +44,22 @@ class DB1BProvider:
     def is_available(self) -> bool:
         return self._pool is not None
 
-    async def search_flights(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy") -> list[dict]:
+    async def search_flights(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> list[dict]:
         from app.services.db1b_client import db1b_client
         return await db1b_client.search_flights(origin, destination, departure_date, cabin_class)
 
-    async def search_flights_date_range(self, origin: str, destination: str, start_date: date, end_date: date, cabin_class: str = "economy") -> dict[str, list[dict]]:
+    async def search_flights_date_range(self, origin: str, destination: str, start_date: date, end_date: date, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> dict[str, list[dict]]:
         from app.services.db1b_client import db1b_client
         return await db1b_client.search_flights_date_range(origin, destination, start_date, end_date, cabin_class)
 
-    async def search_month_prices(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy") -> dict[str, dict]:
+    async def search_month_prices(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> dict[str, dict]:
         from app.services.db1b_client import db1b_client
         return await db1b_client.search_month_prices(origin, destination, year, month, cabin_class)
 
-    async def search_month_matrix(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy") -> list[dict]:
+    async def search_month_matrix(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> list[dict]:
         from app.services.db1b_client import db1b_client
         return await db1b_client.search_month_matrix(origin, destination, year, month, cabin_class)
 
-    async def get_price_context(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", current_price: float | None = None) -> dict | None:
+    async def get_price_context(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", current_price: float | None = None, *, company_id: uuid.UUID | None = None) -> dict | None:
         from app.services.db1b_client import db1b_client
         return await db1b_client.get_price_context(origin, destination, departure_date, cabin_class, current_price)

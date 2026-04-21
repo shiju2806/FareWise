@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from typing import Any, Protocol, runtime_checkable
 
@@ -17,6 +18,10 @@ class FlightDataProvider(Protocol):
 
     All providers implement these 5 search methods plus lifecycle.
     Method signatures match the DB1B canonical interface.
+
+    `company_id` is always passed by callers so tenant-aware providers
+    (cache keys, credit budgets, request coalescing) can scope behavior
+    per tenant. Providers that don't care may ignore it.
     """
 
     async def initialize(self) -> None:
@@ -37,6 +42,8 @@ class FlightDataProvider(Protocol):
         destination: str,
         departure_date: date,
         cabin_class: str = "economy",
+        *,
+        company_id: uuid.UUID | None = None,
     ) -> list[FlightDict]:
         """Search flights for a single date."""
         ...
@@ -48,6 +55,8 @@ class FlightDataProvider(Protocol):
         start_date: date,
         end_date: date,
         cabin_class: str = "economy",
+        *,
+        company_id: uuid.UUID | None = None,
     ) -> dict[str, list[FlightDict]]:
         """Search flights across a date range. Returns {date_iso: [flights]}."""
         ...
@@ -59,6 +68,8 @@ class FlightDataProvider(Protocol):
         year: int,
         month: int,
         cabin_class: str = "economy",
+        *,
+        company_id: uuid.UUID | None = None,
     ) -> MonthPriceDict:
         """Get cheapest price per day for an entire month."""
         ...
@@ -70,6 +81,8 @@ class FlightDataProvider(Protocol):
         year: int,
         month: int,
         cabin_class: str = "economy",
+        *,
+        company_id: uuid.UUID | None = None,
     ) -> list[MonthMatrixEntry]:
         """Get airline x date matrix entries for an entire month."""
         ...
@@ -81,6 +94,8 @@ class FlightDataProvider(Protocol):
         departure_date: date,
         cabin_class: str = "economy",
         current_price: float | None = None,
+        *,
+        company_id: uuid.UUID | None = None,
     ) -> PriceContextDict | None:
         """Get historical price quartiles and percentile for a route."""
         ...

@@ -9,6 +9,7 @@ Switch provider via FLIGHT_DATA_PROVIDER env var (db1b | amadeus | composite).
 """
 
 import logging
+import uuid
 from datetime import date
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,9 @@ def _create_provider():
     elif name == "composite":
         from app.services.providers.composite_provider import CompositeProvider
         return CompositeProvider()
+    elif name == "flightapi":
+        from app.services.providers.flightapi.provider import FlightAPIProvider
+        return FlightAPIProvider()
     else:
         from app.services.providers.db1b_provider import DB1BProvider
         return DB1BProvider()
@@ -63,42 +67,43 @@ class _FlightProviderProxy:
 
     async def search_flights(
         self, origin: str, destination: str, departure_date: date,
-        cabin_class: str = "economy",
+        cabin_class: str = "economy", *, company_id: uuid.UUID | None = None,
     ) -> list[dict]:
         return await self._ensure_provider().search_flights(
-            origin, destination, departure_date, cabin_class,
+            origin, destination, departure_date, cabin_class, company_id=company_id,
         )
 
     async def search_flights_date_range(
         self, origin: str, destination: str, start_date: date, end_date: date,
-        cabin_class: str = "economy",
+        cabin_class: str = "economy", *, company_id: uuid.UUID | None = None,
     ) -> dict[str, list[dict]]:
         return await self._ensure_provider().search_flights_date_range(
-            origin, destination, start_date, end_date, cabin_class,
+            origin, destination, start_date, end_date, cabin_class, company_id=company_id,
         )
 
     async def search_month_prices(
         self, origin: str, destination: str, year: int, month: int,
-        cabin_class: str = "economy",
+        cabin_class: str = "economy", *, company_id: uuid.UUID | None = None,
     ) -> dict[str, dict]:
         return await self._ensure_provider().search_month_prices(
-            origin, destination, year, month, cabin_class,
+            origin, destination, year, month, cabin_class, company_id=company_id,
         )
 
     async def search_month_matrix(
         self, origin: str, destination: str, year: int, month: int,
-        cabin_class: str = "economy",
+        cabin_class: str = "economy", *, company_id: uuid.UUID | None = None,
     ) -> list[dict]:
         return await self._ensure_provider().search_month_matrix(
-            origin, destination, year, month, cabin_class,
+            origin, destination, year, month, cabin_class, company_id=company_id,
         )
 
     async def get_price_context(
         self, origin: str, destination: str, departure_date: date,
         cabin_class: str = "economy", current_price: float | None = None,
+        *, company_id: uuid.UUID | None = None,
     ) -> dict | None:
         return await self._ensure_provider().get_price_context(
-            origin, destination, departure_date, cabin_class, current_price,
+            origin, destination, departure_date, cabin_class, current_price, company_id=company_id,
         )
 
 

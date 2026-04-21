@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import uuid
 from calendar import monthrange
 from datetime import date, timedelta
 
@@ -26,19 +27,19 @@ class AmadeusProvider:
     def is_available(self) -> bool:
         return bool(settings.amadeus_client_id)
 
-    async def search_flights(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy") -> list[dict]:
+    async def search_flights(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> list[dict]:
         from app.services.amadeus_client import amadeus_client
         return await amadeus_client.search_flight_offers(
             origin=origin, destination=destination,
             departure_date=departure_date, cabin_class=cabin_class,
         )
 
-    async def search_flights_date_range(self, origin: str, destination: str, start_date: date, end_date: date, cabin_class: str = "economy") -> dict[str, list[dict]]:
+    async def search_flights_date_range(self, origin: str, destination: str, start_date: date, end_date: date, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> dict[str, list[dict]]:
         """No native Amadeus equivalent — concurrent search_flights per date."""
         tasks = {}
         current = start_date
         while current <= end_date:
-            tasks[current.isoformat()] = self.search_flights(origin, destination, current, cabin_class)
+            tasks[current.isoformat()] = self.search_flights(origin, destination, current, cabin_class, company_id=company_id)
             current += timedelta(days=1)
 
         keys = list(tasks.keys())
@@ -52,7 +53,7 @@ class AmadeusProvider:
                 results[key] = result
         return results
 
-    async def search_month_prices(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy") -> dict[str, dict]:
+    async def search_month_prices(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> dict[str, dict]:
         from app.services.amadeus_client import amadeus_client
         first_of_month = date(year, month, 1)
         raw = await amadeus_client.search_cheapest_dates(origin, destination, first_of_month)
@@ -72,11 +73,11 @@ class AmadeusProvider:
                 }
         return results
 
-    async def search_month_matrix(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy") -> list[dict]:
+    async def search_month_matrix(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> list[dict]:
         """Synthesize from concurrent search_flights calls."""
         _, days_in_month = monthrange(year, month)
         dates = [date(year, month, day) for day in range(1, days_in_month + 1)]
-        tasks = [self.search_flights(origin, destination, d, cabin_class) for d in dates]
+        tasks = [self.search_flights(origin, destination, d, cabin_class, company_id=company_id) for d in dates]
         gathered = await asyncio.gather(*tasks, return_exceptions=True)
 
         entries = []
@@ -98,7 +99,7 @@ class AmadeusProvider:
                 })
         return entries
 
-    async def get_price_context(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", current_price: float | None = None) -> dict | None:
+    async def get_price_context(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", current_price: float | None = None, *, company_id: uuid.UUID | None = None) -> dict | None:
         from app.services.amadeus_client import amadeus_client
         metrics = await amadeus_client.get_price_metrics(
             origin=origin, destination=destination, departure_date=departure_date,
