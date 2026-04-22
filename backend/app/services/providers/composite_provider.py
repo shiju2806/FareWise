@@ -1,6 +1,7 @@
 """Composite provider — DB1B primary with Amadeus fallback."""
 
 import logging
+import uuid
 from datetime import date
 
 from app.services.providers.db1b_provider import DB1BProvider
@@ -42,27 +43,27 @@ class CompositeProvider:
             return await getattr(self._fallback, method_name)(*args, **kwargs)
         return empty_result
 
-    async def search_flights(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy") -> list[dict]:
+    async def search_flights(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> list[dict]:
         return await self._try_primary_then_fallback(
-            "search_flights", origin, destination, departure_date, cabin_class, empty_result=[],
+            "search_flights", origin, destination, departure_date, cabin_class, empty_result=[], company_id=company_id,
         )
 
-    async def search_flights_date_range(self, origin: str, destination: str, start_date: date, end_date: date, cabin_class: str = "economy") -> dict[str, list[dict]]:
+    async def search_flights_date_range(self, origin: str, destination: str, start_date: date, end_date: date, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> dict[str, list[dict]]:
         return await self._try_primary_then_fallback(
-            "search_flights_date_range", origin, destination, start_date, end_date, cabin_class, empty_result={},
+            "search_flights_date_range", origin, destination, start_date, end_date, cabin_class, empty_result={}, company_id=company_id,
         )
 
-    async def search_month_prices(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy") -> dict[str, dict]:
+    async def search_month_prices(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> dict[str, dict]:
         return await self._try_primary_then_fallback(
-            "search_month_prices", origin, destination, year, month, cabin_class, empty_result={},
+            "search_month_prices", origin, destination, year, month, cabin_class, empty_result={}, company_id=company_id,
         )
 
-    async def search_month_matrix(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy") -> list[dict]:
+    async def search_month_matrix(self, origin: str, destination: str, year: int, month: int, cabin_class: str = "economy", *, company_id: uuid.UUID | None = None) -> list[dict]:
         return await self._try_primary_then_fallback(
-            "search_month_matrix", origin, destination, year, month, cabin_class, empty_result=[],
+            "search_month_matrix", origin, destination, year, month, cabin_class, empty_result=[], company_id=company_id,
         )
 
-    async def get_price_context(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", current_price: float | None = None) -> dict | None:
+    async def get_price_context(self, origin: str, destination: str, departure_date: date, cabin_class: str = "economy", current_price: float | None = None, *, company_id: uuid.UUID | None = None) -> dict | None:
         return await self._try_primary_then_fallback(
-            "get_price_context", origin, destination, departure_date, cabin_class, current_price,
+            "get_price_context", origin, destination, departure_date, cabin_class, current_price, company_id=company_id,
         )

@@ -45,8 +45,16 @@ class Settings(BaseSettings):
     # Price Intelligence
     price_intelligence_enabled: bool = True
 
-    # Flight Data Provider ("db1b" | "amadeus" | "composite")
+    # Flight Data Provider ("db1b" | "amadeus" | "composite" | "flightapi")
     flight_data_provider: str = "db1b"
+
+    # FlightAPI.io — live fares (Lite plan: 30k credits/mo, 5 concurrent)
+    flightapi_api_key: str = ""
+    flightapi_base_url: str = "https://api.flightapi.io"
+    flightapi_concurrency_limit: int = 5
+    flightapi_default_credit_budget: int = 30000
+    flightapi_credits_per_search: int = 1
+    flightapi_request_timeout: int = 20
 
     # DB1B Historical Data (MVP primary flight data source)
     db1b_enabled: bool = True

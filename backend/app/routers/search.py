@@ -118,6 +118,7 @@ async def search_flights(
                 leg=leg,
                 include_nearby=include_nearby,
                 user_preferences=user_preferences,
+                company_id=user.company_id,
             ),
             timeout=90.0,
         )
@@ -427,6 +428,7 @@ async def get_month_calendar(
             month=month,
             cabin_class=leg.cabin_class,
             existing_dates=existing_dates,
+            company_id=user.company_id,
         )
     except Exception as e:
         logger.error(f"Month calendar fetch failed: {e}")

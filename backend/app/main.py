@@ -35,7 +35,7 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
-from app.routers import airports, analytics, approvals, audit, auth, bundles, collaboration, events, hotels, notifications, policies, price_watches, reports, search, trip_analysis, trips, trips_calendar, users
+from app.routers import admin_flightapi, airports, analytics, approvals, audit, auth, bundles, collaboration, events, hotels, notifications, policies, price_watches, reports, search, trip_analysis, trips, trips_calendar, users
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +194,7 @@ app.include_router(price_watches.router, prefix="/api", tags=["price-watches", "
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(collaboration.router, prefix="/api", tags=["collaboration"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+app.include_router(admin_flightapi.router, prefix="/api/admin/flightapi", tags=["admin-flightapi"])
 
 
 @app.get("/api/health")
