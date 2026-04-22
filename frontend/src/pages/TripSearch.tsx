@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { useTripStore } from "@/stores/tripStore";
 import { useSearchStore } from "@/stores/searchStore";
 import { useEventStore } from "@/stores/eventStore";
@@ -13,8 +12,11 @@ import { HotelSearch } from "@/components/hotel/HotelSearch";
 import { useHotelStore } from "@/stores/hotelStore";
 import { BundleOptimizer } from "@/components/bundle/BundleOptimizer";
 import { LegCard } from "@/components/trip/LegCard";
-import { formatPrice } from "@/lib/currency";
 import { SearchAssistant } from "@/components/search/SearchAssistant";
+import { SearchLoadingSkeleton } from "@/components/search/SearchLoadingSkeleton";
+import { AddReturnFlightForm } from "@/components/search/AddReturnFlightForm";
+import { CompanionDatePicker } from "@/components/search/CompanionDatePicker";
+import { SelectionFooterBar } from "@/components/search/SelectionFooterBar";
 import type { FlightOption } from "@/types/flight";
 import type { TripWindowProposal } from "@/types/search";
 import apiClient from "@/api/client";
@@ -49,9 +51,6 @@ export default function TripSearch() {
   const [selectedFlights, setSelectedFlights] = useState<Record<string, FlightOption>>({});
   const [confirming, setConfirming] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
-  const [showReturnForm, setShowReturnForm] = useState(false);
-  const [returnDate, setReturnDate] = useState("");
-  const [addingReturn, setAddingReturn] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [justificationAnalysis, setJustificationAnalysis] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -503,66 +502,12 @@ export default function TripSearch() {
       )}
 
       {/* Add return flight */}
-      {currentTrip.legs.length === 1 && activeLeg && (
-        <div className="rounded-md border border-border p-3">
-          {!showReturnForm ? (
-            <button
-              type="button"
-              onClick={() => setShowReturnForm(true)}
-              className="text-sm text-primary hover:underline font-medium"
-            >
-              + Add return flight ({activeLeg.destination_city} &rarr; {activeLeg.origin_city})
-            </button>
-          ) : (
-            <div className="flex items-end gap-3">
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground">
-                  Return: {activeLeg.destination_city} &rarr; {activeLeg.origin_city}
-                </label>
-                <Input
-                  type="date"
-                  value={returnDate}
-                  min={activeLeg.preferred_date || undefined}
-                  onChange={(e) => setReturnDate(e.target.value)}
-                />
-              </div>
-              <Button
-                size="sm"
-                disabled={!returnDate || addingReturn}
-                onClick={async () => {
-                  if (!tripId || !returnDate) return;
-                  setAddingReturn(true);
-                  try {
-                    await apiClient.post(`/trips/${tripId}/add-leg`, {
-                      origin_city: activeLeg.destination_city,
-                      destination_city: activeLeg.origin_city,
-                      preferred_date: returnDate,
-                      flexibility_days: activeLeg.flexibility_days,
-                      cabin_class: activeLeg.cabin_class,
-                      passengers: activeLeg.passengers,
-                    });
-                    await fetchTrip(tripId);
-                    setShowReturnForm(false);
-                    setReturnDate("");
-                  } catch {
-                    // Silently handle
-                  } finally {
-                    setAddingReturn(false);
-                  }
-                }}
-              >
-                {addingReturn ? "Adding..." : "Add Return"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => { setShowReturnForm(false); setReturnDate(""); }}
-              >
-                Cancel
-              </Button>
-            </div>
-          )}
-        </div>
+      {currentTrip.legs.length === 1 && activeLeg && tripId && (
+        <AddReturnFlightForm
+          tripId={tripId}
+          leg={activeLeg}
+          onAdded={() => fetchTrip(tripId)}
+        />
       )}
 
       {/* Active leg details */}
@@ -572,77 +517,12 @@ export default function TripSearch() {
 
       {/* Companion date picker — shown when trip has companions and dates differ */}
       {currentTrip.companions > 0 && activeLeg && companionsSameDates !== true && (
-        <div className="rounded-md border border-violet-200 bg-violet-50/50 p-3 space-y-2">
-          <h4 className="text-sm font-semibold text-violet-700">
-            Companion Travel ({currentTrip.companions} companion{currentTrip.companions > 1 ? "s" : ""})
-          </h4>
-          {companionsSameDates === false ? (
-            /* Companions have different dates — show date picker directly */
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-violet-600">Companion date:</span>
-              <Input
-                type="date"
-                className="w-40 h-8 text-sm"
-                value={activeLeg.companion_preferred_date || activeLeg.preferred_date}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    patchLeg(activeLeg.id, { companion_preferred_date: e.target.value });
-                  }
-                }}
-              />
-              {activeLeg.companion_preferred_date && (
-                <button
-                  type="button"
-                  className="text-xs text-violet-500 underline"
-                  onClick={() => patchLeg(activeLeg.id, { companion_preferred_date: null as unknown as string })}
-                >
-                  Reset to employee date
-                </button>
-              )}
-            </div>
-          ) : (
-            /* Not yet decided or null — show radio toggle */
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name={`companion-date-${activeLeg.id}`}
-                  checked={!activeLeg.companion_preferred_date}
-                  onChange={() => {
-                    patchLeg(activeLeg.id, { companion_preferred_date: null as unknown as string });
-                  }}
-                />
-                Same as employee ({activeLeg.preferred_date})
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="radio"
-                  name={`companion-date-${activeLeg.id}`}
-                  checked={!!activeLeg.companion_preferred_date}
-                  onChange={() => {
-                    patchLeg(activeLeg.id, { companion_preferred_date: activeLeg.preferred_date });
-                  }}
-                />
-                Different date
-              </label>
-              {activeLeg.companion_preferred_date && (
-                <Input
-                  type="date"
-                  className="w-40 h-8 text-sm"
-                  value={activeLeg.companion_preferred_date}
-                  onChange={(e) => {
-                    if (e.target.value) {
-                      patchLeg(activeLeg.id, { companion_preferred_date: e.target.value });
-                    }
-                  }}
-                />
-              )}
-            </div>
-          )}
-          <p className="text-[10px] text-violet-600">
-            Companion pricing will be recalculated based on this date.
-          </p>
-        </div>
+        <CompanionDatePicker
+          leg={activeLeg}
+          companionsCount={currentTrip.companions}
+          companionsSameDates={companionsSameDates}
+          onPatch={patchLeg}
+        />
       )}
 
       {/* Search button */}
@@ -663,85 +543,7 @@ export default function TripSearch() {
       )}
 
       {/* Loading skeleton */}
-      {searchLoading && (
-        <div className="space-y-4">
-          <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-              <span className="text-sm font-medium">
-                Searching flights...
-                {elapsed > 0 && <span className="text-muted-foreground ml-1">({elapsed}s)</span>}
-              </span>
-            </div>
-            <Button variant="ghost" size="sm" onClick={cancelSearch} className="text-xs">
-              Cancel
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between bg-muted/30 rounded-lg px-3 py-2">
-            <div className="h-3 w-64 bg-muted animate-pulse rounded" />
-            <div className="h-3 w-24 bg-muted animate-pulse rounded" />
-          </div>
-
-          <div className="rounded-lg bg-muted/20 p-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="h-4 w-28 bg-muted animate-pulse rounded" />
-              <div className="h-3 w-44 bg-muted animate-pulse rounded" />
-            </div>
-            <div className="flex gap-2 overflow-x-auto pb-2">
-              {Array.from({ length: 15 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="w-[72px] h-[88px] bg-muted/60 animate-pulse rounded-lg shrink-0"
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="h-10 bg-muted/40 animate-pulse rounded-lg" />
-
-          <div className="space-y-2">
-            <div className="h-4 w-20 bg-muted animate-pulse rounded" />
-            <div className="h-5 bg-muted/40 animate-pulse rounded-full" />
-          </div>
-
-          <div className="rounded-lg bg-muted/15 p-3 space-y-2">
-            <div className="h-4 w-48 bg-muted animate-pulse rounded" />
-            <div className="rounded-lg border border-border overflow-hidden">
-              <div className="flex bg-muted/40">
-                <div className="w-[120px] h-8 shrink-0 border-r border-border" />
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <div key={i} className="w-[68px] h-8 shrink-0 flex items-center justify-center">
-                    <div className="h-3 w-12 bg-muted animate-pulse rounded" />
-                  </div>
-                ))}
-              </div>
-              {Array.from({ length: 5 }).map((_, r) => (
-                <div key={r} className="flex border-t border-border/50">
-                  <div className="w-[120px] h-10 shrink-0 border-r border-border flex items-center px-2">
-                    <div className="h-3 w-20 bg-muted/60 animate-pulse rounded" />
-                  </div>
-                  {Array.from({ length: 8 }).map((_, c) => (
-                    <div key={c} className="w-[68px] h-10 shrink-0 flex items-center justify-center">
-                      <div className="h-5 w-10 bg-muted/40 animate-pulse rounded" />
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <div className="h-4 w-36 bg-muted animate-pulse rounded" />
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-[52px] bg-muted/30 animate-pulse rounded-md border border-border/30"
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      {searchLoading && <SearchLoadingSkeleton elapsed={elapsed} onCancel={cancelSearch} />}
 
       {/* Search results */}
       {searchResult && !searchLoading && activeLeg && (
@@ -797,197 +599,36 @@ export default function TripSearch() {
       )}
 
       {/* Selected flight confirmation bar (trip-level) */}
-      {activeSelectedFlight && (
-        <div className="fixed bottom-0 left-60 right-0 bg-card border-t border-border shadow-lg z-40">
-          {/* Inline justification banner ($100-$500 savings) */}
-          {justificationAnalysis && (justificationAnalysis.trip_totals?.savings_amount ?? justificationAnalysis.savings?.amount ?? 0) < 500 && (
-            <div className="max-w-5xl mx-auto px-4 pt-3">
-              <JustificationModal
-                analysis={justificationAnalysis}
-                confirming={confirming}
-                mode="inline"
-                hasSwitched={hasSwitched}
-                currentTotal={Object.values(selectedFlights).reduce((s, f) => s + f.price, 0)}
-                switchedFlights={selectedFlights}
-                legs={currentTrip?.legs}
-                onConfirm={async (justification) => {
-                  await confirmAllLegs(justification);
-                  setHasSwitched(false);
-                }}
-                onSwitch={(flightOptionId, legId) => {
-                  const targetLegId = legId || activeLeg?.id;
-                  if (!targetLegId) return;
-                  const legResults = results[targetLegId]?.all_options || [];
-                  const alt = legResults.find((f) => f.id === flightOptionId);
-                  if (alt) {
-                    setSelectedFlights((prev) => ({ ...prev, [targetLegId]: alt }));
-                  }
-                  setHasSwitched(true);
-                }}
-                onSwitchTripWindow={handleSwitchTripWindow}
-                onCabinDowngrade={handleCabinDowngrade}
-                onCancel={() => { if (hasSwitched) { setHasSwitched(false); } else { setJustificationAnalysis(null); } }}
-              />
-            </div>
-          )}
-
-          {/* Main selection bar */}
-          <div className="max-w-5xl mx-auto flex items-center justify-between p-4">
-            <div className="flex items-center gap-4">
-              {/* Per-leg selection summary */}
-              {totalLegs > 1 ? (
-                <div className="flex items-center gap-3">
-                  {currentTrip.legs.map((leg, i) => {
-                    const sel = selectedFlights[leg.id];
-                    return (
-                      <div key={leg.id} className="text-xs">
-                        <span className="text-muted-foreground">Leg {i + 1}:</span>{" "}
-                        {sel ? (
-                          <span className="font-medium">
-                            {sel.airline_name} ${Math.round(sel.price).toLocaleString()}
-                            {sel.duration_minutes > 0 && (
-                              <span className="text-muted-foreground font-normal ml-1">
-                                {Math.floor(sel.duration_minutes / 60)}h{sel.duration_minutes % 60 > 0 ? ` ${sel.duration_minutes % 60}m` : ""}
-                                {" \u00b7 "}{sel.stops === 0 ? "Nonstop" : `${sel.stops} stop`}
-                              </span>
-                            )}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground italic">not selected</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                  <div className="border-l border-border pl-3 space-y-0.5">
-                    {(() => {
-                      const flightTotal = Math.round(Object.values(selectedFlights).reduce((s, f) => s + f.price, 0));
-                      const hotelTotal = selectedHotelTotal ? Math.round(selectedHotelTotal.total) : 0;
-                      const grandTotal = flightTotal + hotelTotal;
-                      return (
-                        <>
-                          <div className="text-[10px] text-muted-foreground leading-tight">
-                            Flights: ${flightTotal.toLocaleString()}
-                            {selectedHotelTotal && (
-                              <> · Hotel: ${hotelTotal.toLocaleString()} <span className="text-muted-foreground/70">({selectedHotelTotal.nights}n)</span></>
-                            )}
-                          </div>
-                          <div className="text-sm font-bold leading-tight">
-                            {selectedHotelTotal ? `Trip Total: $${grandTotal.toLocaleString()}` : `Total: $${flightTotal.toLocaleString()}`}
-                          </div>
-                        </>
-                      );
-                    })()}
-                    {!allLegsSelected && (
-                      <span className="text-[10px] text-muted-foreground">
-                        ({selectedCount}/{totalLegs} legs)
-                      </span>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <span className="text-sm font-medium">
-                      {activeSelectedFlight.airline_name}{" "}
-                      {activeSelectedFlight.flight_numbers}
-                    </span>
-                    <span className="text-sm text-muted-foreground ml-2">
-                      {activeSelectedFlight.origin_airport} &rarr;{" "}
-                      {activeSelectedFlight.destination_airport}
-                      {activeSelectedFlight.duration_minutes > 0 && (
-                        <>
-                          {" \u00b7 "}
-                          {Math.floor(activeSelectedFlight.duration_minutes / 60)}h
-                          {activeSelectedFlight.duration_minutes % 60 > 0 && ` ${activeSelectedFlight.duration_minutes % 60}m`}
-                          {" \u00b7 "}
-                          {activeSelectedFlight.stops === 0 ? "Nonstop" : `${activeSelectedFlight.stops} stop`}
-                        </>
-                      )}
-                    </span>
-                  </div>
-                  <span className="text-base font-bold">
-                    ${Math.round(activeSelectedFlight.price).toLocaleString()}
-                  </span>
-                </>
-              )}
-
-              {/* Savings context */}
-              {justificationAnalysis && (justificationAnalysis.trip_totals?.savings_amount > 0 || justificationAnalysis.savings?.amount > 0) && (
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${
-                  (justificationAnalysis.trip_totals?.savings_amount ?? justificationAnalysis.savings?.amount ?? 0) >= 500
-                    ? "bg-red-100 text-red-700"
-                    : (justificationAnalysis.trip_totals?.savings_amount ?? justificationAnalysis.savings?.amount ?? 0) >= 200
-                    ? "bg-amber-100 text-amber-700"
-                    : "bg-muted text-muted-foreground"
-                }`}>
-                  {justificationAnalysis.trip_totals
-                    ? `${formatPrice(justificationAnalysis.trip_totals.savings_amount)} trip savings available`
-                    : `${formatPrice(justificationAnalysis.savings.amount)} more than cheapest`
-                  }
-                </span>
-              )}
-
-              {/* Hotel booking status badge */}
-              {hotelDates && (
-                hotelSelections[currentTrip.legs[0]?.id]
-                  ? <span className="text-xs font-medium px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700">
-                      &#10003; {selectedHotelTotal?.name || "Hotel booked"}
-                    </span>
-                  : <span
-                      className="text-xs font-medium px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 cursor-pointer hover:bg-blue-200 transition-colors"
-                      onClick={() => hotelSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
-                    >
-                      Hotel not selected
-                    </span>
-              )}
-            </div>
-            <div className="flex gap-2 items-center">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleClearSelection}
-              >
-                Clear
-              </Button>
-              {totalLegs > 1 && !allLegsSelected ? (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    // Jump to next unselected leg
-                    const nextIdx = currentTrip.legs.findIndex((l) => !selectedFlights[l.id]);
-                    if (nextIdx >= 0) {
-                      setActiveLegIndex(nextIdx);
-                      setUserSwitchedLeg(true);
-                    }
-                  }}
-                >
-                  Select Leg {currentTrip.legs.findIndex((l) => !selectedFlights[l.id]) + 1} &rarr;
-                </Button>
-              ) : confirmed ? (
-                <Button
-                  size="sm"
-                  onClick={() => navigate(`/trips/${tripId}/review`)}
-                >
-                  Submit for Approval
-                </Button>
-              ) : (
-                <Button
-                  size="sm"
-                  disabled={confirming || analyzing || (totalLegs > 1 && !allLegsSelected)}
-                  onClick={handleConfirmTrip}
-                >
-                  {analyzing
-                    ? "Analyzing..."
-                    : confirming
-                    ? "Saving..."
-                    : allLegsSelected
-                    ? "Confirm to Review"
-                    : "Confirm Selection"}
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
+      {activeSelectedFlight && activeLeg && tripId && (
+        <SelectionFooterBar
+          trip={currentTrip}
+          tripId={tripId}
+          activeLeg={activeLeg}
+          activeSelectedFlight={activeSelectedFlight}
+          selectedFlights={selectedFlights}
+          results={results}
+          hotelDates={hotelDates}
+          hotelSelections={hotelSelections}
+          selectedHotelTotal={selectedHotelTotal}
+          hotelSectionRef={hotelSectionRef}
+          justificationAnalysis={justificationAnalysis}
+          confirming={confirming}
+          analyzing={analyzing}
+          confirmed={confirmed}
+          hasSwitched={hasSwitched}
+          onClearSelection={handleClearSelection}
+          onJumpToLeg={(i) => { setActiveLegIndex(i); setUserSwitchedLeg(true); }}
+          onConfirmTrip={handleConfirmTrip}
+          onNavigateReview={() => navigate(`/trips/${tripId}/review`)}
+          onSetSelection={(legId, flight) =>
+            setSelectedFlights((prev) => ({ ...prev, [legId]: flight }))
+          }
+          onSetHasSwitched={setHasSwitched}
+          onDismissJustification={() => setJustificationAnalysis(null)}
+          onConfirmAllLegs={confirmAllLegs}
+          onSwitchTripWindow={handleSwitchTripWindow}
+          onCabinDowngrade={handleCabinDowngrade}
+        />
       )}
 
       {/* Trip assistant chat bubble */}
