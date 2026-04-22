@@ -138,7 +138,9 @@ async def search_flights(
         all_options = result.get("all_options", [])
         if all_options:
             policy_map = await PolicyEngine.evaluate_flight_options(
-                db, leg, all_options, user_role=getattr(user, "role", None)
+                db, leg, all_options,
+                company_id=user.company_id,
+                user_role=getattr(user, "role", None),
             )
             if policy_map:
                 total = len(all_options)

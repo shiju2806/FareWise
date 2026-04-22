@@ -20,7 +20,7 @@ class CollaborationService:
     # ─── Overlap Detection ───
 
     async def detect_overlaps(self, db: AsyncSession, trip: Trip) -> list[TripOverlap]:
-        """Detect overlaps between this trip and others from different users."""
+        """Detect overlaps between this trip and others from the same company but different users."""
         from sqlalchemy.orm import selectinload
 
         legs = trip.legs
@@ -37,12 +37,13 @@ class CollaborationService:
             trip_date = leg.preferred_date
             flex = leg.flexibility_days or 3
 
-            # Find other trips with legs going to the same city in overlapping dates
+            # Find other trips in the same company going to the same city in overlapping dates
             other_legs = await db.execute(
                 select(TripLeg)
                 .join(Trip, Trip.id == TripLeg.trip_id)
                 .where(
                     and_(
+                        Trip.company_id == trip.company_id,
                         TripLeg.destination_city == dest_city,
                         Trip.traveler_id != trip.traveler_id,
                         Trip.status.in_(["submitted", "approved"]),
@@ -88,6 +89,7 @@ class CollaborationService:
 
                 if overlap_days > 0:
                     overlap = TripOverlap(
+                        company_id=trip.company_id,
                         trip_a_id=trip.id,
                         trip_b_id=other_trip_id,
                         overlap_city=dest_city,
@@ -104,13 +106,18 @@ class CollaborationService:
 
         return new_overlaps
 
-    async def get_trip_overlaps(self, db: AsyncSession, trip_id: uuid.UUID) -> list[dict]:
-        """Get all overlaps for a trip."""
+    async def get_trip_overlaps(
+        self, db: AsyncSession, company_id: uuid.UUID, trip_id: uuid.UUID
+    ) -> list[dict]:
+        """Get all overlaps for a trip within a company."""
         result = await db.execute(
             select(TripOverlap).where(
-                or_(
-                    TripOverlap.trip_a_id == trip_id,
-                    TripOverlap.trip_b_id == trip_id,
+                and_(
+                    TripOverlap.company_id == company_id,
+                    or_(
+                        TripOverlap.trip_a_id == trip_id,
+                        TripOverlap.trip_b_id == trip_id,
+                    ),
                 )
             )
         )
@@ -153,18 +160,37 @@ class CollaborationService:
         return enriched
 
     async def dismiss_overlap(
-        self, db: AsyncSession, overlap_id: uuid.UUID, user_id: uuid.UUID
+        self,
+        db: AsyncSession,
+        company_id: uuid.UUID,
+        overlap_id: uuid.UUID,
+        user_id: uuid.UUID,
     ) -> bool:
-        """Dismiss an overlap for the given user."""
-        result = await db.execute(select(TripOverlap).where(TripOverlap.id == overlap_id))
+        """Dismiss an overlap for the given user within the caller's company."""
+        result = await db.execute(
+            select(TripOverlap).where(
+                and_(
+                    TripOverlap.id == overlap_id,
+                    TripOverlap.company_id == company_id,
+                )
+            )
+        )
         overlap = result.scalar_one_or_none()
         if not overlap:
             return False
 
-        # Determine which side the user is on
-        trip_a = await db.execute(select(Trip).where(Trip.id == overlap.trip_a_id))
+        # Determine which side the user is on (trips are already company-scoped via overlap)
+        trip_a = await db.execute(
+            select(Trip).where(
+                and_(Trip.id == overlap.trip_a_id, Trip.company_id == company_id)
+            )
+        )
         trip_a_obj = trip_a.scalar_one_or_none()
-        trip_b = await db.execute(select(Trip).where(Trip.id == overlap.trip_b_id))
+        trip_b = await db.execute(
+            select(Trip).where(
+                and_(Trip.id == overlap.trip_b_id, Trip.company_id == company_id)
+            )
+        )
         trip_b_obj = trip_b.scalar_one_or_none()
 
         if trip_a_obj and trip_a_obj.traveler_id == user_id:

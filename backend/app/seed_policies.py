@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
+from app.models.company import Company
 from app.models.policy import Policy
 
 
@@ -122,15 +123,24 @@ SEED_POLICIES = [
 
 async def seed():
     async with async_session_factory() as db:
-        # Check if policies already exist
-        result = await db.execute(select(Policy))
+        default_company = (
+            await db.execute(select(Company).where(Company.slug == "default"))
+        ).scalar_one_or_none()
+        if not default_company:
+            print("Default company not found — run migrations first.")
+            return
+
+        # Check if policies already exist for the default company
+        result = await db.execute(
+            select(Policy).where(Policy.company_id == default_company.id)
+        )
         existing = result.scalars().all()
         if existing:
             print(f"Policies already exist ({len(existing)}), skipping seed.")
             return
 
         for p_data in SEED_POLICIES:
-            policy = Policy(**p_data)
+            policy = Policy(company_id=default_company.id, **p_data)
             db.add(policy)
 
         await db.commit()

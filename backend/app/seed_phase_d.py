@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.database import async_session_factory
 from app.models.analytics import AnalyticsSnapshot, TravelerScore
+from app.models.company import Company
 from app.models.user import User
 
 DEPARTMENTS = ["Finance", "Engineering", "Sales", "Marketing", "IT"]
@@ -17,6 +18,14 @@ DEPARTMENTS = ["Finance", "Engineering", "Sales", "Marketing", "IT"]
 
 async def seed_phase_d():
     async with async_session_factory() as db:
+        default_company = (
+            await db.execute(select(Company).where(Company.slug == "default"))
+        ).scalar_one_or_none()
+        if not default_company:
+            print("Default company not found — run migrations and seed first")
+            return
+        demo_company_id = default_company.id
+
         # Get existing users
         result = await db.execute(select(User).where(User.is_active == True))
         users = result.scalars().all()
@@ -33,6 +42,7 @@ async def seed_phase_d():
             base_trips = random.randint(5, 20)
             base_spend = random.uniform(10000, 50000)
             snapshot = AnalyticsSnapshot(
+                company_id=demo_company_id,
                 snapshot_type="daily",
                 period_start=d - timedelta(days=1),
                 period_end=d,
@@ -57,6 +67,7 @@ async def seed_phase_d():
             week_end = today - timedelta(weeks=weeks_back - 1)
             week_start = week_end - timedelta(days=7)
             snapshot = AnalyticsSnapshot(
+                company_id=demo_company_id,
                 snapshot_type="weekly",
                 period_start=week_start,
                 period_end=week_end,
@@ -92,6 +103,7 @@ async def seed_phase_d():
             ]
 
             snapshot = AnalyticsSnapshot(
+                company_id=demo_company_id,
                 snapshot_type="monthly",
                 period_start=month_start,
                 period_end=month_end,
@@ -134,6 +146,7 @@ async def seed_phase_d():
                 total_score = min(1000, int(sav_eff + comp_score + adv_score + cost_score + vol_score + badge_bonus))
 
                 ts = TravelerScore(
+                    company_id=user.company_id,
                     user_id=user.id,
                     period=period,
                     period_start=period_date,

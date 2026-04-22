@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -29,3 +31,10 @@ async def get_current_user(
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
+
+
+async def get_current_company_id(user: User = Depends(get_current_user)) -> uuid.UUID:
+    """Return the tenant (company) the request acts on."""
+    if user.company_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User has no company")
+    return user.company_id

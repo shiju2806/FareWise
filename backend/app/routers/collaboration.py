@@ -22,7 +22,7 @@ async def get_overlaps(
     user: User = Depends(get_current_user),
 ):
     """Get trip overlaps for a specific trip."""
-    return await collaboration_service.get_trip_overlaps(db, trip_id)
+    return await collaboration_service.get_trip_overlaps(db, user.company_id, trip_id)
 
 
 @router.post("/overlaps/{overlap_id}/dismiss")
@@ -32,7 +32,9 @@ async def dismiss_overlap(
     user: User = Depends(get_current_user),
 ):
     """Dismiss an overlap notification."""
-    success = await collaboration_service.dismiss_overlap(db, overlap_id, user.id)
+    success = await collaboration_service.dismiss_overlap(
+        db, user.company_id, overlap_id, user.id
+    )
     if not success:
         raise HTTPException(status_code=404, detail="Overlap not found or not yours")
     return {"status": "dismissed"}

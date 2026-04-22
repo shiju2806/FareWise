@@ -48,9 +48,11 @@ async def list_policies(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """List all policies. All authenticated users can view."""
+    """List policies for the user's company. All authenticated users can view."""
     result = await db.execute(
-        select(Policy).where(Policy.is_active == True).order_by(Policy.severity.desc())
+        select(Policy)
+        .where(Policy.company_id == user.company_id, Policy.is_active == True)
+        .order_by(Policy.severity.desc())
     )
     policies = result.scalars().all()
 
@@ -84,6 +86,7 @@ async def create_policy(
     _require_admin(user)
 
     policy = Policy(
+        company_id=user.company_id,
         name=req.name,
         description=req.description,
         rule_type=req.rule_type,
@@ -122,7 +125,9 @@ async def update_policy(
     """Update a policy (admin only)."""
     _require_admin(user)
 
-    result = await db.execute(select(Policy).where(Policy.id == policy_id))
+    result = await db.execute(
+        select(Policy).where(Policy.id == policy_id, Policy.company_id == user.company_id)
+    )
     policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(status_code=404, detail="Policy not found")
@@ -157,7 +162,9 @@ async def delete_policy(
     """Soft delete a policy (admin only)."""
     _require_admin(user)
 
-    result = await db.execute(select(Policy).where(Policy.id == policy_id))
+    result = await db.execute(
+        select(Policy).where(Policy.id == policy_id, Policy.company_id == user.company_id)
+    )
     policy = result.scalar_one_or_none()
     if not policy:
         raise HTTPException(status_code=404, detail="Policy not found")

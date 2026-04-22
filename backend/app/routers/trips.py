@@ -108,6 +108,7 @@ async def create_trip_nl(
     parsed = await nlp_parser.parse(req.natural_language_input)
 
     trip = Trip(
+        company_id=user.company_id,
         traveler_id=user.id,
         natural_language_input=req.natural_language_input,
         parsed_input=parsed,
@@ -168,7 +169,7 @@ async def create_trip_structured(
     user: User = Depends(get_current_user),
 ):
     """Create a trip from structured form input."""
-    trip = Trip(traveler_id=user.id, status="draft")
+    trip = Trip(company_id=user.company_id, traveler_id=user.id, status="draft")
 
     for i, leg_data in enumerate(req.legs):
         # Resolve city → airport
