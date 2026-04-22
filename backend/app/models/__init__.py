@@ -1,3 +1,4 @@
+from app.models.company import Company
 from app.models.user import User
 from app.models.trip import Trip, TripLeg
 from app.models.search_log import SearchLog, FlightOption
@@ -26,6 +27,7 @@ __all__ = [
     "AnalyticsSnapshot",
     "Approval",
     "ApprovalHistory",
+    "Company",
     "EventCache",
     "FlightOption",
     "HotelOption",
